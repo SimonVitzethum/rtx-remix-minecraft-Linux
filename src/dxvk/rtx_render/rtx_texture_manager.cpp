@@ -482,7 +482,7 @@ namespace dxvk {
     // assumed to have an unlimited budget, never fails
     DxvkStagingBuffer         m_synchronousAlloc;
 
-    std::atomic<bool>         m_requiresShutdown;
+    std::atomic<bool>         m_requiresShutdown { false };
     dxvk::thread              m_thread;
 
     dxvk::mutex               m_texturesToProcess_mutex;
@@ -786,13 +786,13 @@ namespace dxvk {
 
   private:
     Rc<DxvkDevice>                  m_device;
-    std::atomic<bool>               m_requiresShutdown;
+    std::atomic<bool>               m_requiresShutdown { false };
     dxvk::thread                    m_thread;
 
     dxvk::mutex                     m_texturesToProcess_mutex;
     dxvk::condition_variable        m_texturesToProcess_cond;
     std::unordered_set<Rc<ManagedTexture>, RcHasher> m_texturesToProcess; // TODO: remove set?
-    std::atomic<uint32_t>           m_texturesToProcess_count;
+    std::atomic<uint32_t>           m_texturesToProcess_count { 0 };
 
     dxvk::mutex                     m_waitingList_mutex;
     std::vector<ReadyToCopy_RTXIO>  m_waitingList;

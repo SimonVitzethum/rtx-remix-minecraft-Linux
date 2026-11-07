@@ -2089,7 +2089,13 @@ namespace dxvk {
                         cDst = m_interop.image,
                         cDone = m_interop.dxvkDone,
                         signalValue](DxvkContext* ctx) {
-        RtxContext::blitImageHelper(ctx, cSrc, cDst, VK_FILTER_NEAREST);
+        // The ray traced frame lives in the final output. The back buffer only holds it on the regular swap chain path,
+        // the external presenter used without a window leaves it to the caller.
+        const auto& finalOutput = ctx->getCommonObjects()->getResources().getRaytracingOutput().m_finalOutput;
+        const Rc<DxvkImage> source = !finalOutput.empty()
+          ? finalOutput.resource(Resources::AccessType::ReadWrite).image
+          : cSrc;
+        RtxContext::blitImageHelper(ctx, source, cDst, VK_FILTER_NEAREST);
         ctx->getCommandList()->addSignalSemaphore(cDone->handle(), signalValue);
         ctx->flushCommandList();
       });
@@ -2105,6 +2111,45 @@ namespace dxvk {
       }
 
       m_interop.submitted = true;
+
+      // Without a window nothing presents, so the frame counter that drives temporal history advances here.
+      if (dynamic_cast<D3D9SwapchainExternal*>(this) != nullptr) {
+        m_parent->GetDXVKDevice()->incrementPresentCount();
+        m_interop.submitted = false;
+      }
+
+      // Debug aid: REMIX_DUMP_INTEROP=<dir> writes every 30th rendered frame as a PPM.
+      static const char* dumpDir = std::getenv("REMIX_DUMP_INTEROP");
+      static uint64_t dumpCounter = 0;
+      if (dumpDir && (dumpCounter++ % 30) == 0) {
+        DxvkBufferCreateInfo bufferInfo = {};
+        bufferInfo.size = VkDeviceSize(extent.width) * extent.height * 4;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        bufferInfo.access = VK_ACCESS_TRANSFER_WRITE_BIT;
+        auto dumpBuffer = m_device->createBuffer(bufferInfo,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+          DxvkMemoryStats::Category::RTXBuffer, "Interop dump");
+        m_parent->EmitCs([dumpBuffer, cImage = m_interop.image](DxvkContext* ctx) {
+          ctx->copyImageToBuffer(dumpBuffer, 0, 0, 0, cImage, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+                                 VkOffset3D{ 0, 0, 0 }, cImage->mipLevelExtent(0));
+          ctx->flushCommandList();
+        });
+        m_parent->Flush();
+        m_parent->SynchronizeCsThread();
+        m_device->waitForIdle();
+
+        const std::string path = str::format(dumpDir, "/interop_", dumpCounter - 1, ".ppm");
+        if (FILE* file = std::fopen(path.c_str(), "wb")) {
+          std::fprintf(file, "P6\n%u %u\n255\n", extent.width, extent.height);
+          const uint8_t* pixels = static_cast<const uint8_t*>(dumpBuffer->mapPtr(0));
+          for (size_t i = 0; i < size_t(extent.width) * extent.height; ++i) {
+            std::fwrite(pixels + i * 4, 1, 3, file);
+          }
+          std::fclose(file);
+          Logger::info(str::format("Wrote ", path));
+        }
+      }
       return D3D_OK;
     } catch (const DxvkError& e) {
       Logger::err(e.message());
@@ -2133,14 +2178,23 @@ namespace dxvk {
       };
 
       *pInfo = {};
-      pInfo->dxvkDoneSemaphoreHandle = toHandle(m_interop.dxvkDone->sharedHandle());
+      if (m_interop.reportedDxvkDone == 0) {
+        m_interop.reportedDxvkDone = toHandle(m_interop.dxvkDone->sharedHandle());
+      }
+      if (m_interop.reportedClientDone == 0) {
+        m_interop.reportedClientDone = toHandle(m_interop.clientDone->sharedHandle());
+      }
+      pInfo->dxvkDoneSemaphoreHandle = m_interop.reportedDxvkDone;
       pInfo->dxvkDoneSemaphoreValue = m_interop.dxvkDoneValue;
-      pInfo->clientDoneSemaphoreHandle = toHandle(m_interop.clientDone->sharedHandle());
+      pInfo->clientDoneSemaphoreHandle = m_interop.reportedClientDone;
 
       if (m_interop.image != nullptr) {
-        // Linux hands out a fresh file descriptor on each call, Windows a handle that stays valid.
-        HANDLE memoryHandle = m_interop.image->sharedHandle();
-        pInfo->imageMemoryHandle = reinterpret_cast<uint64_t>(memoryHandle);
+        if (m_interop.reportedImage != m_interop.image.ptr()) {
+          // Linux hands out a fresh file descriptor per call, Windows a handle that stays valid.
+          m_interop.reportedImageHandle = reinterpret_cast<uint64_t>(m_interop.image->sharedHandle());
+          m_interop.reportedImage = m_interop.image.ptr();
+        }
+        pInfo->imageMemoryHandle = m_interop.reportedImageHandle;
         pInfo->allocationSize = m_interop.image->allocationSize();
         pInfo->width = static_cast<int32_t>(m_interop.image->info().extent.width);
         pInfo->height = static_cast<int32_t>(m_interop.image->info().extent.height);

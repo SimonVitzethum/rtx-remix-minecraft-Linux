@@ -374,7 +374,7 @@ if host_machine.system() == 'windows'
 else
   # Native POSIX build: use system glslang/SPIRV-Tools and a Linux Slang release.
   glsl_compiler = find_program('glslangValidator')
-  slang_compiler = find_program('slangc', join_paths(global_src_root_norm, '../dxvk-tools/slang-2026/bin/slangc'))
+  slang_compiler = find_program(get_option('slangc') != '' ? get_option('slangc') : join_paths(global_src_root_norm, '../dxvk-tools/slang-2026/bin/slangc'))
   spirv_val = find_program('spirv-val')
 endif
 python_interpreter = find_program('python3', 'python')

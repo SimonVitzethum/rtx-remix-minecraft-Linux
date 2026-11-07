@@ -423,6 +423,6 @@ namespace dxvk {
     Lazy<RtxParticleSystemManager>          m_particleSystem;
     Lazy<RtxPointInstancerSystem>            m_pointInstancerSystem;
 
-    std::atomic<HWND>                       m_lastKnownWindowHandle;
+    std::atomic<HWND>                       m_lastKnownWindowHandle { nullptr };
   };
 }

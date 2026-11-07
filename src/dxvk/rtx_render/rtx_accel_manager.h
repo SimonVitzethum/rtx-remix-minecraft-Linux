@@ -163,6 +163,7 @@ public:
   static uint32_t getBlasCount();
 
   uint32_t getSurfaceCount() const { return m_reorderedSurfaces.size(); }
+  uint32_t getMergedInstanceCount(Tlas::Type type) const { return m_mergedInstances[type].size(); }
   const std::vector<RtInstance*>& getOrderedInstances() const { return m_reorderedSurfaces; }
   const std::vector<PointInstancerBatch>& getPointInstancerBatches() const { return m_pointInstancerBatches; }
 

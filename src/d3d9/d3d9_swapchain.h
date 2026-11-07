@@ -345,6 +345,12 @@ namespace dxvk {
       Rc<DxvkImage> image;
       Rc<RtxSemaphore> dxvkDone;
       Rc<RtxSemaphore> clientDone;
+      // Handles already given to the client. A descriptor is consumed by the client's import, so each resource is
+      // reported once as a live handle and afterwards by the same number, which stays stable until the resource changes.
+      uint64_t reportedDxvkDone = 0;
+      uint64_t reportedClientDone = 0;
+      uint64_t reportedImageHandle = 0;
+      const DxvkImage* reportedImage = nullptr;
     } m_interop;
 
     void EnsureInteropSemaphores();

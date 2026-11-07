@@ -72,7 +72,7 @@ namespace dxvk {
 
   private:
     std::array<T, Capacity> m_data;
-    std::atomic<uint32_t> m_head;
-    std::atomic<uint32_t> m_tail;
+    std::atomic<uint32_t> m_head { 0 };
+    std::atomic<uint32_t> m_tail { 0 };
   };
 } //dxvk

@@ -384,7 +384,7 @@ namespace dxvk {
 
     mutable std::mutex m_rejectedKeysMutex;
     mutable std::unordered_set<std::string> m_rejectedKeys;
-    mutable std::atomic<uint64_t> m_generation;
+    mutable std::atomic<uint64_t> m_generation { 0 };
 
     Config m_config;
 

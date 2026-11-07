@@ -280,6 +280,17 @@ namespace dxvk {
       buildRange.primitiveCount = blasEntry.modifiedGeometryData.calculatePrimitiveCount();
       buildRange.primitiveOffset = 0;
 
+      // NV-DXVK start: debug aid, REMIX_DEBUG_GBUFFER=1 prints what the BLAS is built from
+      if (std::getenv("REMIX_DEBUG_GBUFFER")) {
+        const auto& g = blasEntry.modifiedGeometryData;
+        const float* p0 = static_cast<const float*>(g.positionBuffer.mapPtr(0));
+        Logger::info(str::format("BLAS input: prims=", buildRange.primitiveCount, " vertices=", g.vertexCount, " stride=", g.positionBuffer.stride(),
+          " vfmt=", uint32_t(g.positionBuffer.vertexFormat()), " usesIndices=", usesIndices, " idxType=", uint32_t(triangleData.indexType),
+          " vaddr=", triangleData.vertexData.deviceAddress, " iaddr=", triangleData.indexData.deviceAddress,
+          " v0=", p0 ? p0[0] : -1.f, ",", p0 ? p0[1] : -1.f, ",", p0 ? p0[2] : -1.f, " flags=", uint32_t(geometry.flags)));
+      }
+      // NV-DXVK end
+
       blasEntry.buildGeometries.push_back(geometry);
       blasEntry.buildRanges.push_back(buildRange);
       instance.billboardIndices.push_back(0);
@@ -1900,6 +1911,25 @@ namespace dxvk {
       VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
       VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
       VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+
+    // NV-DXVK start: debug aid, REMIX_DEBUG_GBUFFER=1 prints the first TLAS instance as the GPU sees it
+    if (std::getenv("REMIX_DEBUG_GBUFFER") && m_device->getCurrentFrameId() % 120 == 5 && !m_mergedInstances[Tlas::Opaque].empty()) {
+      DxvkBufferCreateInfo bufferInfo = {};
+      bufferInfo.size = 64;
+      bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      bufferInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      bufferInfo.access = VK_ACCESS_TRANSFER_WRITE_BIT;
+      auto buffer = m_device->createBuffer(bufferInfo, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                           DxvkMemoryStats::Category::RTXBuffer, "tlas probe");
+      ctx->copyBuffer(buffer, 0, m_vkInstanceBuffer, 0, 64);
+      ctx->flushCommandList();
+      m_device->waitForIdle();
+      const float* f = static_cast<const float*>(buffer->mapPtr(0));
+      const uint32_t* u = static_cast<const uint32_t*>(buffer->mapPtr(0));
+      Logger::info(str::format("tlas instance0 transform: [", f[0], " ", f[1], " ", f[2], " ", f[3], "] [", f[4], " ", f[5], " ", f[6], " ", f[7], "] [",
+                               f[8], " ", f[9], " ", f[10], " ", f[11], "] customIndex/mask=", u[12], " sbt/flags=", u[13], " blasAddr=", *reinterpret_cast<const uint64_t*>(f + 14)));
+    }
+    // NV-DXVK end
 
     // Release the scratch memory so it can be reused by rest of the frame.
     m_scratchBuffer = nullptr;

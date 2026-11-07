@@ -624,6 +624,19 @@ namespace dxvk {
     testTraceSample.surfaceBufferAvailable = getSceneManager().getSurfaceBuffer() != nullptr;
     Metrics::recordTestTrace(testTraceSample);
 
+    // NV-DXVK start: periodic status line explaining why a frame is or is not ray traced
+    if (m_device->getCurrentFrameId() % 120 == 1) {
+      Logger::info(str::format("RTX frame ", m_device->getCurrentFrameId(), ": raytracing=", isRaytracingEnabled,
+        " cameraValid=", isCameraValid, " asyncShaderCompile=", asyncShaderCompilationActive,
+        " surfaces=", testTraceSample.surfaceCount, " shadersInFlight=", testTraceSample.shaderCompileInflightCount,
+        " instances=", getSceneManager().getInstanceManager().getActiveCount(), " lights=", getSceneManager().getLightManager().getActiveCount(),
+        " upscaler=", uint32_t(getCurrentFrameUpscaler()), " rtSupported=", m_rayTracingSupported, " dlssSupported=", m_dlssSupported,
+        " blas=", getSceneManager().getAccelManager().getBlasCount(),
+        " tlasOpaque=", getSceneManager().getAccelManager().getMergedInstanceCount(Tlas::Opaque),
+        " tlasUnordered=", getSceneManager().getAccelManager().getMergedInstanceCount(Tlas::Unordered)));
+    }
+    // NV-DXVK end
+
     bool raytracedThisFrame = false;
 
     // Note: Only engage ray tracing when it is enabled, the camera is valid and when no shaders are currently being compiled asynchronously (as
@@ -1134,6 +1147,15 @@ namespace dxvk {
     const uint32_t frameIdx = m_device->getCurrentFrameId();
 
     constants.camera = camera.getShaderConstants();
+    // NV-DXVK start: debug aid, REMIX_DEBUG_GBUFFER=1 prints the camera matrices handed to the ray generation shaders
+    if (std::getenv("REMIX_DEBUG_GBUFFER") && m_device->getCurrentFrameId() % 120 == 5) {
+      auto row = [](const auto& m, int i) { return str::format("[", m[i].x, " ", m[i].y, " ", m[i].z, " ", m[i].w, "]"); };
+      const auto& c = constants.camera;
+      Logger::info(str::format("camera res=", c.resolution.x, "x", c.resolution.y, " near=", c.nearPlane,
+        "\n viewToWorld ", row(c.viewToWorld, 0), row(c.viewToWorld, 1), row(c.viewToWorld, 2), row(c.viewToWorld, 3),
+        "\n projectionToView ", row(c.projectionToView, 0), row(c.projectionToView, 1), row(c.projectionToView, 2), row(c.projectionToView, 3)));
+    }
+    // NV-DXVK end
 
     // Set the Raytraced Render Target camera matrices
     auto const& renderTargetCamera { getSceneManager().getCameraManager().getCamera(CameraType::RenderToTexture) };
@@ -1723,6 +1745,32 @@ namespace dxvk {
 
     // Gbuffer Raytracing
     m_common->metaPathtracerGbuffer().dispatch(this, rtOutput);
+
+    // NV-DXVK start: debug aid, REMIX_DEBUG_GBUFFER=1 prints the center texels of two G-buffer images
+    if (std::getenv("REMIX_DEBUG_GBUFFER") && m_device->getCurrentFrameId() % 120 == 5) {
+      auto probe = [&](const Rc<DxvkImage>& image, const char* name) {
+        if (image == nullptr) { Logger::info(str::format("gbuffer probe ", name, ": no image")); return; }
+        const DxvkFormatInfo* formatInfo = imageFormatInfo(image->info().format);
+        DxvkBufferCreateInfo bufferInfo = {};
+        bufferInfo.size = 256;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        bufferInfo.access = VK_ACCESS_TRANSFER_WRITE_BIT;
+        auto buffer = m_device->createBuffer(bufferInfo, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                             DxvkMemoryStats::Category::RTXBuffer, "gbuffer probe");
+        const VkExtent3D extent = image->mipLevelExtent(0);
+        copyImageToBuffer(buffer, 0, 0, 0, image, { formatInfo->aspectMask, 0, 0, 1 },
+                          VkOffset3D{ int32_t(extent.width / 2), int32_t(extent.height / 2), 0 }, VkExtent3D{ 1, 1, 1 });
+        flushCommandList();
+        m_device->waitForIdle();
+        const uint32_t* w = static_cast<const uint32_t*>(buffer->mapPtr(0));
+        Logger::info(str::format("gbuffer probe ", name, " fmt=", uint32_t(image->info().format), " ", extent.width, "x", extent.height,
+                                 " center words: ", w[0], " ", w[1], " ", w[2], " ", w[3]));
+      };
+      probe(rtOutput.m_primaryLinearViewZ.image, "linearViewZ");
+      probe(rtOutput.m_primaryAlbedo.image, "albedo");
+    }
+    // NV-DXVK end
 
     // RTXDI
     m_common->metaRtxdiRayQuery().dispatch(this, rtOutput);

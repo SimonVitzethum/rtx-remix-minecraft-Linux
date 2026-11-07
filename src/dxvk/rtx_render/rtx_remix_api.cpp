@@ -2038,6 +2038,13 @@ namespace {
     HWND hwnd = nullptr;
     uint32_t width = 0, height = 0;
 
+    if (!info->hwnd) {
+      // Headless: without a window the back buffer size comes from REMIX_HEADLESS_WIDTH/HEIGHT.
+      const char* headlessWidth = std::getenv("REMIX_HEADLESS_WIDTH");
+      const char* headlessHeight = std::getenv("REMIX_HEADLESS_HEIGHT");
+      width = headlessWidth ? static_cast<uint32_t>(std::atoi(headlessWidth)) : 1280;
+      height = headlessHeight ? static_cast<uint32_t>(std::atoi(headlessHeight)) : 720;
+    }
     if (info->hwnd) {
       hwnd = info->hwnd;
       auto hwndRect = RECT {};
