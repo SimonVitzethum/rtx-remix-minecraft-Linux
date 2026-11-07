@@ -41,18 +41,33 @@ current_build_dir_norm = meson.current_build_dir().replace('\\', '/')
 #   Implications: in very rare circumstances (clean clone, editing meson), get_dependencies
 #     script will be called twice on the same build. This will not be noticeable as packman
 #     early outs if everything's already fetched, so the waste is negligible + forgiveable.
-get_dependencies_script_path = join_paths(global_src_root_norm, 'scripts-common/update-deps.cmd')
-message('Downloading dependencies...')
-packman_out = run_command(get_dependencies_script_path, 'packman-external.xml', 'update-deps.log', check: true)
-message(packman_out.stdout().strip())
-if packman_out.returncode() != 0
-  message(packman_out.stderr().strip())
-  error('Failed to get dependencies.')
+if host_machine.system() == 'windows'
+  get_dependencies_script_path = join_paths(global_src_root_norm, 'scripts-common/update-deps.cmd')
+  packman_out = run_command(get_dependencies_script_path, 'packman-external.xml', 'update-deps.log', check: true)
+  message(packman_out.stdout().strip())
+  if packman_out.returncode() != 0
+    message(packman_out.stderr().strip())
+    error('Failed to get dependencies.')
+  endif
+  fetch_packman_target = custom_target('fetch_packman',
+    input            : ['packman-external.xml', get_dependencies_script_path],
+    output           : 'update-deps.log',
+    command          : [get_dependencies_script_path, '@INPUT0@', '@OUTPUT0@' ] )
+else
+  # POSIX: scripts-common/packman/packman is the bash packman bootstrap.
+  get_dependencies_script_path = join_paths(global_src_root_norm, 'scripts-common/packman/packman')
+  packman_out = run_command('bash', get_dependencies_script_path, 'pull', 'packman-external.xml', check: true)
+  message(packman_out.stdout().strip())
+  if packman_out.returncode() != 0
+    message(packman_out.stderr().strip())
+    error('Failed to get dependencies.')
+  endif
+  fetch_packman_target = custom_target('fetch_packman',
+    input            : ['packman-external.xml', get_dependencies_script_path],
+    output           : 'update-deps.log',
+    command          : ['bash', '-c', '"$1" pull "$2" > "$3"',
+                        'sh', get_dependencies_script_path, '@INPUT0@', '@OUTPUT0@' ] )
 endif
-fetch_packman_target = custom_target('fetch_packman',
-  input            : ['packman-external.xml', get_dependencies_script_path],
-  output           : 'update-deps.log',
-  command          : [get_dependencies_script_path, '@INPUT0@', '@OUTPUT0@' ] )
 
 fs = import('fs')
 
@@ -202,7 +217,7 @@ remix_api_include_path = include_directories('./public/include')
 if dxvk_is_woa
   nrc_include_path = 'external/nrc_arm64/include'
 else
-  nrc_include_path = 'submodules/nrc/include'
+  nrc_include_path = 'submodules/nrc/Include'
 endif
 
 nsight_graphics_capture_supported = (target_machine.cpu_family() == 'x86_64') or dxvk_is_woa_ec
