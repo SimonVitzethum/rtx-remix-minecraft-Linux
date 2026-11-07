@@ -31,26 +31,26 @@ Everything below is fetched via Packman as **Windows-only binaries** (the
 `external/` dir is full of symlinks to win/arm64 payloads). There are **no
 published Linux variants**:
 
-| Dependency | Package | Linux availability |
+| Dependency | Package | Linux route (port/equivalent) |
 |---|---|---|
-| OpenUSD | `usd_release` (windows-x86_64) | build from source (Pixar OpenUSD) |
-| RTXIO | `rtxio` | NVIDIA-proprietary, no Linux build |
-| NRC | `nrc_arm64` | submodule source exists (`submodules/nrc`) |
-| NRD | `nrd` / `nrd_arm64` | NVIDIA-proprietary, no Linux build |
-| DLSS-FG | `ngx_sdk_dlfg` | Linux via Streamline (libnvidia-ngx-*) |
-| DLSS-RR | `ngx_sdk_dlnr` | Linux via Streamline |
+| OpenUSD | `usd_release` (windows-x86_64) | build from source (Pixar OpenUSD, cross-platform) |
+| RTXIO | `rtxio` | GDeflate is open source; Vulkan ext `VK_NV_memory_decompression` + `VK_NV_copy_memory_indirect` are supported on Linux+Windows; CPU fallback `libdeflate`/nvCOMP (Linux) — map/port the rtxio API onto these |
+| NRC | `nrc_arm64` | submodule source exists (`submodules/nrc`) → build |
+| NRD | `nrd` / `nrd_arm64` | **Open source (NVIDIA-RTX/NRD), builds natively on Linux** (SPIR-V embedded, .sh build scripts) |
+| DLSS-FG | `ngx_sdk_dlfg` | Linux via Streamline (`libnvidia-ngx-dlssg*`) |
+| DLSS-RR | `ngx_sdk_dlnr` | Linux via Streamline (`libnvidia-ngx-dlssnr*`) |
 | Reflex | `reflex_arm64` | Linux build exists (`NvLowLatencyVk`) |
-| Aftermath | `aftermath` | NVIDIA-proprietary, no Linux build |
-| Sentry-native | `sentry-native` | build from source |
-| Slang | `slang` (win64) | build from source (NVIDIA Slang) |
-| glslang/SPIRV-Tools | `glslangvalidator`, `spirv_tools` | build from source |
-| XeSS | submodule `submodules/xess` | source exists |
+| Aftermath | `aftermath` | **NVIDIA ships Linux `.so` in the Nsight Aftermath SDK** (Vulkan on Linux, driver R455+) |
+| Sentry-native | `sentry-native` | build from source (cross-platform) |
+| Slang | `slang` (win64) | build from source (NVIDIA Slang, supports Linux) |
+| glslang/SPIRV-Tools | `glslangvalidator`, `spirv_tools` | build from source (cross-platform) |
+| XeSS | submodule `submodules/xess` | source exists; verify Linux support |
 
-Implication: a native build needs **Linux variants of ~12 external deps**. Some
-are buildable from source (OpenUSD, Slang, glslang/SPIRV-Tools, Sentry, NRC,
-XeSS, Reflex); the NVIDIA-proprietary closed binaries (RTXIO, NRD, Aftermath)
-have no Linux releases and are the hard blockers unless NVIDIA publishes them
-or we reimplement/stub them.
+**Conclusion:** every external dependency has a Linux path — either official
+Linux binaries (Aftermath, DLSS/NGX via Streamline, Reflex) or buildable from
+source (NRD, OpenUSD, Slang, glslang/SPIRV-Tools, Sentry, NRC, XeSS, and the
+RTXIO/GDeflate Vulkan-layer approach). No hard, unbridgeable dependency remains;
+the work is building/maintaining these Linux variants.
 
 ## Next steps
 
