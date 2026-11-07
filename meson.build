@@ -289,31 +289,48 @@ elif cpu_family == 'x86'
   endif
 endif
 
-lib_vulkan  = dxvk_compiler.find_library('vulkan-1', dirs : dxvk_library_path)
-lib_d3d9    = dxvk_compiler.find_library('d3d9')
-lib_d3d11   = dxvk_compiler.find_library('d3d11')
-lib_dxgi    = dxvk_compiler.find_library('dxgi')
-if not dxvk_is_msvc
-  lib_ws2_32 = dxvk_compiler.find_library('ws2_32', dirs : dxvk_library_path)
-endif
-lib_delayimp = dxvk_compiler.find_library('delayimp', dirs: [])
-
-if dxvk_is_msvc
-  lib_d3dcompiler_47 = dxvk_compiler.find_library('d3dcompiler')
+if host_machine.system() == 'windows'
+  lib_vulkan = dxvk_compiler.find_library('vulkan-1', dirs : dxvk_library_path)
 else
-  lib_d3dcompiler_47 = dxvk_compiler.find_library('d3dcompiler_47')
+  lib_vulkan = dependency('vulkan')
 endif
-
-lib_shlwapi  = dxvk_compiler.find_library('shlwapi')
-dxvk_extradep += lib_shlwapi
-
-if dxvk_is_msvc
-  lib_dbghelp = dxvk_compiler.find_library('dbghelp', required : true)
+if host_machine.system() == 'windows'
+  lib_d3d9    = dxvk_compiler.find_library('d3d9')
+  lib_d3d11   = dxvk_compiler.find_library('d3d11')
+  lib_dxgi    = dxvk_compiler.find_library('dxgi')
+  if not dxvk_is_msvc
+    lib_ws2_32 = dxvk_compiler.find_library('ws2_32', dirs : dxvk_library_path)
+  endif
+  lib_delayimp = dxvk_compiler.find_library('delayimp', dirs: [])
 else
-  lib_dbghelp = dxvk_compiler.find_library('dbghelp', dirs : dxvk_library_path, required : false)
+  # Native POSIX build: no Windows system libraries.
+  lib_d3d9 = []
+  lib_d3d11 = []
+  lib_dxgi = []
+  lib_ws2_32 = []
+  lib_delayimp = []
 endif
-if lib_dbghelp.found()
-  dxvk_extradep += lib_dbghelp
+
+if host_machine.system() == 'windows'
+  if dxvk_is_msvc
+    lib_d3dcompiler_47 = dxvk_compiler.find_library('d3dcompiler')
+  else
+    lib_d3dcompiler_47 = dxvk_compiler.find_library('d3dcompiler_47')
+  endif
+
+  lib_shlwapi = dxvk_compiler.find_library('shlwapi')
+  dxvk_extradep += lib_shlwapi
+
+  if dxvk_is_msvc
+    lib_dbghelp = dxvk_compiler.find_library('dbghelp', required : true)
+  else
+    lib_dbghelp = dxvk_compiler.find_library('dbghelp', dirs : dxvk_library_path, required : false)
+  endif
+  if lib_dbghelp.found()
+    dxvk_extradep += lib_dbghelp
+  endif
+else
+  lib_d3dcompiler_47 = []
 endif
 
 if enable_rtxio == true

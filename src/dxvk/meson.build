@@ -520,15 +520,17 @@ if enable_rtxio
   dxvk_deps += rtxio_dep
 endif
 
-if not dxvk_is_msvc
-	ws2_32_dep = declare_dependency(
-		dependencies : [ lib_ws2_32])
-	dxvk_deps += ws2_32_dep
-endif
+if host_machine.system() == 'windows'
+  if not dxvk_is_msvc
+    ws2_32_dep = declare_dependency(
+      dependencies : [ lib_ws2_32])
+    dxvk_deps += ws2_32_dep
+  endif
 
-delayimp_dep = declare_dependency(
-	dependencies : [ lib_delayimp])
-dxvk_deps += delayimp_dep
+  delayimp_dep = declare_dependency(
+    dependencies : [ lib_delayimp])
+  dxvk_deps += delayimp_dep
+endif
 
 dxvk_lib = static_library('dxvk', dxvk_src, dxvk_version, [generated_dxvk_shaders, rtx_shaders, dxvk_generated_embedded_files],
   link_with           : [ util_lib, spirv_lib, usd_plugins ], 
