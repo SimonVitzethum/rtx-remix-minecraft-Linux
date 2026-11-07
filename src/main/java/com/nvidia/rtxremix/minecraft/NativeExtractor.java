@@ -55,11 +55,34 @@ public final class NativeExtractor {
     private NativeExtractor() {}
 
     /**
-     * Maps Java's os.arch property to the SDK subdirectory in the JAR.
-     * aarch64 -> remix-sdk-arm64; anything else (amd64, x86_64, etc.) -> remix-sdk-win64.
+     * Maps Java's os.arch property to the SDK subdirectory in the JAR under the
+     * historical Windows convention: aarch64 -> remix-sdk-arm64; anything else
+     * (amd64, x86_64, etc.) -> remix-sdk-win64. Kept for tests and any caller
+     * that is Windows-specific.
      */
     static String detectPlatformSdkDir(String osArch) {
         return "aarch64".equals(osArch) ? "remix-sdk-arm64" : "remix-sdk-win64";
+    }
+
+    /**
+     * Maps os.arch + os.name to the SDK subdirectory. On Linux this selects the
+     * POSIX payloads (remix-sdk-linux64 / remix-sdk-linuxarm64); otherwise it
+     * falls back to the Windows layout.
+     */
+    static String detectPlatformSdkDir(String osArch, String osName) {
+        if (osName != null && osName.toLowerCase().contains("linux")) {
+            return "aarch64".equals(osArch) ? "remix-sdk-linuxarm64" : "remix-sdk-linux64";
+        }
+        return detectPlatformSdkDir(osArch);
+    }
+
+    /**
+     * The binary that proves an extracted runtime is present: d3d9.dll on
+     * Windows, remixbridge.so on Linux.
+     */
+    static String sdkMarkerBinary() {
+        String os = System.getProperty("os.name", "");
+        return os.toLowerCase().contains("linux") ? "remixbridge.so" : "d3d9.dll";
     }
 
     /**
@@ -142,7 +165,8 @@ public final class NativeExtractor {
                     container.getRootPaths().get(0).resolve(JAR_NATIVE_ROOT),
                     FabricLoader.getInstance().getGameDir(),
                     container.getMetadata().getVersion().getFriendlyString(),
-                    detectPlatformSdkDir(System.getProperty("os.arch")),
+                    detectPlatformSdkDir(System.getProperty("os.arch"),
+                            System.getProperty("os.name")),
                     ShippedPayloadHistory.loadBundled(),
                     RETIRED_SDK_CLEANUP);
             return true;
@@ -177,7 +201,7 @@ public final class NativeExtractor {
         if (Files.exists(versionFile)) {
             String existing = Files.readString(versionFile).strip();
             if (markerMatches(existing, expectedMarker)) {
-                if (Files.isRegularFile(remixSdkDir.resolve("d3d9.dll"))) {
+                if (Files.isRegularFile(remixSdkDir.resolve(sdkMarkerBinary()))) {
                     if (restoreMissingRtxConf(nativeRoot, gameDir)) {
                         LOGGER.info("Restored mod-owned {} after it was deleted since the last extraction",
                                 RTX_CONF);
