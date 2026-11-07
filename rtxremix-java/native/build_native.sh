@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ARCH="${1:-x64}"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 case "$ARCH" in

@@ -31,6 +31,15 @@
 #include <signal.h>
 #include <execinfo.h>
 #include <GL/gl.h>
+#include <GL/glx.h>
+#endif
+
+// Resolve an OpenGL extension function pointer: wglGetProcAddress on Windows,
+// glXGetProcAddressARB on Linux/X11.
+#if defined(_WIN32)
+#define RTX_BRIDGE_GET_GL_PROC(n) wglGetProcAddress(n)
+#else
+#define RTX_BRIDGE_GET_GL_PROC(n) glXGetProcAddressARB((const unsigned char*)(n))
 #endif
 
 #include <jni.h>
@@ -50,8 +59,6 @@ static volatile bool g_crashDumpDetail = false;
 // Linux: no VEH/minidump machinery yet; fault forwarding is left to HotSpot.
 static void installCrashHandler() {}
 static void uninstallCrashHandler() {}
-template <typename Call>
-static auto remixCall(Call&& call) -> decltype(call()) { return call(); }
 #endif
 
 #include "remix_c.h"
@@ -345,7 +352,7 @@ static void uninstallCrashHandler() {
 // HotSpot writes hs_err_pid*.log with the Java frames instead.
 // ════════════════════════════════════════════════════════════════════════════
 
-static volatile LONG g_forwardRemixFaults = 1;
+static volatile long g_forwardRemixFaults = 1;
 static uintptr_t g_jvmImageBegin = 0;
 static uintptr_t g_jvmImageEnd   = 0;
 
@@ -442,11 +449,16 @@ static LONG remixFaultFilter(EXCEPTION_POINTERS* ep) {
 // __except block is unreachable.
 template <typename Call>
 static auto remixCall(Call&& call) -> decltype(call()) {
+#if !defined(_MSC_VER)
+    // Linux/mingw: no SEH __try/__except; leave faults to HotSpot.
+    return call();
+#else
     __try {
         return call();
     } __except (remixFaultFilter(GetExceptionInformation())) {
     }
     return decltype(call())();
+#endif
 }
 
 // Tracy profiling: resolve ___tracy_* symbols from d3d9.dll at runtime so
@@ -493,6 +505,7 @@ static bool initTracyFunctionsLocked() {
     if (!s_tracyEnabled) return false;
     if (s_tracyResolved) return s_tracyAvailable;
 
+#if defined(_WIN32)
     HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
     if (!d3d9) return false;
 
@@ -503,6 +516,15 @@ static bool initTracyFunctionsLocked() {
     s_emitPlot           = (FnEmitPlot)          GetProcAddress(d3d9, "___tracy_emit_plot");
     s_emitMessage        = (FnEmitMessage)       GetProcAddress(d3d9, "___tracy_emit_message");
     s_emitFrameMark      = (FnEmitFrameMark)     GetProcAddress(d3d9, "___tracy_emit_frame_mark");
+#else
+    s_allocSrclocName    = (FnAllocSrclocName)   dlsym(RTLD_DEFAULT, "___tracy_alloc_srcloc_name");
+    s_emitZoneBeginAlloc = (FnEmitZoneBeginAlloc)dlsym(RTLD_DEFAULT, "___tracy_emit_zone_begin_alloc");
+    s_emitZoneEnd        = (FnEmitZoneEnd)       dlsym(RTLD_DEFAULT, "___tracy_emit_zone_end");
+    s_setThreadName      = (FnSetThreadName)     dlsym(RTLD_DEFAULT, "___tracy_set_thread_name");
+    s_emitPlot           = (FnEmitPlot)          dlsym(RTLD_DEFAULT, "___tracy_emit_plot");
+    s_emitMessage        = (FnEmitMessage)       dlsym(RTLD_DEFAULT, "___tracy_emit_message");
+    s_emitFrameMark      = (FnEmitFrameMark)     dlsym(RTLD_DEFAULT, "___tracy_emit_frame_mark");
+#endif
 
     s_tracyAvailable = s_allocSrclocName && s_emitZoneBeginAlloc && s_emitZoneEnd;
     s_tracyResolved = true;
@@ -513,7 +535,7 @@ static bool initTracyFunctionsLocked() {
 // Global state: filled by initialize(), read by every other function.
 // ════════════════════════════════════════════════════════════════════════════
 
-static HMODULE          g_remixDll   = nullptr;
+static void*             g_remixDll   = nullptr;
 static remixapi_Interface g_remix    = {};
 static bool             g_inited     = false;
 
@@ -658,6 +680,7 @@ bool setJavaInstanceField(JNIEnv *env, jclass java_class,
 }
 } // namespace
 
+#if defined(_WIN32)
 static jint initializeRuntime(const wchar_t* dllPath)
 {
     // Extract parent directory for SetDllDirectoryW
@@ -695,11 +718,6 @@ static jint initializeRuntime(const wchar_t* dllPath)
     recordJvmImage();
     remixapi_ErrorCode rc = remixCall([&] { return pfnInit(&initInfo, &g_remix); });
     if (rc == REMIXAPI_ERROR_CODE_SUCCESS) {
-        // ABI sanity check: every function pointer we rely on at runtime must be
-        // populated. A partially-filled vtable indicates the loaded d3d9.dll is
-        // from an older minor version that predates a tail-of-struct addition.
-        // isVersionCompatible on the runtime side should catch this first, but
-        // keep a belt-and-suspenders check for custom/forked runtimes.
         if (!g_remix.UpdateTextureFromMemory || !g_remix.UpdateMaterial
                 || !g_remix.GetConfigVariableResolved) {
             fprintf(stderr,
@@ -725,6 +743,65 @@ static jint initializeRuntime(const wchar_t* dllPath)
     return (jint)rc;
 }
 
+static jint initializeRuntimeUtf8(const char* utf8)
+{
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
+    if (wlen <= 0) return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    std::vector<wchar_t> wpath(wlen);
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wpath.data(), wlen);
+    return initializeRuntime(wpath.data());
+}
+#else // POSIX / Linux
+static jint initializeRuntimeUtf8(const char* dllPath)
+{
+    g_remixDll = dlopen(dllPath, RTLD_NOW | RTLD_LOCAL);
+    if (!g_remixDll) {
+        return REMIXAPI_ERROR_CODE_LOAD_LIBRARY_FAILURE;
+    }
+
+    auto pfnInit = (PFN_remixapi_InitializeLibrary)
+        dlsym(g_remixDll, "remixapi_InitializeLibrary");
+    if (!pfnInit) {
+        dlclose(g_remixDll);
+        g_remixDll = nullptr;
+        return REMIXAPI_ERROR_CODE_GET_PROC_ADDRESS_FAILURE;
+    }
+
+    remixapi_InitializeLibraryInfo initInfo = {};
+    initInfo.sType   = REMIXAPI_STRUCT_TYPE_INITIALIZE_LIBRARY_INFO;
+    initInfo.version = REMIXAPI_VERSION_MAKE(
+        REMIXAPI_VERSION_MAJOR, REMIXAPI_VERSION_MINOR, REMIXAPI_VERSION_PATCH);
+
+    memset(&g_remix, 0, sizeof(g_remix));
+
+    remixapi_ErrorCode rc = remixCall([&] { return pfnInit(&initInfo, &g_remix); });
+    if (rc == REMIXAPI_ERROR_CODE_SUCCESS) {
+        if (!g_remix.UpdateTextureFromMemory || !g_remix.UpdateMaterial
+                || !g_remix.GetConfigVariableResolved) {
+            fprintf(stderr,
+                "[remixbridge] FATAL: loaded Remix runtime is missing "
+                "required vtable tail entries. "
+                "This indicates an ABI mismatch: expected REMIXAPI v%d.%d.%d "
+                "or newer.\n",
+                REMIXAPI_VERSION_MAJOR, REMIXAPI_VERSION_MINOR, REMIXAPI_VERSION_PATCH);
+            fflush(stderr);
+            memset(&g_remix, 0, sizeof(g_remix));
+            dlclose(g_remixDll);
+            g_remixDll = nullptr;
+            return REMIXAPI_ERROR_CODE_INCOMPATIBLE_VERSION;
+        }
+        g_inited = true;
+        {
+            std::lock_guard<std::mutex> lock(s_tracyMutex);
+            s_tracyEnabled = true;
+            resetTracyFunctionsLocked();
+        }
+        installCrashHandler();
+    }
+    return (jint)rc;
+}
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // JNI exports: com_nvidia_rtxremix_RemixBridge_*
 // ════════════════════════════════════════════════════════════════════════════
@@ -736,6 +813,7 @@ extern "C" {
 // Plain C entry point used by the developer tools in a short-lived subprocess.
 // It deliberately follows the same initialization path as Java so this bridge,
 // not the launcher, remains the authority on Remix API compatibility.
+#if defined(_WIN32)
 __declspec(dllexport) jint remixbridge_probe_runtime(const wchar_t* dllPath)
 {
     if (!dllPath || !dllPath[0]) {
@@ -743,26 +821,43 @@ __declspec(dllexport) jint remixbridge_probe_runtime(const wchar_t* dllPath)
     }
     return initializeRuntime(dllPath);
 }
+#else
+__attribute__((visibility("default"))) jint remixbridge_probe_runtime(const wchar_t* dllPath)
+{
+    if (!dllPath || !dllPath[0]) {
+        return REMIXAPI_ERROR_CODE_LOAD_LIBRARY_FAILURE;
+    }
+    std::string u8;
+    for (const wchar_t* p = dllPath; *p; ++p) {
+        uint32_t cp = (uint32_t)*p;
+        if (cp < 0x80) u8.push_back((char)cp);
+        else if (cp < 0x800) {
+            u8.push_back((char)(0xC0 | (cp >> 6)));
+            u8.push_back((char)(0x80 | (cp & 0x3F)));
+        } else {
+            u8.push_back((char)(0xE0 | (cp >> 12)));
+            u8.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            u8.push_back((char)(0x80 | (cp & 0x3F)));
+        }
+    }
+    return initializeRuntimeUtf8(u8.c_str());
+}
+#endif
 
 JNIEXPORT jint JNICALL
 Java_com_nvidia_rtxremix_RemixBridge_initialize(JNIEnv* env, jclass, jstring jDllPath)
 {
     const char* path = env->GetStringUTFChars(jDllPath, nullptr);
-
-    // Convert UTF-8 path to wide string for SetDllDirectoryW / LoadLibraryW
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, path, -1, nullptr, 0);
-    wchar_t* wpath = (wchar_t*)_alloca(wlen * sizeof(wchar_t));
-    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, wlen);
-
+    jint rc = initializeRuntimeUtf8(path);
     env->ReleaseStringUTFChars(jDllPath, path);
-
-    return initializeRuntime(wpath);
+    return rc;
 }
 
 // ─── process command line ────────────────────────────────────────────────
 
 // Crash dumps copy the process parameters out of the PEB, so this is the copy
 // a redaction must reach.
+#if defined(_WIN32)
 static UNICODE_STRING& pebCommandLine() {
     return NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->CommandLine;
 }
@@ -787,9 +882,6 @@ Java_com_nvidia_rtxremix_RemixBridge_overwriteProcessCommandLine(JNIEnv* env, jc
     std::vector<WCHAR> replacement(length);
     env->GetStringRegion(jReplacement, 0, length, (jchar*)replacement.data());
 
-    // GetCommandLineA returns an ANSI conversion made at process start, sized
-    // for the original line. Converting the replacement must fit in it, and is
-    // shorter whenever a blanked character took more than one byte.
     char* ansi = GetCommandLineA();
     const size_t originalAnsiLength = strlen(ansi);
     const int ansiLength = WideCharToMultiByte(CP_ACP, 0, replacement.data(), length,
@@ -797,8 +889,6 @@ Java_com_nvidia_rtxremix_RemixBridge_overwriteProcessCommandLine(JNIEnv* env, jc
     if (ansiLength <= 0 || (size_t)ansiLength > originalAnsiLength)
         return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
 
-    // GetCommandLineW normally returns the PEB buffer itself. A separate copy
-    // of the same line is kept in step.
     WCHAR* wide = GetCommandLineW();
     const bool separateWideCopy = wide != commandLine.Buffer
         && wcslen(wide) == (size_t)length
@@ -808,11 +898,38 @@ Java_com_nvidia_rtxremix_RemixBridge_overwriteProcessCommandLine(JNIEnv* env, jc
     if (separateWideCopy)
         wmemcpy(wide, replacement.data(), length);
     WideCharToMultiByte(CP_ACP, 0, replacement.data(), length, ansi, ansiLength, nullptr, nullptr);
-    // Zero through the original terminator, so no byte of a blanked value
-    // survives past the new end of the line.
     SecureZeroMemory(ansi + ansiLength, originalAnsiLength - ansiLength + 1);
     return REMIXAPI_ERROR_CODE_SUCCESS;
 }
+#else
+// POSIX: read the process image command line from /proc; there is no in-place
+// PEB redaction on Linux, so overwrite is a length-checked no-op for now.
+JNIEXPORT jstring JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_processCommandLine(JNIEnv* env, jclass)
+{
+    std::string all;
+    FILE* f = fopen("/proc/self/cmdline", "rb");
+    if (f) {
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), f)) > 0) all.append(buf, n);
+        fclose(f);
+    }
+    std::string joined;
+    for (char c : all) joined += (c == '\0') ? ' ' : c;
+    while (!joined.empty() && joined.back() == ' ') joined.pop_back();
+    return env->NewStringUTF(joined.c_str());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_overwriteProcessCommandLine(JNIEnv* env, jclass,
+    jstring jReplacement)
+{
+    (void)env;
+    (void)jReplacement;
+    return REMIXAPI_ERROR_CODE_SUCCESS;
+}
+#endif
 
 // ─── crash dumps ─────────────────────────────────────────────────────────
 
@@ -833,7 +950,7 @@ Java_com_nvidia_rtxremix_RemixBridge_startup(JNIEnv*, jclass,
     if (!g_inited || !g_remix.Startup) return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
     remixapi_StartupInfo info = {};
     info.sType                         = REMIXAPI_STRUCT_TYPE_STARTUP_INFO;
-    info.hwnd                          = (HWND)(uintptr_t)hwnd;
+    info.hwnd                          = (remixapi_HWND)(uintptr_t)hwnd;
     info.disableSrgbConversionForOutput = disableSrgb;
     info.forceNoVkSwapchain            = forceNoVkSwapchain;
     info.editorModeEnabled             = editorMode;
@@ -856,7 +973,15 @@ Java_com_nvidia_rtxremix_RemixBridge_shutdown(JNIEnv*, jclass)
         resetTracyFunctionsLocked();
     }
     jint rc = (jint)remixCall([&] { return shutdown(); });
-    if (g_remixDll) { FreeLibrary(g_remixDll); g_remixDll = nullptr; }
+    if (g_remixDll) {
+#if defined(_WIN32)
+        FreeLibrary(g_remixDll);
+#else
+        dlclose(g_remixDll);
+#endif
+        g_remixDll = nullptr;
+    }
+
     memset(&g_remix, 0, sizeof(g_remix));
     return rc;
 }
@@ -883,7 +1008,7 @@ Java_com_nvidia_rtxremix_RemixBridge_present(JNIEnv*, jclass,
     if (!g_inited || !g_remix.Present) return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
     remixapi_PresentInfo info = {};
     info.sType        = REMIXAPI_STRUCT_TYPE_PRESENT_INFO;
-    info.hwndOverride = (HWND)(uintptr_t)hwndOverride;
+    info.hwndOverride = (remixapi_HWND)(uintptr_t)hwndOverride;
     info.skipVulkanSwapchain = (bool)skipVulkanSwapchain;
     info.interopFlipY = (bool)interopFlipY;
     info.clientDoneSemaphore_ValueToWait = (uint64_t)clientDoneSemaphore_ValueToWait;
@@ -911,7 +1036,11 @@ Java_com_nvidia_rtxremix_RemixBridge_faultInRemixCall(JNIEnv* env, jclass, jbool
 JNIEXPORT void JNICALL
 Java_com_nvidia_rtxremix_RemixBridge_setRemixFaultForwarding(JNIEnv*, jclass, jboolean enabled)
 {
+#if defined(_WIN32)
     InterlockedExchange(&g_forwardRemixFaults, enabled ? 1 : 0);
+#else
+    __atomic_store_n(&g_forwardRemixFaults, enabled ? 1 : 0, __ATOMIC_RELAXED);
+#endif
 }
 
 JNIEXPORT jint JNICALL
@@ -1050,19 +1179,41 @@ Java_com_nvidia_rtxremix_RemixBridge_createTextureFromMemory(JNIEnv* env, jclass
     return (rc == REMIXAPI_ERROR_CODE_SUCCESS) ? (jlong)(uintptr_t)handle : 0;
 }
 
+// Convert a UTF-8 byte string to the native wchar_t path the Remix C API
+// expects (UTF-16 on Windows, UTF-32 on Linux).
+static std::vector<wchar_t> utf8ToWide(const char* s) {
+#if defined(_WIN32)
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
+    std::vector<wchar_t> out(wlen);
+    MultiByteToWideChar(CP_UTF8, 0, s, -1, out.data(), wlen);
+    return out;
+#else
+    std::vector<wchar_t> out;
+    const unsigned char* p = (const unsigned char*)s;
+    while (*p) {
+        uint32_t cp;
+        if ((*p & 0x80) == 0) { cp = *p++; }
+        else if ((*p & 0xE0) == 0xC0) { cp = (*p & 0x1F) << 6 | (p[1] & 0x3F); p += 2; }
+        else if ((*p & 0xF0) == 0xE0) { cp = (*p & 0x0F) << 12 | (p[1] & 0x3F) << 6 | (p[2] & 0x3F); p += 3; }
+        else { cp = (*p & 0x07) << 18 | (p[1] & 0x3F) << 12 | (p[2] & 0x3F) << 6 | (p[3] & 0x3F); p += 4; }
+        out.push_back((wchar_t)cp);
+    }
+    out.push_back(0);
+    return out;
+#endif
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_nvidia_rtxremix_RemixBridge_createTextureFromFile(JNIEnv* env, jclass, jstring jPath)
 {
     if (!g_inited || !g_remix.CreateTextureFromFile) return 0;
 
     const char* utf8 = env->GetStringUTFChars(jPath, nullptr);
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
-    wchar_t* wpath = (wchar_t*)_alloca(wlen * sizeof(wchar_t));
-    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wpath, wlen);
+    std::vector<wchar_t> wpath = utf8ToWide(utf8);
     env->ReleaseStringUTFChars(jPath, utf8);
 
     remixapi_TextureHandle handle = nullptr;
-    remixapi_ErrorCode rc = remixCall([&] { return g_remix.CreateTextureFromFile(wpath, &handle); });
+    remixapi_ErrorCode rc = remixCall([&] { return g_remix.CreateTextureFromFile(wpath.data(), &handle); });
     return (rc == REMIXAPI_ERROR_CODE_SUCCESS) ? (jlong)(uintptr_t)handle : 0;
 }
 
@@ -1574,6 +1725,7 @@ Java_com_nvidia_rtxremix_RemixBridge_dxvkSetDefaultOutput(JNIEnv*, jclass,
         (remixapi_dxvk_CopyRenderingOutputType)type, &color); });
 }
 
+#if defined(_WIN32)
 // ─── D3D9 COM helpers ────────────────────────────────────────────────────
 // These replicate D3D9Device.java's vtable calls in C++ where they belong.
 
@@ -1701,6 +1853,28 @@ Java_com_nvidia_rtxremix_RemixBridge_d3d9Release(JNIEnv*, jclass, jlong comPtr)
     auto pfnRelease = (PFN_Release)vtable[2];
     return (jint)remixCall([&] { return pfnRelease(pUnk); });
 }
+
+
+#else
+// D3D9 COM interop is Windows-only; the Linux bridge has no D3D9 device.
+
+JNIEXPORT jlong JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_d3d9CreateDevice(JNIEnv*, jclass,
+    jlong, jlong, jint, jint) { return 0; }
+
+JNIEXPORT jlong JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_d3d9CreateRenderTarget(JNIEnv*, jclass,
+    jlong, jint, jint, jint) { return 0; }
+
+JNIEXPORT jint JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_d3d9Reset(JNIEnv*, jclass, jlong, jint, jint) { return 0; }
+
+JNIEXPORT jint JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_d3d9Present(JNIEnv*, jclass, jlong) { return 0; }
+
+JNIEXPORT jint JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_d3d9Release(JNIEnv*, jclass, jlong) { return 0; }
+#endif
 
 // ─── extension allocation ────────────────────────────────────────────────
 
@@ -2162,7 +2336,7 @@ Java_com_nvidia_rtxremix_RemixBridge_openglSemaphoreParameterui64vEXT(JNIEnv* en
 
     static PFNGLSEMAPHOREPARAMETERUI64VEXTPROC glSemaphoreParameterui64vEXT = nullptr;
     if (!glSemaphoreParameterui64vEXT) {
-      glSemaphoreParameterui64vEXT = (PFNGLSEMAPHOREPARAMETERUI64VEXTPROC)wglGetProcAddress("glSemaphoreParameterui64vEXT");
+      glSemaphoreParameterui64vEXT = (PFNGLSEMAPHOREPARAMETERUI64VEXTPROC)RTX_BRIDGE_GET_GL_PROC("glSemaphoreParameterui64vEXT");
       if (!glSemaphoreParameterui64vEXT) {
         return -2; // not found
       };
@@ -2180,7 +2354,7 @@ Java_com_nvidia_rtxremix_RemixBridge_openglSemaphoreParameterivNV(JNIEnv* env, j
 
     static PFNGLSEMAPHOREPARAMETERIVNVPROC glSemaphoreParameterivNV = nullptr;
     if (!glSemaphoreParameterivNV) {
-      glSemaphoreParameterivNV = (PFNGLSEMAPHOREPARAMETERIVNVPROC)wglGetProcAddress("glSemaphoreParameterivNV");
+      glSemaphoreParameterivNV = (PFNGLSEMAPHOREPARAMETERIVNVPROC)RTX_BRIDGE_GET_GL_PROC("glSemaphoreParameterivNV");
       if (!glSemaphoreParameterivNV) {
         return -2; // not found
       };
@@ -2198,7 +2372,7 @@ Java_com_nvidia_rtxremix_RemixBridge_openglCreateSemaphoresNV(JNIEnv* env, jclas
 
     static PFNGLCREATESEMAPHORESNVPROC glCreateSemaphoresNV = nullptr;
     if (!glCreateSemaphoresNV) {
-      glCreateSemaphoresNV = (PFNGLCREATESEMAPHORESNVPROC)wglGetProcAddress("glCreateSemaphoresNV");
+      glCreateSemaphoresNV = (PFNGLCREATESEMAPHORESNVPROC)RTX_BRIDGE_GET_GL_PROC("glCreateSemaphoresNV");
       if (!glCreateSemaphoresNV) {
         return 0; // not found
       };
