@@ -72,6 +72,36 @@ meson compile -C _CompLinuxRelease
 
 (Currently stops at the Windows-only dependency resolution for `rtxio`.)
 
+## RTXIO port (Linux shim mapping)
+
+RTXIO is a closed Windows binary. dxvk-remix uses a small, well-defined API
+surface (from `external/rtxio/include/rtxio/*.h`):
+
+Used functions: `rtxioCreate`, `rtxioOpenFile`, `rtxioEnqueueUpdateRequests`,
+`rtxioEnqueueWait`, `rtxioEnqueueSignal`, `rtxioFlush`, `rtxioRelease`,
+`rtxioGetCounter`, `rtxioGetTimelineValue`, `rtxioVulkanGetInstanceExtensions`,
+`rtxioVulkanGetDeviceExtensions`, `rtxioVulkanGetPhysicalDeviceFeatures`,
+`rtxioVulkanGetSubresourceIndex`.
+
+What RTXIO does internally, and the Linux equivalent:
+
+| RTXIO function/feature | Linux equivalent |
+|---|---|
+| GDeflate GPU decompression | `VK_NV_memory_decompression` (device extension, supported on Linux NVIDIA driver) |
+| Copy decompressed data into buffer/image subresources | `VK_NV_copy_memory_indirect` (device extension) or `vkCmdCopyBufferToImage` |
+| CPU fallback decompression (`RTXIO_FORCE_CPU`) | `libdeflate` (open source) / `nvCOMP` (Linux) |
+| Packed resource file reads (`rtxioOpenFile`) | POSIX `open`/`read` |
+| Async scheduling + queue sharing (`RTXIO_VULKAN_SHARED_QUEUE`, `RTXIOVkDevice`) | Vulkan device queue + **timeline semaphores** (`rtxioGetTimelineValue`, EnqueueWait/Signal) |
+| Subresource indexing (`rtxioVulkanGetSubresourceIndex`) | trivial computation (arrayLayer*mipLevels + mipLevel) |
+| Instance/device extensions + features queries | return `VK_NV_memory_decompression`/`VK_NV_copy_memory_indirect`; query support via `vkEnumerate*`/`vkGetPhysicalDeviceFeatures2` |
+
+The `rtxio.h` / `rtxioVulkan.h` headers are already compiler-clean (GCC
+`visibility("default")` attributes), so a **shim library** exposing the same
+13 functions can be built for Linux on top of the primitives above. ABI
+structs (`RTXIOVkDevice`, `RTXIOVkImage`, destination types) are matched
+directly from the vendored headers. This is the practical replacement for the
+closed `rtxio.dll`.
+
 ## Scope assessment
 
 This is a multi-week to multi-month engineering effort. The meson/build
