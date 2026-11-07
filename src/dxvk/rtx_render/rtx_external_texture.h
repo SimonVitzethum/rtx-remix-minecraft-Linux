@@ -93,6 +93,7 @@ namespace dxvk {
     void* add(std::shared_ptr<ExternalTexture> texture);
     std::shared_ptr<ExternalTexture> find(void* handle);
     bool remove(void* handle);
+    void clear();
 
     // Returns the GPU texture for a handle, creating it on first use. Must be called on the render thread.
     TextureRef resolve(DxvkContext& ctx, void* handle);

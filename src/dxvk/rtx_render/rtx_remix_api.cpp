@@ -1986,11 +1986,10 @@ namespace {
     out_info->width = interop.width;
     out_info->height = interop.height;
     out_info->interopImageFormat = toRemixTextureFormat(interop.format);
-    // The primary depth is not exported yet.
-    out_info->depthImageMemory_Handle = 0;
-    out_info->depthAllocationSize = 0;
-    out_info->depthWidth = 0;
-    out_info->depthHeight = 0;
+    out_info->depthImageMemory_Handle = interop.depthMemoryHandle;
+    out_info->depthAllocationSize = interop.depthAllocationSize;
+    out_info->depthWidth = interop.depthWidth;
+    out_info->depthHeight = interop.depthHeight;
     out_info->interopDepthImageFormat = REMIXAPI_TEXTURE_FORMAT_R32_SFLOAT;
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
@@ -2108,6 +2107,23 @@ namespace {
 
   remixapi_ErrorCode REMIXAPI_CALL remixapi_Shutdown(void) {
     if (s_dxvkDevice) {
+      // Background pipeline compilation runs inside the driver. Letting the process exit while those workers are busy
+      // crashes on Linux, where exit() does not kill other threads first as ExitProcess does on Windows.
+      auto device = s_dxvkDevice->GetDXVKDevice();
+      device->waitForIdle();
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+      while (device->getCommon()->pipelineManager().isCompilingShaders() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      }
+
+      // Registries hold GPU resources that must not outlive the device.
+      {
+        auto& registry = sceneInstances();
+        std::lock_guard lock { registry.mutex };
+        registry.instances.clear();
+      }
+      dxvk::ExternalTextureRegistry::get().clear();
+
       if (dxvk::D3D9SwapchainExternal* presenter = s_dxvkDevice->GetExternalPresenter()) {
         presenter->clearPresentTasks();
       }

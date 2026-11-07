@@ -2033,6 +2033,17 @@ namespace dxvk {
     }
     if (m_interop.clientDone == nullptr) {
       m_interop.clientDone = RtxSemaphore::createTimeline(m_device.ptr(), "Interop::clientDone", 0, true);
+
+      // Debug aid: REMIX_DEBUG_INTEROP=1 reports the semaphore counters every two seconds.
+      if (std::getenv("REMIX_DEBUG_INTEROP")) {
+        std::thread([done = m_interop.dxvkDone, client = m_interop.clientDone, this]() {
+          for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            Logger::info(str::format("interop watchdog: dxvkDone=", done->value(), " submitted=", m_interop.dxvkDoneValue,
+                                     " clientDone=", client->value()));
+          }
+        }).detach();
+      }
     }
   }
 
@@ -2068,6 +2079,38 @@ namespace dxvk {
     m_interop.image = m_device->createImage(info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, DxvkMemoryStats::Category::RTXRenderTarget, "Interop image");
   }
 
+  void D3D9SwapChainEx::EnsureInteropDepthImage(uint32_t width, uint32_t height) {
+    if (m_interop.depthImage != nullptr) {
+      const VkExtent3D extent = m_interop.depthImage->info().extent;
+      if (extent.width == width && extent.height == height) {
+        return;
+      }
+    }
+
+    DxvkImageCreateInfo info = {};
+    info.type = VK_IMAGE_TYPE_2D;
+    info.format = VK_FORMAT_R32_SFLOAT;
+    info.flags = 0;
+    info.sampleCount = VK_SAMPLE_COUNT_1_BIT;
+    info.extent = { width, height, 1 };
+    info.numLayers = 1;
+    info.mipLevels = 1;
+    info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    info.stages = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    info.access = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.layout = VK_IMAGE_LAYOUT_GENERAL;
+    info.shared = true;
+    info.sharing.mode = DxvkSharedHandleMode::Export;
+#ifdef REMIX_LINUX_NATIVE
+    info.sharing.type = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+#else
+    info.sharing.type = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#endif
+
+    m_interop.depthImage = m_device->createImage(info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, DxvkMemoryStats::Category::RTXRenderTarget, "Interop depth image");
+  }
+
   HRESULT D3D9SwapChainEx::SubmitInterop(uint32_t flags) {
     if (!m_interop.enabled) {
       return D3DERR_INVALIDCALL;
@@ -2084,8 +2127,20 @@ namespace dxvk {
 
       m_parent->m_rtx.EndFrame(backBuffer);
 
+      // The depth image follows the render resolution of the previous frame, which the synchronized CS thread has settled.
+      {
+        const auto& primaryDepth = m_device->getCommon()->getResources().getRaytracingOutput().m_primaryDepth;
+        if (primaryDepth.isValid() && primaryDepth.image != nullptr) {
+          const VkExtent3D depthExtent = primaryDepth.image->info().extent;
+          if (depthExtent.width > 0 && depthExtent.height > 0) {
+            EnsureInteropDepthImage(depthExtent.width, depthExtent.height);
+          }
+        }
+      }
+
       const uint64_t signalValue = ++m_interop.dxvkDoneValue;
       m_parent->EmitCs([cSrc = backBuffer,
+                        cDepthDst = m_interop.depthImage,
                         cDst = m_interop.image,
                         cDone = m_interop.dxvkDone,
                         signalValue](DxvkContext* ctx) {
@@ -2096,6 +2151,15 @@ namespace dxvk {
           ? finalOutput.resource(Resources::AccessType::ReadWrite).image
           : cSrc;
         RtxContext::blitImageHelper(ctx, source, cDst, VK_FILTER_NEAREST);
+
+        static const bool skipDepthBlit = std::getenv("REMIX_NO_DEPTH_BLIT") != nullptr;
+        if (cDepthDst != nullptr && !skipDepthBlit) {
+          const auto& depth = ctx->getCommonObjects()->getResources().getRaytracingOutput().m_primaryDepth;
+          if (depth.isValid() && depth.image != nullptr && depth.image->info().extent == cDepthDst->info().extent) {
+            RtxContext::blitImageHelper(ctx, depth.image, cDepthDst, VK_FILTER_NEAREST);
+          }
+        }
+
         ctx->getCommandList()->addSignalSemaphore(cDone->handle(), signalValue);
         ctx->flushCommandList();
       });
@@ -2105,6 +2169,10 @@ namespace dxvk {
       }
       if (!(flags & kSubmitDisableCpuWaitForVkSubmit)) {
         m_parent->SynchronizeCsThread();
+        // Return only once vkQueueSubmit has been called. A client that waits for the done semaphore on the CPU would
+        // otherwise block inside the driver while the submission that signals it is still queued.
+        m_device->lockSubmission();
+        m_device->unlockSubmission();
       }
       if (flags & kSubmitForceWaitDeviceIdle) {
         m_device->waitForIdle();
@@ -2184,6 +2252,9 @@ namespace dxvk {
       if (m_interop.reportedClientDone == 0) {
         m_interop.reportedClientDone = toHandle(m_interop.clientDone->sharedHandle());
       }
+      if (std::getenv("REMIX_DEBUG_INTEROP")) {
+        Logger::info(str::format("interop: dxvkDone counter=", m_interop.dxvkDone->value(), " submitted=", m_interop.dxvkDoneValue));
+      }
       pInfo->dxvkDoneSemaphoreHandle = m_interop.reportedDxvkDone;
       pInfo->dxvkDoneSemaphoreValue = m_interop.dxvkDoneValue;
       pInfo->clientDoneSemaphoreHandle = m_interop.reportedClientDone;
@@ -2199,6 +2270,18 @@ namespace dxvk {
         pInfo->width = static_cast<int32_t>(m_interop.image->info().extent.width);
         pInfo->height = static_cast<int32_t>(m_interop.image->info().extent.height);
         pInfo->format = m_interop.image->info().format;
+      }
+
+      if (m_interop.depthImage != nullptr) {
+        if (m_interop.reportedDepthImage != m_interop.depthImage.ptr()) {
+          m_interop.reportedDepthHandle = reinterpret_cast<uint64_t>(m_interop.depthImage->sharedHandle());
+          m_interop.reportedDepthImage = m_interop.depthImage.ptr();
+        }
+        pInfo->depthMemoryHandle = m_interop.reportedDepthHandle;
+        pInfo->depthAllocationSize = m_interop.depthImage->allocationSize();
+        pInfo->depthWidth = static_cast<int32_t>(m_interop.depthImage->info().extent.width);
+        pInfo->depthHeight = static_cast<int32_t>(m_interop.depthImage->info().extent.height);
+        pInfo->depthFormat = m_interop.depthImage->info().format;
       }
       return D3D_OK;
     } catch (const DxvkError& e) {

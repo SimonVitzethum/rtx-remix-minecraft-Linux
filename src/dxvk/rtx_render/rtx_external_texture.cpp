@@ -240,6 +240,11 @@ namespace dxvk {
     return m_textures.erase(handle) > 0;
   }
 
+  void ExternalTextureRegistry::clear() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_textures.clear();
+  }
+
   TextureRef ExternalTextureRegistry::resolve(DxvkContext& ctx, void* handle) {
     if (handle == nullptr) {
       return {};

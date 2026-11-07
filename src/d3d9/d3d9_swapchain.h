@@ -315,6 +315,11 @@ namespace dxvk {
       int32_t width = 0;
       int32_t height = 0;
       VkFormat format = VK_FORMAT_UNDEFINED;
+      uint64_t depthMemoryHandle = 0;
+      uint64_t depthAllocationSize = 0;
+      int32_t depthWidth = 0;
+      int32_t depthHeight = 0;
+      VkFormat depthFormat = VK_FORMAT_UNDEFINED;
     };
 
     static constexpr uint32_t kSubmitForceWaitDeviceIdle = 1u << 0;
@@ -343,6 +348,10 @@ namespace dxvk {
       uint64_t clientDoneValue = 0;
       uint64_t dxvkDoneValue = 0;
       Rc<DxvkImage> image;
+      // Primary depth at render resolution, exported next to the color image once the first frame has been rendered.
+      Rc<DxvkImage> depthImage;
+      uint64_t reportedDepthHandle = 0;
+      const DxvkImage* reportedDepthImage = nullptr;
       Rc<RtxSemaphore> dxvkDone;
       Rc<RtxSemaphore> clientDone;
       // Handles already given to the client. A descriptor is consumed by the client's import, so each resource is
@@ -355,6 +364,7 @@ namespace dxvk {
 
     void EnsureInteropSemaphores();
     void EnsureInteropImage(uint32_t width, uint32_t height);
+    void EnsureInteropDepthImage(uint32_t width, uint32_t height);
     // NV-DXVK end
   };
 
