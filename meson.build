@@ -261,11 +261,13 @@ dxvk_extradep = [ ]
 
 if dxvk_is_msvc
   wrc = find_program('rc')
-else
+elif host_machine.system() == 'windows'
   add_global_link_arguments('-static', '-static-libgcc', language: 'c')
   add_global_link_arguments('-static', '-static-libgcc', '-static-libstdc++', language: 'cpp')
 
   wrc = find_program('windres')
+else
+  # Native POSIX build: shared runtime, no .rc resource compilation.
 endif
 
 if cpu_family == 'x86_64'
@@ -435,14 +437,16 @@ endif
 
 def_spec_ext = '.def'
 
-if dxvk_is_msvc
-  wrc_generator = generator(wrc,
-  output    : [ '@BASENAME@' + res_ext ],
-  arguments : [ '/fo', '@OUTPUT@', '@INPUT@' ])
-else
-  wrc_generator = generator(wrc,
-  output    : [ '@BASENAME@' + res_ext ],
-  arguments : [ '-i', '@INPUT@', '-o', '@OUTPUT@' ])
+if host_machine.system() == 'windows'
+  if dxvk_is_msvc
+    wrc_generator = generator(wrc,
+    output    : [ '@BASENAME@' + res_ext ],
+    arguments : [ '/fo', '@OUTPUT@', '@INPUT@' ])
+  else
+    wrc_generator = generator(wrc,
+    output    : [ '@BASENAME@' + res_ext ],
+    arguments : [ '-i', '@INPUT@', '-o', '@OUTPUT@' ])
+  endif
 endif
 
 message('##############')
