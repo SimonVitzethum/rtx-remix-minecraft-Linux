@@ -1037,7 +1037,7 @@ namespace dxvk {
     Config config;
     
     // Open the file if it exists
-    std::ifstream stream(str::tows(filePath.c_str()).c_str());
+    std::ifstream stream(std::filesystem::path(str::tows(filePath.c_str())));
 
     if (!stream) {
       Logger::info(str::format("No config file found at: ", filePath));
@@ -1473,7 +1473,7 @@ namespace dxvk {
 
   void Config::serializeCustomConfig(const Config& config, std::string filePath, std::string filterStr) {
     // Open the file if it exists
-    std::ofstream stream(str::tows(filePath.c_str()).c_str());
+    std::ofstream stream(std::filesystem::path(str::tows(filePath.c_str())));
 
     if (!stream)
       return;

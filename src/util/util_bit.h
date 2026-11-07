@@ -13,6 +13,10 @@
 #include <intrin.h>
 #endif
 
+#ifdef REMIX_LINUX_NATIVE
+#include <intrin.h>
+#endif
+
 #include "util_likely.h"
 #include "util_math.h"
 

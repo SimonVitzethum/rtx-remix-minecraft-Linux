@@ -386,7 +386,9 @@ namespace dxvk {
 
       // most significant bit
       unsigned long msb = 0;
+#ifndef REMIX_LINUX_NATIVE
       static_assert(sizeof(unsigned long) == sizeof(uint32_t));
+#endif
       if (_BitScanReverse(&msb, v) == 0) {
         assert(0);
         return 0;

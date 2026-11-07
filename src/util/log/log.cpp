@@ -19,6 +19,7 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <filesystem>
 #include "log.h"
 
 #include <iostream>
@@ -73,7 +74,7 @@ namespace dxvk {
       const auto path = getFilePath(fileName);
 
       if (!path.empty()) {
-        m_fileStream = std::ofstream(str::tows(path.c_str()).c_str());
+        m_fileStream = std::ofstream(std::filesystem::path(str::tows(path.c_str())));
         assert(m_fileStream.is_open());
       }
     }

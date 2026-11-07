@@ -13,7 +13,8 @@
 # Sentry Native SDK is located in external/sentry-native/ (downloaded and linked via packman).
 # Disabled for `debug` builds, as the prebuilt Release Sentry/Crashpad will fail to link in debug builds;
 
-enable_sentry = get_option('buildtype') != 'debug'
+# Native POSIX build: the prebuilt Crashpad/Sentry binaries are Windows-only.
+enable_sentry = get_option('buildtype') != 'debug' and host_machine.system() == 'windows'
 
 if enable_sentry
   if dxvk_is_woa
@@ -78,16 +79,16 @@ if enable_sentry
       ],
       include_directories : sentry_include_path
     )
-  add_project_arguments('/DREMIX_SENTRY_ENABLED=1', language : 'cpp')
+  add_project_arguments('-DREMIX_SENTRY_ENABLED=1', language : 'cpp')
 else
   sentry_dep = declare_dependency()
-  add_project_arguments('/DREMIX_SENTRY_ENABLED=0', language : 'cpp')
+  add_project_arguments('-DREMIX_SENTRY_ENABLED=0', language : 'cpp')
 endif
 
 # Sentry environment: when -Dremix_sentry_environment= is set (e.g. by CI), bake it in; otherwise C++ uses "development".
 remix_sentry_environment = get_option('remix_sentry_environment')
 if remix_sentry_environment != ''
-  add_global_arguments('/DREMIX_SENTRY_ENVIRONMENT="' + remix_sentry_environment + '"', language : 'cpp')
+  add_global_arguments('-DREMIX_SENTRY_ENVIRONMENT="' + remix_sentry_environment + '"', language : 'cpp')
 endif
 
 # ============================================================================
@@ -107,11 +108,15 @@ endif
 
 usd_lib_path = join_paths(global_src_root_norm, usd_debug_release_dir)
 
-# NOTE newer versions of meson prefer relative paths for include directories.
-# Prefix with ../ since these paths are resolved relative to this subdir.
-nv_usd_include_path = include_directories(join_paths('..', usd_debug_release_dir, 'include'))
-
-usd_include_paths = [nv_usd_include_path]
+if host_machine.system() == 'windows'
+  # NOTE newer versions of meson prefer relative paths for include directories.
+  # Prefix with ../ since these paths are resolved relative to this subdir.
+  nv_usd_include_path = include_directories(join_paths('..', usd_debug_release_dir, 'include'))
+  usd_include_paths = [nv_usd_include_path]
+else
+  # Native POSIX build: use the system OpenUSD (monolithic libusd_ms) and oneTBB.
+  usd_include_paths = []
+endif
 
 # ============================================================================
 # RTX IO
@@ -133,22 +138,32 @@ mdl_include_dir = include_directories('../external/omni_core_materials')
 # ============================================================================
 # Aftermath
 # ============================================================================
-aftermath_platform = dxvk_is_woa ? 'arm64' : 'x64'
-aftermath_lib_path = join_paths(global_src_root_norm, 'external/aftermath/lib/' + aftermath_platform)
-external_dll_paths += aftermath_lib_path
-aftermath_lib = dxvk_compiler.find_library('GFSDK_Aftermath_Lib.' + aftermath_platform, dirs : aftermath_lib_path)
-aftermath_include_path = include_directories('../external/aftermath/include')
-aftermath_binary = join_paths(aftermath_lib_path, 'GFSDK_Aftermath_Lib.' + aftermath_platform + '.dll')
+if host_machine.system() == 'windows'
+  aftermath_platform = dxvk_is_woa ? 'arm64' : 'x64'
+  aftermath_lib_path = join_paths(global_src_root_norm, 'external/aftermath/lib/' + aftermath_platform)
+  external_dll_paths += aftermath_lib_path
+  aftermath_lib = dxvk_compiler.find_library('GFSDK_Aftermath_Lib.' + aftermath_platform, dirs : aftermath_lib_path)
+  aftermath_include_path = include_directories('../external/aftermath/include')
+  aftermath_binary = join_paths(aftermath_lib_path, 'GFSDK_Aftermath_Lib.' + aftermath_platform + '.dll')
 
-aftermath_dep = declare_dependency(
-  dependencies : [ aftermath_lib ],
-  include_directories : aftermath_include_path
-)
+  aftermath_dep = declare_dependency(
+    dependencies : [ aftermath_lib ],
+    include_directories : aftermath_include_path
+  )
+else
+  # Native POSIX build: only the headers are used, the entry points are stubbed in src/util/linux/aftermath_stub.cpp.
+  aftermath_dep = declare_dependency(include_directories : include_directories('../external/aftermath/include'))
+endif
 
 # ============================================================================
 # DLSS SDK
 # ============================================================================
 dlss_root_path = 'submodules/dlss'
+dlfg_root_path = 'external/ngx_sdk_dlfg'
+dlnr_root_path = 'external/ngx_sdk_dlnr'
+cc = meson.get_compiler('c')
+
+if host_machine.system() == 'windows'
 if dxvk_is_woa
   dlss_lib_path = join_paths(global_src_root_norm, dlss_root_path, 'lib/Windows_aarch64/')
   dlss_bin_path = join_paths(global_src_root_norm, dlss_root_path, 'lib/Windows_aarch64/rel/')
@@ -162,22 +177,29 @@ external_dll_paths += dlss_lib_path
 dlss_include_dir = include_directories(join_paths('..', dlss_root_path, 'include'))
 dlss_include_dirs = [ dlss_include_dir ]
 
-dlfg_root_path = 'external/ngx_sdk_dlfg'
 dlfg_bin_path = join_paths(global_src_root_norm, dlfg_root_path, 'lib', dxvk_is_woa ? 'Windows_aarch64' : 'Windows_x86_64', 'rel')
 external_dll_paths += dlfg_bin_path
 
-dlnr_root_path = 'external/ngx_sdk_dlnr'
 dlnr_bin_path = join_paths(global_src_root_norm, dlnr_root_path, 'lib', dxvk_is_woa ? 'Windows_aarch64' : 'Windows_x86_64', 'rel')
 external_dll_paths += dlnr_bin_path
 dlnr_include_dir = include_directories(join_paths('..', dlnr_root_path, 'include'))
 dlss_include_dirs += dlnr_include_dir
 
-cc = meson.get_compiler('c')
 dlss_lib_name = 'nvsdk_ngx_d'
 if get_option('buildtype') == 'debug'
   dlss_lib_name = 'nvsdk_ngx_d_dbg'
 endif
 dlss_lib = cc.find_library(dlss_lib_name, dirs : dlss_lib_path)
+else
+  # Native POSIX build: static NGX SDK for Linux; the DLSS feature .so files are loaded at runtime.
+  dlss_lib_path = join_paths(global_src_root_norm, dlss_root_path, 'lib/Linux_x86_64/')
+  dlss_include_dirs = [
+    include_directories(join_paths('..', dlss_root_path, 'include')),
+    include_directories(join_paths('..', dlnr_root_path, 'include')),
+  ]
+  dlss_lib = cc.find_library('nvsdk_ngx', dirs : dlss_lib_path, static : true)
+  dlss_lib = declare_dependency(dependencies : [ dlss_lib, cc.find_library('dl'), cc.find_library('stdc++') ])
+endif
 dlss_dep = declare_dependency(
   dependencies : [ dlss_lib ],
   include_directories : dlss_include_dirs
@@ -188,15 +210,20 @@ dlss_dep = declare_dependency(
 # ============================================================================
 nvapi_include_paths = include_directories('../submodules/nvapi')
 
-if dxvk_is_woa
-  nvapi_lib_path = join_paths(global_src_root_norm, 'submodules/nvapi/aarch64')
-  nvapi_lib = dxvk_compiler.find_library('nvapia64', dirs : nvapi_lib_path)
-else
-  nvapi_lib_path = join_paths(global_src_root_norm, 'submodules/nvapi/amd64')
-  nvapi_lib = dxvk_compiler.find_library('nvapi64', dirs : nvapi_lib_path)
-endif
+if host_machine.system() == 'windows'
+  if dxvk_is_woa
+    nvapi_lib_path = join_paths(global_src_root_norm, 'submodules/nvapi/aarch64')
+    nvapi_lib = dxvk_compiler.find_library('nvapia64', dirs : nvapi_lib_path)
+  else
+    nvapi_lib_path = join_paths(global_src_root_norm, 'submodules/nvapi/amd64')
+    nvapi_lib = dxvk_compiler.find_library('nvapi64', dirs : nvapi_lib_path)
+  endif
 
-nvapi_dep = declare_dependency(
-  dependencies : [ nvapi_lib ],
-  include_directories : nvapi_include_paths
-)
+  nvapi_dep = declare_dependency(
+    dependencies : [ nvapi_lib ],
+    include_directories : nvapi_include_paths
+  )
+else
+  # Native POSIX build: NVAPI does not exist, only the headers are kept for type definitions.
+  nvapi_dep = declare_dependency(include_directories : nvapi_include_paths)
+endif

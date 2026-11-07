@@ -20,6 +20,7 @@
 * DEALINGS IN THE SOFTWARE.
 */
 
+#include <filesystem>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -940,7 +941,7 @@ void RtxGpuCrashRecorder::dump(const char* reason) const {
   const std::string stateFilename = baseName + ".log";
   const std::string binaryFilename = baseName + ".bin";
 
-  std::ofstream stateFile(str::tows(stateFilename.c_str()).c_str());
+  std::ofstream stateFile(std::filesystem::path(str::tows(stateFilename.c_str())));
   if (!stateFile.is_open()) {
     Logger::warn(str::format(
       "GPU crash state recorder failed to open: ", stateFilename));
@@ -948,7 +949,7 @@ void RtxGpuCrashRecorder::dump(const char* reason) const {
   }
 
   std::ofstream binaryFile(
-    str::tows(binaryFilename.c_str()).c_str(),
+    std::filesystem::path(str::tows(binaryFilename.c_str())),
     std::ios::binary | std::ios::trunc);
   const bool binaryFileOpened = binaryFile.is_open();
   if (!binaryFileOpened) {

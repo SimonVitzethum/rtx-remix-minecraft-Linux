@@ -277,8 +277,8 @@ namespace dxvk {
       }
 
       AxisAlignedBoundingBox boundingBox{
-        Vector3{ minPos.m128_f32[0], minPos.m128_f32[1], minPos.m128_f32[2] },
-        Vector3{ maxPos.m128_f32[0], maxPos.m128_f32[1], maxPos.m128_f32[2] }
+        Vector3{ ((const float*)&minPos)[0], ((const float*)&minPos)[1], ((const float*)&minPos)[2] },
+        Vector3{ ((const float*)&maxPos)[0], ((const float*)&maxPos)[1], ((const float*)&maxPos)[2] }
       };
 #endif
 

@@ -19,6 +19,7 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <filesystem>
 #include "dxvk_device.h"
 #include "dxvk_pipemanager.h"
 #include "dxvk_state_cache.h"
@@ -182,12 +183,12 @@ namespace dxvk {
       Logger::warn("DXVK: Creating new state cache file");
 
       // Start with an empty file
-      std::ofstream file(getCacheFileName().c_str(),
+      std::ofstream file(std::filesystem::path(getCacheFileName()),
         std::ios_base::binary |
         std::ios_base::trunc);
 
       if (!file && env::createDirectory(getCacheDir())) {
-        file = std::ofstream(getCacheFileName().c_str(),
+        file = std::ofstream(std::filesystem::path(getCacheFileName()),
           std::ios_base::binary |
           std::ios_base::trunc);
       }
@@ -507,7 +508,7 @@ namespace dxvk {
 
   bool DxvkStateCache::readCacheFile() {
     // Open state file and just fail if it doesn't exist
-    std::ifstream ifile(getCacheFileName().c_str(), std::ios_base::binary);
+    std::ifstream ifile(std::filesystem::path(getCacheFileName()), std::ios_base::binary);
 
     if (!ifile) {
       Logger::warn("DXVK: No state cache file found");
@@ -1107,7 +1108,7 @@ namespace dxvk {
       }
 
       if (!file) {
-        file = std::ofstream(getCacheFileName().c_str(),
+        file = std::ofstream(std::filesystem::path(getCacheFileName()),
           std::ios_base::binary |
           std::ios_base::app);
       }

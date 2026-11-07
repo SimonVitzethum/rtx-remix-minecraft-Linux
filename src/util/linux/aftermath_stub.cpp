@@ -1,0 +1,19 @@
+// Generated: Aftermath is unavailable on the native Linux build, every entry point reports "not available".
+#include <vulkan/vulkan.h>
+#include "GFSDK_Aftermath.h"
+#include "GFSDK_Aftermath_GpuCrashDump.h"
+#include "GFSDK_Aftermath_GpuCrashDumpDecoding.h"
+
+GFSDK_Aftermath_API GFSDK_Aftermath_EnableGpuCrashDumps(GFSDK_Aftermath_Version apiVersion, uint32_t watchedApis, uint32_t flags, PFN_GFSDK_Aftermath_GpuCrashDumpCb gpuCrashDumpCb, PFN_GFSDK_Aftermath_ShaderDebugInfoCb shaderDebugInfoCb, PFN_GFSDK_Aftermath_GpuCrashDumpDescriptionCb descriptionCb, PFN_GFSDK_Aftermath_ResolveMarkerCb resolveMarkerCb, void* pUserData) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_DisableGpuCrashDumps(void) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GetCrashDumpStatus(GFSDK_Aftermath_CrashDump_Status* pOutStatus) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GpuCrashDump_CreateDecoder(GFSDK_Aftermath_Version apiVersion, const void* pGpuCrashDump, const uint32_t gpuCrashDumpSize, GFSDK_Aftermath_GpuCrashDump_Decoder* pDecoder) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GpuCrashDump_DestroyDecoder(const GFSDK_Aftermath_GpuCrashDump_Decoder decoder) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GpuCrashDump_GetDeviceInfo(const GFSDK_Aftermath_GpuCrashDump_Decoder decoder, GFSDK_Aftermath_GpuCrashDump_DeviceInfo* pDeviceInfo) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GpuCrashDump_GetPageFaultInfo(const GFSDK_Aftermath_GpuCrashDump_Decoder decoder, GFSDK_Aftermath_GpuCrashDump_PageFaultInfo* pPageFaultInfo) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GpuCrashDump_GetPageFaultResourceInfo(const GFSDK_Aftermath_GpuCrashDump_Decoder decoder, const uint32_t resourceInfoCount, GFSDK_Aftermath_GpuCrashDump_ResourceInfo* pResourceInfo) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfoCount(const GFSDK_Aftermath_GpuCrashDump_Decoder decoder, uint32_t* pShaderCount) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfo(const GFSDK_Aftermath_GpuCrashDump_Decoder decoder, const uint32_t shaderInfoBufferCount, GFSDK_Aftermath_GpuCrashDump_ShaderInfo* pShaderInfo) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GetShaderDebugInfoIdentifier(GFSDK_Aftermath_Version apiVersion, const void* pShaderDebugInfo, const uint32_t shaderDebugInfoSize, GFSDK_Aftermath_ShaderDebugInfoIdentifier* pIdentifier) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GetShaderHashSpirv(GFSDK_Aftermath_Version apiVersion, const GFSDK_Aftermath_SpirvCode* pShader, GFSDK_Aftermath_ShaderBinaryHash* pShaderHash) { return GFSDK_Aftermath_Result_NotAvailable; }
+GFSDK_Aftermath_API GFSDK_Aftermath_GetShaderHashForShaderInfo(const GFSDK_Aftermath_GpuCrashDump_Decoder decoder, const GFSDK_Aftermath_GpuCrashDump_ShaderInfo* pShaderInfo, GFSDK_Aftermath_ShaderBinaryHash* pShaderHash) { return GFSDK_Aftermath_Result_NotAvailable; }

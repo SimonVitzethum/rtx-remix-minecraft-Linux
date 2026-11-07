@@ -603,6 +603,11 @@ namespace dxvk::vk {
 
 
   VkResult Presenter::createSurface() {
+    // NV-DXVK start: no window system integration on native Linux, rendering is exported through external memory
+#ifdef REMIX_LINUX_NATIVE
+    return VK_ERROR_EXTENSION_NOT_PRESENT;
+#else
+    // NV-DXVK end
     HINSTANCE instance = reinterpret_cast<HINSTANCE>(
       GetWindowLongPtr(m_window, GWLP_HINSTANCE));
     
@@ -631,6 +636,9 @@ namespace dxvk::vk {
     }
 
     return VK_SUCCESS;
+    // NV-DXVK start
+#endif
+    // NV-DXVK end
   }
 
 

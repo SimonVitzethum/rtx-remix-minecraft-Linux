@@ -1,4 +1,6 @@
-subdir('usd-plugins')
+if host_machine.system() == 'windows'
+  subdir('usd-plugins')
+endif
 subdir('tracy')
 subdir('util')
 subdir('spirv')

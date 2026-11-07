@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include <imgui\imgui.h>
+#include <imgui/imgui.h>
 #include "rtx_option.h"
 #include <functional>
 #include <optional>

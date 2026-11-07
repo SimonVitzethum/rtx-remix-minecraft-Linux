@@ -1064,7 +1064,7 @@ namespace dxvk {
     , isExternalDraw(isExternal)
     , lastSpawnTimeMs(GlobalTime::get().absoluteTimeMs()) {
     // Seed the RNG with a parameter from the manager, so we get unique random values for each particle system
-    generator = std::default_random_engine(seed);
+    generator = std::mt19937(seed);
     // Store this hash since it cannot change now.
     // NOTE: This material data hash is stable within a run, but since hash depends on VK handles, it is not reliable across runs.
     // Game and API systems get distinct rendering identities; m_lookupHash separately retains the original material.

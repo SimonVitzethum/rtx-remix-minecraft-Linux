@@ -63,8 +63,8 @@ namespace nrd {
     PathRemoveFileSpecW(modulePath);
 
     std::filesystem::path path(modulePath);
-    path.append("NRD.dll");
-    HMODULE hNRD = LoadLibraryW(path.c_str());
+    path.append("libNRD.so");
+    HMODULE hNRD = LoadLibraryA(path.string().c_str());
     if (hNRD == NULL) {
       dxvk::Logger::err("Unable to load NRD, this feature will be disabled");
       return NULL;
@@ -992,10 +992,12 @@ namespace dxvk {
 
   NrdArgs NRDContext::getNrdArgs() const {
     static_assert(nrd::CommonSettings{}.denoisingRange == 500000.0f, "NRD's default settings has changed, denoisingRange must be re-evaluated");
-    constexpr float denoisingRangeLimit = nrd::CommonSettings{}.denoisingRange;
+    // NV-DXVK start: GCC does not accept the NRD default settings as a constant expression
+    const float denoisingRangeLimit = nrd::CommonSettings{}.denoisingRange;
 
     const float missLinearViewZ = denoisingRangeLimit + 1.0f;
-    static_assert(missLinearViewZ > denoisingRangeLimit && missLinearViewZ - denoisingRangeLimit > 0.01f);
+    assert(missLinearViewZ > denoisingRangeLimit && missLinearViewZ - denoisingRangeLimit > 0.01f);
+    // NV-DXVK end
 
     // Note: Ensure the denoising range is at least 1 ulp less than the miss linear view Z value, otherwise it will not
     // function properly.

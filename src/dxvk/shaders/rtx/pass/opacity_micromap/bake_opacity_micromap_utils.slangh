@@ -21,7 +21,7 @@
 */
 #pragma once
 
-#include "rtx\utility\common.slangh"
+#include "rtx/utility/common.slangh"
 
 uint extractEvenBits(uint x) 
 {

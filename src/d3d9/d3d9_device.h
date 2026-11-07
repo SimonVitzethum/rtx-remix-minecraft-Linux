@@ -38,6 +38,9 @@ namespace dxvk {
 
   class D3D9InterfaceEx;
   class D3D9SwapChainEx;
+  // NV-DXVK start
+  class D3D9SwapchainExternal;
+  // NV-DXVK end
   class D3D9CommonTexture;
   class D3D9CommonBuffer;
   class D3D9CommonShader;

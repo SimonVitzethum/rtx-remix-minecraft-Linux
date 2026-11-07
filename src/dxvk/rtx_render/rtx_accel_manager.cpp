@@ -1740,7 +1740,7 @@ namespace dxvk {
 
     // Create and upload the primitive id prefix sum buffer
     auto updatePrefixSumBuffer = [&info, this, ctx](std::vector<uint32_t>& prefixSumList, Rc<DxvkBuffer>& prefixSumBuffer) {
-      info.size = std::max(prefixSumList.size(), 1llu) * sizeof(prefixSumList[0]);
+      info.size = std::max<size_t>(prefixSumList.size(), 1) * sizeof(prefixSumList[0]);
 
       if (prefixSumBuffer == nullptr || info.size > prefixSumBuffer->info().size) {
         prefixSumBuffer = m_device->createBuffer(info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, DxvkMemoryStats::Category::RTXAccelerationStructure, "Prefixsum Buffer");

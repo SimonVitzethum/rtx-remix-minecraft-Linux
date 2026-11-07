@@ -1,3 +1,19 @@
+#ifdef REMIX_LINUX_NATIVE
+#include "rtx_overlay_window.h"
+
+// The Win32 game overlay does not exist on native Linux, the methods do nothing.
+namespace dxvk {
+  GameOverlay::GameOverlay(const char* className, ImGUI* pImgui) : m_className(className), m_pImgui(pImgui) { }
+  GameOverlay::~GameOverlay() { }
+  void GameOverlay::update(HWND) { }
+  void GameOverlay::gameWndProcHandler(HWND, UINT, WPARAM, LPARAM) { }
+  LRESULT GameOverlay::overlayWndProc(HWND, UINT, WPARAM, LPARAM) { return 0; }
+  void GameOverlay::windowThreadMain() { }
+  void GameOverlay::show() { }
+  void GameOverlay::hide() { }
+  bool GameOverlay::isOurForeground() const { return false; }
+}
+#else
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <algorithm>
@@ -526,3 +542,5 @@ void GameOverlay::windowThreadMain() {
   UnregisterClass(m_className, hInst);
 }
 } // namespace dxvk
+
+#endif // REMIX_LINUX_NATIVE

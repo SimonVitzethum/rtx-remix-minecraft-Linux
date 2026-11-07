@@ -106,7 +106,8 @@ namespace dxvk {
     DxvkSharedHandleMode mode = DxvkSharedHandleMode::None;
     VkExternalMemoryHandleTypeFlagBits type   = VK_EXTERNAL_MEMORY_HANDLE_TYPE_FLAG_BITS_MAX_ENUM;
     union {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(REMIX_LINUX_NATIVE)
+      // On native Linux the HANDLE holds a file descriptor.
       HANDLE                             handle = INVALID_HANDLE_VALUE;
 #else
       // Placeholder for other handle types, such as FD

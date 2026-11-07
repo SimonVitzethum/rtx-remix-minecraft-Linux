@@ -491,7 +491,7 @@ namespace dxvk {
     }
 
     template<typename Cache, typename T>
-    auto storeCached(Cache& cache, XXH64_hash_t hash, T&& obj) {
+    typename Cache::mapped_type storeCached(Cache& cache, XXH64_hash_t hash, T&& obj) {
       std::lock_guard<sync::Spinlock> lock(m_spinlock);
       auto [it, inserted] = cache.try_emplace(hash);
       if (inserted || !it->second) {

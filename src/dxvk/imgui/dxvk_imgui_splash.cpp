@@ -63,7 +63,7 @@ namespace dxvk {
       // Show the user the time remaining
       // Note: Clamped to ensure the count does not go negative for a frame (as ImGui does not respond
       // to a close request from within an open popup on the same frame).
-      const auto clampedSecondsRemaining = std::max(SplashSettings::splashMessageDisplayTimeSeconds() - elapsedSeconds, 0ll);
+      const auto clampedSecondsRemaining = std::max<long long>(SplashSettings::splashMessageDisplayTimeSeconds() - elapsedSeconds, 0ll);
 
       ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always, ImVec2(0.0f, 0.0f));
 

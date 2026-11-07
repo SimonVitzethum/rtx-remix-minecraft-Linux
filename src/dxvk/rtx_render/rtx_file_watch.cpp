@@ -20,6 +20,48 @@
 * DEALINGS IN THE SOFTWARE.
 */
 
+#ifdef REMIX_LINUX_NATIVE
+#include "rtx_file_watch.h"
+
+#include <functional>
+#include <filesystem>
+#include <vector>
+
+#include "../../util/thread.h"
+
+// Texture hot-reload through OS file notifications is not available on native Linux yet. The watcher keeps its
+// callback registry so that the registration API stays valid, but never reports changes.
+namespace dxvk {
+  struct FileWatchTexturesImpl {
+    std::vector<std::pair<FileWatch::FileWatchCallbackId, FileWatch::FileChangedFn>> callbacks;
+    FileWatch::FileWatchCallbackId nextId = 1;
+  };
+
+  FileWatch::FileWatch() : m_impl(std::make_unique<FileWatchTexturesImpl>()) { }
+  FileWatch::~FileWatch() { }
+  void FileWatch::setTextureManager(RtxTextureManager*) { }
+  void FileWatch::clearTextureManager(RtxTextureManager*) { }
+  void FileWatch::installDir(const char*) { }
+  void FileWatch::removeAllWatchDirs() { }
+  void FileWatch::watchTexture(RtxTextureManager*, const Rc<ManagedTexture>&) { }
+  void FileWatch::endThreadLocked() { }
+
+  FileWatch::FileWatchCallbackId FileWatch::addFileChangedCallback(FileChangedFn fn) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto id = m_impl->nextId++;
+    m_impl->callbacks.emplace_back(id, std::move(fn));
+    return id;
+  }
+
+  void FileWatch::removeFileChangedCallback(FileWatchCallbackId id) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto& cb = m_impl->callbacks;
+    for (auto it = cb.begin(); it != cb.end(); ++it) {
+      if (it->first == id) { cb.erase(it); break; }
+    }
+  }
+}
+#else
 #include "rtx_file_watch.h"
 
 #include "dxvk_device.h"
@@ -672,3 +714,5 @@ void dxvk::FileWatch::removeFileChangedCallback(FileWatchCallbackId id) {
   auto lockRequests = std::unique_lock{ m_impl->m_requestsMutex };
   m_impl->m_requests.push_back(RemoveCallbackRequest{ id });
 }
+
+#endif // REMIX_LINUX_NATIVE

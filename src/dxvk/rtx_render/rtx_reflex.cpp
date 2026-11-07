@@ -26,8 +26,7 @@
 #include <cassert>
 #include <Windows.h>
 
-#include "NvLowLatencyVk.h"
-#include "pclstats.h"
+#include "../../util/util_reflex.h"
 PCLSTATS_DEFINE();
 
 // Note: Useful for validating that a frame's markers are being placed in reasonable locations and have consistent
@@ -434,10 +433,10 @@ namespace dxvk {
       latencyStats.gpuRenderDuration[i] = gpuRenderDuration;
       latencyStats.gameToRenderDuration[i] = gameToRenderDuration;
 
-      frameIDMin = std::min(frameIDMin, currentFrameReport.frameID);
-      frameIDMax = std::max(frameIDMax, currentFrameReport.frameID);
-      inputSampleTimeMin = std::min(inputSampleTimeMin, currentFrameReport.inputSampleTime);
-      inputSampleTimeMax = std::max(inputSampleTimeMax, currentFrameReport.inputSampleTime);
+      frameIDMin = std::min(frameIDMin, (uint64_t) currentFrameReport.frameID);
+      frameIDMax = std::max(frameIDMax, (uint64_t) currentFrameReport.frameID);
+      inputSampleTimeMin = std::min(inputSampleTimeMin, (uint64_t) currentFrameReport.inputSampleTime);
+      inputSampleTimeMax = std::max(inputSampleTimeMax, (uint64_t) currentFrameReport.inputSampleTime);
       simDurationMin = std::min(simDurationMin, simDuration);
       simDurationMax = std::max(simDurationMax, simDuration);
       renderSubmitDurationMin = std::min(renderSubmitDurationMin, renderSubmitDuration);

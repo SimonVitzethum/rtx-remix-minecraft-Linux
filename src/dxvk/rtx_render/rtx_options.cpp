@@ -23,7 +23,7 @@
 
 #include <filesystem>
 #include <mutex>
-#include <nvapi.h>
+#include "../../util/util_nvapi.h"
 #include "../imgui/imgui.h"
 #include "rtx_bridge_message_channel.h"
 #include "rtx_gpu_overrides.h"

@@ -409,7 +409,7 @@ namespace dxvk {
       const float colorScale = fogColorScale();
       auto& fog = settings.fog;
       compositeArgs.fogMode = fog.mode;
-      compositeArgs.fogColor = { fog.color.x * colorScale, fog.color.y * colorScale, fog.color.z * colorScale };
+      compositeArgs.fogColor = vec3(fog.color.x * colorScale, fog.color.y * colorScale, fog.color.z * colorScale);
       // Todo: Scene scale stuff ignored for now because scene scale stuff is not actually functioning properly. Add back in if it's ever fixed.
       // compositeArgs.fogEnd = fog.end * RtxOptions::sceneScale();
       // compositeArgs.fogScale = fog.scale * RtxOptions::sceneScale();

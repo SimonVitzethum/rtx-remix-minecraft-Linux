@@ -799,6 +799,15 @@ namespace dxvk {
 
     bool m_requiresSyncFlush; // read-write only from a client thread
   };
+#else
+  // NV-DXVK start: RTXIO is compiled out, the runner only exists to keep the call sites valid.
+  struct AsyncRunner_RTXIO {
+    explicit AsyncRunner_RTXIO(const Rc<DxvkDevice>&) { }
+    template<typename... Args> void queueAdd(Args&&...) { }
+    template<typename... Args> void syncPoint(Args&&...) { }
+    template<typename... Args> void finalizeReadyRtxioTextures(Args&&...) { }
+  };
+  // NV-DXVK end
 #endif
 
 

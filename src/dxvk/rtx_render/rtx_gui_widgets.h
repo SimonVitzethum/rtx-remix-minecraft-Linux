@@ -21,12 +21,12 @@
 */
 #pragma once
 
-#include <imgui\imgui.h>
-#include <imgui\imgui_internal.h>
-#include "..\rtx_render\rtx_option.h"
-#include "..\rtx_render\rtx_option_blocking_popup.h"
-#include "..\util\util_string.h"
-#include "..\util\util_vector.h"
+#include <imgui/imgui.h>
+#include <imgui/imgui_internal.h>
+#include "../rtx_render/rtx_option.h"
+#include "../rtx_render/rtx_option_blocking_popup.h"
+#include "../util/util_string.h"
+#include "../util/util_vector.h"
 #include <type_traits>
 #include <utility>
 

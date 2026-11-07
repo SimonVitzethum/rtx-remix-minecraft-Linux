@@ -267,6 +267,9 @@ namespace dxvk {
   class DxvkDLFG : public CommonDeviceObject {
   public:
     explicit DxvkDLFG(DxvkDevice* device);
+    // NV-DXVK start: defined out of line since std::unique_ptr<NGXDLFGContext> needs the complete type with GCC
+    ~DxvkDLFG();
+    // NV-DXVK end
     virtual void onDestroy();
 
     static void onPresetChanged(DxvkDevice* device);
@@ -323,7 +326,7 @@ namespace dxvk {
     RTX_OPTION("rtx.dlfg", bool, enablePresentMetering, true, "Use hardware present metering for DLSS 4.0 frame generation instead of CPU pacing.");
 
   private:
-    std::unique_ptr<NGXDLFGContext> m_dlfgContext = nullptr;
+    std::unique_ptr<NGXDLFGContext> m_dlfgContext;
     std::atomic<bool> m_hasDLFGFailed = { false };
     uint32_t m_currentDisplaySize[2] = { 0,0 };
     bool m_contextDirty = true;

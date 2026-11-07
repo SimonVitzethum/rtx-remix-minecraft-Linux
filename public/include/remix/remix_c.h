@@ -31,7 +31,7 @@
 
 
 #ifndef REMIX_ALLOW_X86
-#if _WIN64 != 1
+#if !defined(_WIN64) && !defined(__x86_64__)
   #error Remix API requires 64-bit for the ray tracing features.
 #endif
 #endif

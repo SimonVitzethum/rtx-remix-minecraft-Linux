@@ -24,7 +24,9 @@
 #include "../util/rc/util_rc.h"
 #include "../util/rc/util_rc_ptr.h"
 
+// NV-DXVK start: native Linux has no Win32 surface or handles
 #define VK_USE_PLATFORM_WIN32_KHR 1
+// NV-DXVK end
 #include <vulkan/vulkan.h>
 
 #define VULKAN_FN(name) \
@@ -483,6 +485,18 @@ namespace dxvk::vk {
     #ifdef VK_KHR_external_semaphore_win32
     VULKAN_FN(vkGetSemaphoreWin32HandleKHR);
     #endif
+
+    // NV-DXVK start: file descriptor interop for native Linux
+    #ifdef VK_KHR_external_memory_fd
+    VULKAN_FN(vkGetMemoryFdKHR);
+    VULKAN_FN(vkGetMemoryFdPropertiesKHR);
+    #endif
+
+    #ifdef VK_KHR_external_semaphore_fd
+    VULKAN_FN(vkGetSemaphoreFdKHR);
+    VULKAN_FN(vkImportSemaphoreFdKHR);
+    #endif
+    // NV-DXVK end
 
   };
   

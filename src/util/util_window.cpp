@@ -19,6 +19,7 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <filesystem>
 #include "util_env.h"
 // NV-DXVK start: 
 #include "util_string.h"
@@ -41,7 +42,7 @@ namespace dxvk::window {
     if (hIcon == 0)
       return false;
 
-    std::ofstream iconFile = std::ofstream(str::tows(filename.c_str()).c_str(), std::ios_base::binary);
+    std::ofstream iconFile = std::ofstream(std::filesystem::path(str::tows(filename.c_str())), std::ios_base::binary);
 
     if (!iconFile.is_open()) {
       Logger::err(str::format("Create file failed while writing icon"));

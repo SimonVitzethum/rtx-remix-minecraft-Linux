@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "d3d11_device.h"
 #include "d3d11_shader.h"
 
@@ -27,7 +28,7 @@ namespace dxvk {
     const std::string dumpPath = env::getEnvVar("DXVK_SHADER_DUMP_PATH");
     
     if (dumpPath.size() != 0) {
-      reader.store(std::ofstream(str::tows(str::format(dumpPath, "/", name, ".dxbc").c_str()).c_str(),
+      reader.store(std::ofstream(std::filesystem::path(str::tows(str::format(dumpPath, "/", name, ".dxbc").c_str())),
         std::ios_base::binary | std::ios_base::trunc));
     }
     

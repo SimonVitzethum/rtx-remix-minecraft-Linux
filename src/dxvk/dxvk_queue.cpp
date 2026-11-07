@@ -27,7 +27,7 @@
 #include "rtx_render/rtx_nsight_capture.h"
 // NV-DXVK end
 
-#include "NvLowLatencyVk.h"
+#include "../util/util_reflex.h"
 #include "GFSDK_Aftermath_GpuCrashDump.h"
 
 #include "../util/util_env.h"

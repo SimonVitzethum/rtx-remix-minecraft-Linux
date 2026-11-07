@@ -25,9 +25,9 @@
 // as well as texture index in the Surface Material.
 //#define BINDING_INDEX_INVALID uint16_t(0xFFFF)
 
-#include "rtx\pass\common_binding_indices.h"
-#include "rtx\utility\common.slangh"
-#include "rtx\concept\surface\surface.h"
-#include "rtx\utility\packing.slangh"
-#include "rtx\concept\surface_material\opaque_surface_material_blending.slangh"
-#include "rtx\concept\surface_material\surface_material.h"
+#include "rtx/pass/common_binding_indices.h"
+#include "rtx/utility/common.slangh"
+#include "rtx/concept/surface/surface.h"
+#include "rtx/utility/packing.slangh"
+#include "rtx/concept/surface_material/opaque_surface_material_blending.slangh"
+#include "rtx/concept/surface_material/surface_material.h"

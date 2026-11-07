@@ -77,6 +77,17 @@ build_os = build_machine.system()
 assert(cpu_family != 'x86', 'dxvk-remix-nv can\'t be built in x86. Make sure you\'re running this from a regular Powershell window.')
 
 add_project_arguments('-DNOMINMAX', language : 'cpp')
+
+if host_machine.system() != 'windows'
+  # Native POSIX build. Features without Linux binaries are compiled out.
+  add_project_arguments('-DREMIX_LINUX_NATIVE=1', '-DREMIX_NO_NRC=1', '-DREMIX_NO_XESS=1', '-DREMIX_NO_NVAPI=1',
+                        '-DREMIX_NO_REFLEX=1', '-DREMIX_WINAPI_NO_LIBRARY_LOADER=1', '-DREMIX_NO_AFTERMATH=1', language : ['c', 'cpp'])
+  # Windows/D3D header shims from dxvk-native, see include/native.
+  add_project_arguments('-I' + meson.current_source_dir() + '/include/native/windows',
+                        '-I' + meson.current_source_dir() + '/include/native/directx',
+                        '-I' + meson.current_source_dir() + '/include/native/wsi',
+                        '-fpermissive', '-w', '-fms-extensions', '-D_M_X64=100', '-D_M_AMD64=100', '-D__stdcall=', '-D__cdecl=', '-D__fastcall=', '-march=x86-64-v3', '-mpclmul', '-I/usr/include/python3.14', language : ['c', 'cpp'])
+endif
 vs_project_defines = 'NOMINMAX;'
 
 add_project_arguments('-D_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR', language : 'cpp')
@@ -97,7 +108,7 @@ if dxvk_is_msvc
   if dxvk_is_woa
     # sse2neon requires conformant preproc
     add_global_arguments('/Zc:preprocessor', language : 'cpp')
-    add_project_arguments('/DNO_AVX', language : 'cpp')
+    add_project_arguments('-DNO_AVX', language : 'cpp')
 
     # USD 25+ attempts to redefine some POSIX definitions without checking if they are available
     add_global_arguments('/wd4005', language : 'cpp')
@@ -108,13 +119,13 @@ if dxvk_is_msvc
   if dxvk_is_woa_ec
     # Older TBB attempts to redefine some x64 intrinsics which are not available in arm64ec
     add_global_arguments('/wd4163', language : 'cpp')
-    add_project_arguments('/DNO_AVX', language : 'cpp')
+    add_project_arguments('-DNO_AVX', language : 'cpp')
   endif
 
   if get_option('buildtype') == 'release'
     add_global_arguments('/Zi', language : 'cpp')
     add_global_arguments('/FS', language : 'cpp')
-    add_global_link_arguments('/DEBUG', language : 'cpp')
+    add_global_link_arguments('-DEBUG', language : 'cpp')
     add_global_link_arguments('/OPT:REF', language : 'cpp')
     add_global_link_arguments('/OPT:ICF', language : 'cpp')
   endif
@@ -123,25 +134,25 @@ endif
 # Passed per target because global link arguments do not always reach the VS backend targets (e.g. d3d9, HdRemix).
 dxvk_release_link_args = []
 if dxvk_is_msvc and dxvk_is_woa_ec and get_option('buildtype') == 'release'
-  dxvk_release_link_args = ['/DEBUG', '/OPT:REF', '/OPT:ICF']
+  dxvk_release_link_args = ['-DEBUG', '/OPT:REF', '/OPT:ICF']
 endif
 
 if enable_rtxio == true
-  add_global_arguments('/DWITH_RTXIO', language : 'cpp')
+  add_global_arguments('-DWITH_RTXIO', language : 'cpp')
   vs_project_defines += 'WITH_RTXIO;'
 endif
 
 if get_option('buildtype') == 'release'
-  add_project_arguments('/DNDEBUG', language : 'cpp')
+  add_project_arguments('-DNDEBUG', language : 'cpp')
   # note: this define depends on the build type, so it's not included in vs_project_defines
 elif get_option('buildtype') == 'debugoptimized'
-  add_project_arguments('/DDEBUG_OPTIMIZED', language : 'cpp')
+  add_project_arguments('-DDEBUG_OPTIMIZED', language : 'cpp')
   # note: this define depends on the build type, so it's not included in vs_project_defines
 endif
 
 if dxvk_is_ninja
   # workarounds for our strange symbol name differences when embedding MDL
-  add_global_arguments('/DBUILD_NINJA=1', language : 'cpp')
+  add_global_arguments('-DBUILD_NINJA=1', language : 'cpp')
   vs_project_defines += 'BUILD_NINJA=1;'
 
   if dxvk_is_woa_ec
@@ -155,11 +166,11 @@ if dxvk_is_ninja
   endif
 
 else
-  add_global_arguments('/DBUILD_NINJA=0', language : 'cpp')
+  add_global_arguments('-DBUILD_NINJA=0', language : 'cpp')
   vs_project_defines += 'BUILD_NINJA=0;'
 endif
 
-add_global_arguments('/DBUILD_SOURCE_ROOT="' + global_src_root_norm + '/"', language : 'cpp')
+add_global_arguments('-DBUILD_SOURCE_ROOT="' + global_src_root_norm + '/"', language : 'cpp')
 vs_project_defines += 'BUILD_SOURCE_ROOT="' + global_src_root_norm + '/";'
 
 # c++17 was added in 15.3, older version needs c++latest
@@ -170,6 +181,8 @@ if dxvk_is_msvc and dxvk_compiler.version().version_compare('<15.3')
   else
     dxvk_cpp_std='c++latest'
   endif
+elif not dxvk_is_msvc
+  dxvk_cpp_std='gnu++17'
 else
   if dxvk_is_ninja
     dxvk_cpp_std='vc++17'
@@ -233,6 +246,11 @@ dxvk_include_dirs = [
 
 if nsight_graphics_capture_supported
   dxvk_include_dirs += './external/nsight_graphics/include'
+endif
+
+if host_machine.system() != 'windows'
+  # MSVC resolves quoted includes relative to every file on the include stack, GCC does not.
+  dxvk_include_dirs += [ './src/dxvk', './src/dxvk/rtx_render', './src/dxvk/rtx_render/graph', './src/dxvk/imgui', './src/d3d9', './src/util', './src/vulkan', './src/spirv', './src/dxso', './src/lssusd', './submodules/nvapi', './external/reflex/inc', './submodules/xess/inc' ]
 endif
 
 dxvk_include_path = include_directories(dxvk_include_dirs)
@@ -349,9 +367,16 @@ if enable_rtxio == true
 endif
 
 # Shader Compile Tools
-glsl_compiler = find_program('external/glslangvalidator/glslangValidator')
-slang_compiler = find_program('external/slang/slangc')
-spirv_val = find_program('external/spirv_tools/spirv-val')
+if host_machine.system() == 'windows'
+  glsl_compiler = find_program('external/glslangvalidator/glslangValidator')
+  slang_compiler = find_program('external/slang/slangc')
+  spirv_val = find_program('external/spirv_tools/spirv-val')
+else
+  # Native POSIX build: use system glslang/SPIRV-Tools and a Linux Slang release.
+  glsl_compiler = find_program('glslangValidator')
+  slang_compiler = find_program('slangc', join_paths(global_src_root_norm, '../dxvk-tools/slang-2026/bin/slangc'))
+  spirv_val = find_program('spirv-val')
+endif
 python_interpreter = find_program('python3', 'python')
 shader_compile_script = join_paths(global_src_root_norm, 'scripts-common/compile_shaders.py')
 
@@ -436,11 +461,11 @@ rtx_shaders_runtime_command_arguments = rtx_shaders_command_arguments + [ '-bina
 
 rtx_shaders_runtime_command_argument_string = ' '.join(rtx_shaders_runtime_command_arguments)
 
-add_global_arguments('/DRUNTIME_SHADER_RECOMPILATION_PYTHON_ARGUMENTS="' + rtx_shaders_runtime_command_argument_string + '"', language : 'cpp')
+add_global_arguments('-DRUNTIME_SHADER_RECOMPILATION_PYTHON_ARGUMENTS="' + rtx_shaders_runtime_command_argument_string + '"', language : 'cpp')
 vs_project_defines += 'RUNTIME_SHADER_RECOMPILATION_PYTHON_ARGUMENTS="' + rtx_shaders_runtime_command_argument_string + '";'
-add_global_arguments('/DRUNTIME_SHADER_RECOMPILATION_SHADER_SOURCE_PATH="' + rtx_shader_source_directory + '"', language : 'cpp')
+add_global_arguments('-DRUNTIME_SHADER_RECOMPILATION_SHADER_SOURCE_PATH="' + rtx_shader_source_directory + '"', language : 'cpp')
 vs_project_defines += 'RUNTIME_SHADER_RECOMPILATION_SHADER_SOURCE_PATH="' + rtx_shader_source_directory + '";'
-add_global_arguments('/DRUNTIME_SHADER_RECOMPILATION_SPIRV_BINARY_OUTPUT_PATH="' + rtx_shader_output_directory + '"', language : 'cpp')
+add_global_arguments('-DRUNTIME_SHADER_RECOMPILATION_SPIRV_BINARY_OUTPUT_PATH="' + rtx_shader_output_directory + '"', language : 'cpp')
 vs_project_defines += 'RUNTIME_SHADER_RECOMPILATION_SPIRV_BINARY_OUTPUT_PATH="' + rtx_shader_output_directory + '";'
 
 exe_ext = ''
@@ -558,7 +583,11 @@ if get_option('enable_tracy')
 endif
 
 # embedding compiler
-xxd_exe = find_program('external/nv_xxd/nv_xxd')
+if host_machine.system() == 'windows'
+  xxd_exe = find_program('external/nv_xxd/nv_xxd')
+else
+  xxd_exe = find_program('scripts-common/embed_xxd.py')
+endif
 embedding_compiler = generator(xxd_exe,
     output : '@PLAINNAME@.h',
     arguments : [ '@INPUT@', '@OUTPUT@', '@BASENAME@' ]
@@ -605,12 +634,24 @@ nvusd_deplibs = [
 ]
 
 usd_linklibs = []
-foreach ulib : nvusd_deplibs
-  usd_linklibs += dxvk_compiler.find_library(ulib, dirs: join_paths(usd_lib_path, 'lib'))
-endforeach
+if host_machine.system() == 'windows'
+  foreach ulib : nvusd_deplibs
+    usd_linklibs += dxvk_compiler.find_library(ulib, dirs: join_paths(usd_lib_path, 'lib'))
+  endforeach
 
-usd_linklibs += dxvk_compiler.find_library(get_option('buildtype') == 'debug' ? 'tbb12_debug' : 'tbb12', dirs: join_paths(usd_lib_path, 'lib'))
+  usd_linklibs += dxvk_compiler.find_library(get_option('buildtype') == 'debug' ? 'tbb12_debug' : 'tbb12', dirs: join_paths(usd_lib_path, 'lib'))
+else
+  usd_linklibs += dxvk_compiler.find_library('usd_ms')
+  usd_linklibs += dxvk_compiler.find_library('tbb')
+  # The system OpenUSD is built with Python support, its headers reference the interpreter.
+  usd_linklibs += dependency('python-3.14-embed')
+endif
 
+if host_machine.system() != 'windows'
+  # Native POSIX build: NvLowLatencyVk has no Linux binary, Reflex is disabled.
+  reflex_include_path = include_directories( 'external/reflex/inc')
+  reflex_lib = []
+else
 if dxvk_is_woa
   reflex_lib_path = join_paths(global_src_root_norm, 'external/reflex_arm64/lib')
   reflex_include_path = include_directories( 'external/reflex_arm64/inc')
@@ -620,6 +661,7 @@ else
 endif
 external_dll_paths += reflex_lib_path
 reflex_lib = dxvk_compiler.find_library('NvLowLatencyVk', dirs : reflex_lib_path)
+endif
 
 nrc_dll_name = 'NRC_Vulkan.dll'
 if dxvk_is_woa
@@ -673,9 +715,11 @@ dxvkrt_output_targets = {
   'unit_test': '',
 }
 
-subdir('tests/rtx')
+if host_machine.system() == 'windows'
+  subdir('tests/rtx')
+endif
 
-if dxvk_is_ninja or dxvk_is_woa_ec
+if (dxvk_is_ninja or dxvk_is_woa_ec) and host_machine.system() == 'windows'
   # this is how we force meson to reconfigure when external files change
   # (meson does not do globbing)
   if fs.exists('gametargets.conf')

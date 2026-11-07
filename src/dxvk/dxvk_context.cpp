@@ -6128,4 +6128,12 @@ namespace dxvk {
     return m_zeroBuffer;
   }
   
+
+  // NV-DXVK start: explicit instantiations, GCC does not emit every combination used from other translation units
+  template bool DxvkContext::commitGraphicsState<false, false>();
+  template bool DxvkContext::commitGraphicsState<false, true>();
+  template bool DxvkContext::commitGraphicsState<true, false>();
+  template bool DxvkContext::commitGraphicsState<true, true>();
+  // NV-DXVK end
+
 }

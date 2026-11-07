@@ -71,10 +71,12 @@ namespace dxvk {
     if (RtxIo::enabled()) {
       RtxIo::get().initialize(m_device);
     }
+#endif
     // start async before starting asset loading
+    // NV-DXVK start: the async texture runner also has to start when RTXIO is compiled out
     DxvkObjects* pCommon = m_device->getCommon();
     pCommon->getTextureManager().startAsync();
-#endif
+    // NV-DXVK end
 
     const VkPhysicalDeviceProperties& gpuProperties = m_device->adapter()->devicePropertiesExt().core.properties;
     GpuOverrides::setCurrentGpu(gpuProperties.vendorID, gpuProperties.deviceID);

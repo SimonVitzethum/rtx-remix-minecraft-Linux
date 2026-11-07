@@ -440,7 +440,6 @@ dxvk_src = files([
   'imgui/imgui_demo.cpp',
   'imgui/imgui_draw.cpp',
   'imgui/imgui_impl_dxvk.hpp',
-  'imgui/imgui_impl_win32.cpp',
   'imgui/imgui_impl_win32.h',
   'imgui/imgui_internal.h',
   'imgui/imgui_tables.cpp',
@@ -456,13 +455,32 @@ dxvk_src = files([
   'imgui/implot_items.cpp',
 ])
 
+if host_machine.system() == 'windows'
+  dxvk_src += files(['imgui/imgui_impl_win32.cpp'])
+else
+  dxvk_src += files(['imgui/imgui_impl_linux_stub.cpp'])
+endif
+
 thread_dep = dependency('threads')
 
 nrd_include_dir = include_directories(join_paths('../../', 'external/nrd/Include'))
-nrd_dep = declare_dependency(
-  include_directories : nrd_include_dir
-)
+if host_machine.system() == 'windows'
+  nrd_dep = declare_dependency(
+    include_directories : nrd_include_dir
+  )
+else
+  # Native POSIX build: libNRD.so built from source (see PORT_KNOWLEDGE.md).
+  nrd_dep = declare_dependency(
+    dependencies : [ dxvk_compiler.find_library('NRD', dirs : join_paths(global_src_root_norm, '../dxvk-deps/NRD/_Bin')) ],
+    include_directories : nrd_include_dir
+  )
+endif
 
+if host_machine.system() != 'windows'
+  # Native POSIX build: NRC and XeSS have no Linux binaries and are compiled out.
+  nrc_dep = declare_dependency(include_directories : include_directories('../../submodules/nrc/Include'))
+  xess_dep = declare_dependency(include_directories : include_directories('../../submodules/xess/inc'))
+else
 if dxvk_is_woa
   nrc_dll_path = join_paths(meson.global_source_root(), 'external/nrc_arm64/bin/')
   nrc_lib_path = join_paths(meson.global_source_root(), 'external/nrc_arm64/lib/')
@@ -489,6 +507,7 @@ nrc_lib = dxvk_compiler.find_library('NRC_Vulkan', dirs : nrc_lib_path, required
 nrc_dep = declare_dependency(
   dependencies : [ nrc_lib ]
 )
+endif
 
 submodules_dep = declare_dependency(
   include_directories : include_directories('../../submodules')
@@ -538,7 +557,7 @@ dxvk_lib = static_library('dxvk', dxvk_src, dxvk_version, [generated_dxvk_shader
   include_directories : [ dxvk_include_path, dxvk_shader_include_path, rtxdi_include_path, remix_api_include_path, rtxcr_include_path, submodules_include_path ],
   override_options    : ['cpp_std='+dxvk_cpp_std],
   # Force switch statements over enums to either cover all cases or have a default case.
-  cpp_args            : dxvk_is_msvc ? ['/we4062', '/DREMIX_LIBRARY_EXPORTS=1'] : ['-Wswitch'],
+  cpp_args            : dxvk_is_msvc ? ['/we4062', '-DREMIX_LIBRARY_EXPORTS=1'] : ['-Wswitch'],
   cpp_pch             : ['pch/dxvk.pch.h']
   )
 

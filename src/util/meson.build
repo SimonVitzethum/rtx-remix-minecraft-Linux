@@ -9,7 +9,6 @@ util_src = files([
   'util_luid.cpp',
   'util_matrix.cpp',
   'util_monitor.cpp',
-  'util_window.cpp',
   'util_sentry.cpp',
 
   'thread.cpp',
@@ -68,8 +67,14 @@ util_src = files([
   'util_global_time.h',
 ])
 
+if host_machine.system() == 'windows'
+  util_src += files(['util_window.cpp'])
+else
+  util_src += files(['linux/win32_compat.cpp', 'linux/aftermath_stub.cpp', 'linux/nvapi_stub.cpp', 'linux/reflex_stub.cpp', 'linux/nrc_stub.cpp', 'linux/xess_stub.cpp', 'linux/window_stub.cpp'])
+endif
+
 util_lib = static_library('util', util_src,
-  dependencies        : [ sentry_dep, aftermath_dep ],
+  dependencies        : [ sentry_dep, aftermath_dep, nvapi_dep ],
   include_directories : [ dxvk_include_path ],
   override_options    : ['cpp_std='+dxvk_cpp_std])
 

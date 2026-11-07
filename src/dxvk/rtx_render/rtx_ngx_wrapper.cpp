@@ -26,13 +26,19 @@
 #include <exception>
 #include <mutex>
 
+#ifdef REMIX_LINUX_NATIVE
+#include <windows.h>
+#else
 #define WIN32_NO_STATUS
 #include <windows.h>
 #include <ntstatus.h>
 #undef WIN32_NO_STATUS
 #include <Winternl.h>
+#endif
+#ifndef REMIX_LINUX_NATIVE
 #include <d3dkmthk.h>
 #include <d3dkmdt.h>
+#endif
 
 #include "rtx_ngx_wrapper.h"
 #include "rtx_matrix_helpers.h"
@@ -464,6 +470,12 @@ namespace dxvk
     return true;
   }
 
+#ifdef REMIX_LINUX_NATIVE
+  static bool checkHardwareSchedulingEnabled(DxvkDevice* device) {
+    // WDDM hardware scheduling does not exist on Linux.
+    return false;
+  }
+#else
   static bool checkHardwareSchedulingEnabled(DxvkDevice* device) {
     // enumerate adapters, find the right one
     D3DKMT_ENUMADAPTERS2 enumAdapters;
@@ -509,6 +521,7 @@ namespace dxvk
 
     return false;
   }
+#endif
 
   void NGXContext::checkDLFGSupport(NVSDK_NGX_Parameter* params) {
     NVSDK_NGX_Result result;

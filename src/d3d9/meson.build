@@ -1,9 +1,13 @@
-d3d9_version = vcs_tag(
-  command: [python_interpreter.full_path(), global_src_root_norm + './scripts-common/echo.py', full_version],
-  input:   'version.rc.in',
-  output:  'version.rc')
+if host_machine.system() == 'windows'
+  d3d9_version = vcs_tag(
+    command: [python_interpreter.full_path(), global_src_root_norm + './scripts-common/echo.py', full_version],
+    input:   'version.rc.in',
+    output:  'version.rc')
 
-d3d9_res = wrc_generator.process(d3d9_version)
+  d3d9_res = wrc_generator.process(d3d9_version)
+else
+  d3d9_res = []
+endif
 
 d3d9_shaders = files([
   'shaders/d3d9_convert_yuy2_uyvy.comp',
@@ -100,19 +104,25 @@ if remix_with_shim
   d3d9_arch_str = dxvk_is_woa_ec ? '_a64ec' : d3d9_arch_str
 endif
 
-d3d9_impl_dll = shared_library('d3d9' + d3d9_arch_str, d3d9_src, dxvk_version, glsl_generator.process(d3d9_shaders), d3d9_res,
-  name_prefix         : '',
+d3d9_vs_defs = 'd3d9' + def_spec_ext
+if host_machine.system() != 'windows'
+  d3d9_vs_defs = []
+endif
+d3d9_impl_name = host_machine.system() == 'windows' ? 'd3d9' + d3d9_arch_str : 'remixapi'
+d3d9_extra_kwargs = host_machine.system() == 'windows' ? { 'vs_module_defs' : d3d9_vs_defs } : {}
+d3d9_impl_dll = shared_library(d3d9_impl_name, d3d9_src, dxvk_version, glsl_generator.process(d3d9_shaders), d3d9_res,
+  name_prefix         : host_machine.system() == 'windows' ? '' : 'lib',
 
   link_with           : [ util_lib ],
   link_args           : [ usd_plugin_delay_load_args, dxvk_release_link_args ],
   dependencies        : [ dxso_dep, dxvk_dep, util_dep, sentry_dep ],
   include_directories : [ dxvk_include_path, dxvk_shader_include_path, usd_include_paths, remix_api_include_path ],
-  objects             : not dxvk_is_msvc ? 'd3d9' + def_spec_ext : [],
-  vs_module_defs      : 'd3d9'+def_spec_ext,
+  objects             : (not dxvk_is_msvc and host_machine.system() == 'windows') ? 'd3d9' + def_spec_ext : [],
   override_options    : ['cpp_std='+dxvk_cpp_std],
-  cpp_args            : ['/DREMIX_LIBRARY_EXPORTS=1'],
+  cpp_args            : ['-DREMIX_LIBRARY_EXPORTS=1'],
   cpp_pch             : ['pch/d3d9.pch.h'],
-  install: true
+  install: true,
+  kwargs : d3d9_extra_kwargs
   )
 
 if dxvk_is_x64 and remix_with_shim
@@ -132,7 +142,7 @@ if dxvk_is_x64 and remix_with_shim
     objects             : not dxvk_is_msvc ? 'd3d9' + def_spec_ext : [],
     vs_module_defs      : 'd3d9'+def_spec_ext,
     override_options    : ['cpp_std='+dxvk_cpp_std],
-    cpp_args            : [ '/DRTX_NO_GETENV_FALLBACK=1', '/DREMIX_LIBRARY_EXPORTS=1', '/UTRACY_ENABLE' ],
+    cpp_args            : [ '-DRTX_NO_GETENV_FALLBACK=1', '-DREMIX_LIBRARY_EXPORTS=1', '-UTRACY_ENABLE' ],
     install             : true
     )
 

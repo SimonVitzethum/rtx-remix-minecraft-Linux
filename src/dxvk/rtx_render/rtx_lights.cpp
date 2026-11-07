@@ -1025,7 +1025,7 @@ void RtLight::copyFrom(const RtLight& light) {
 // Ensure copyFrom copies all needed members when size changes, and update the object size check.
 // Note: The object has a different size on Debug builds. 
 //       Checking the non-Debug flavors is good enough for the sake of convenience of tracking just a single size.
-#if defined(DEBUG_OPTIMIZED) || defined(NDEBUG)
+#if (defined(DEBUG_OPTIMIZED) || defined(NDEBUG)) && !defined(REMIX_LINUX_NATIVE)
 namespace {
   template<int RtLightSize> struct CheckRtLightSize {
     // The second line of the build error should contain the new size of RtLight in the template argument, i.e. `dxvk::CheckRtLightSize<newSize>`

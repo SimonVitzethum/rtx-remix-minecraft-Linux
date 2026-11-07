@@ -119,7 +119,7 @@ namespace dxvk {
       PointInstancerCullingConstants constants {};
       memcpy(&constants.objectToWorld, &batch.objectToWorld, sizeof(mat4));
       memcpy(&constants.prevObjectToWorld, &batch.prevObjectToWorld, sizeof(mat4));
-      constants.cameraPosition    = { cameraPosition.x, cameraPosition.y, cameraPosition.z };
+      constants.cameraPosition    = vec3(cameraPosition.x, cameraPosition.y, cameraPosition.z);
       constants.cullingRadius     = cullingEnabled ? cullingRadius() : FLT_MAX;
       constants.totalInstanceCount = count;
       constants.baseSurfaceIndex  = batch.baseSurfaceIndex;

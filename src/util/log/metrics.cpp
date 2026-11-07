@@ -19,6 +19,7 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <filesystem>
 #include "metrics.h"
 
 #include "../util_env.h"
@@ -31,7 +32,7 @@ namespace dxvk {
     auto path = getFileName();
 
     if (!path.empty())
-      m_fileStream = std::ofstream(str::tows(path.c_str()).c_str());
+      m_fileStream = std::ofstream(std::filesystem::path(str::tows(path.c_str())));
   }
   
   Metrics::~Metrics() { }
@@ -145,7 +146,7 @@ namespace dxvk {
     bool traceFileWritten = false;
     const std::string tracePath = getOutputPath("frame_trace.jsonl");
     if (!tracePath.empty()) {
-      std::ofstream out(str::tows(tracePath.c_str()).c_str(), std::ios::out | std::ios::trunc);
+      std::ofstream out(std::filesystem::path(str::tows(tracePath.c_str())), std::ios::out | std::ios::trunc);
       if (out.is_open()) {
         for (uint32_t i = 0; i < m_testTraceEventCount; i++) {
           const TestTraceEvent& event = m_testTraceEvents[i];

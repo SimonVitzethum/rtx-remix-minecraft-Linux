@@ -33,7 +33,7 @@
 #include "rtx_imgui.h"
 #include "rtx/pass/raytrace_args.h"
 #include "rtx_nrc_context.h"
-#include <nrc\Include\NrcStructures.h>
+#include <nrc/Include/NrcStructures.h>
 #include "rtx_camera.h"
 #include "rtx_debug_view.h"
 

@@ -31,6 +31,32 @@
 #include <array>
 #include <string_view>
 
+#ifdef REMIX_LINUX_NATIVE
+#include <fstream>
+#include <string>
+#include <sys/utsname.h>
+
+namespace dxvk {
+  void RtxSystemInfo::logReport() {
+    std::string cpu = "unknown";
+    uint64_t memKb = 0;
+    {
+      std::ifstream f("/proc/cpuinfo");
+      for (std::string line; std::getline(f, line);) {
+        if (line.rfind("model name", 0) == 0) { cpu = line.substr(line.find(':') + 2); break; }
+      }
+    }
+    {
+      std::ifstream f("/proc/meminfo");
+      std::string key; uint64_t v = 0; std::string unit;
+      while (f >> key >> v >> unit) { if (key == "MemTotal:") { memKb = v; break; } }
+    }
+    struct utsname uts;
+    std::string os = uname(&uts) == 0 ? std::string(uts.sysname) + " " + uts.release : "Linux";
+    Logger::info(str::format("System info: CPU: ", cpu, ", RAM: ", memKb / 1024, " MiB, OS: ", os));
+  }
+}
+#else
 #include <windows.h>
 #include <intrin.h>
 
@@ -186,3 +212,5 @@ namespace dxvk {
   }
 
 }
+
+#endif // REMIX_LINUX_NATIVE

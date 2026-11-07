@@ -685,19 +685,15 @@ private:
   bool m_isMarkedForGarbageCollection = false;
 
   mutable RtLightAntiCullingType m_anticullingType = RtLightAntiCullingType::Ignore;
-  union {
-    // Mesh->Light(s) Replacement Anti-Culling
-    struct {
-      // Note: Don't revert these 2 variables! Or the bbox may be polluted by sphere light data.
-      mutable Matrix4 m_originalMeshTransform;
-      mutable AxisAlignedBoundingBox m_originalMeshBoundingBox;
-    };
-    // Light->Light(s) Replacement Anti-Culling
-    struct {
-      mutable Vector3 m_originalPosition;
-      mutable float m_originalLightRadius;
-    };
-  };
+  // NV-DXVK start: GCC does not allow non-trivial members in an anonymous union, so the members are stored side by side.
+  // Mesh->Light(s) Replacement Anti-Culling
+  // Note: Don't revert these 2 variables! Or the bbox may be polluted by sphere light data.
+  mutable Matrix4 m_originalMeshTransform;
+  mutable AxisAlignedBoundingBox m_originalMeshBoundingBox;
+  // Light->Light(s) Replacement Anti-Culling
+  mutable Vector3 m_originalPosition;
+  mutable float m_originalLightRadius;
+  // NV-DXVK end
 
   void copyFrom(const RtLight& light);
 };

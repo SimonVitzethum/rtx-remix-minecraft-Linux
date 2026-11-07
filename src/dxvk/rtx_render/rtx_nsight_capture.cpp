@@ -135,7 +135,11 @@ namespace dxvk {
     settings.terminateAfterCapture = false;
     settings.noStreamlineCapture = true;
 
+#ifdef REMIX_LINUX_NATIVE
+    const std::string installPathWide = install;
+#else
     const std::wstring installPathWide = str::tows(install.c_str());
+#endif
     NGFX_GraphicsCapture_Inject_Vulkan_Params injectParams = { NGFX_GraphicsCapture_Inject_Vulkan_Params_VER };
     injectParams.installationPath = installPathWide.c_str();
     injectParams.settings = &settings;

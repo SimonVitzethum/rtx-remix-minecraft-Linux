@@ -19,6 +19,7 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <filesystem>
 #include <version.h>
 
 #include "dxvk_instance.h"
@@ -45,7 +46,11 @@
 #include <sstream>
 #include <mutex>
 #include <windows.h>
+#ifdef REMIX_LINUX_NATIVE
+#include <execinfo.h>
+#else
 #include <dbghelp.h>
+#endif
 // NV-DXVK end
 
 // NV-DXVK start: regex-based filters for VL messages
@@ -85,6 +90,9 @@ namespace dxvk {
       bool symInitOk = false;
       std::mutex dbghelpMutex;
 
+#ifdef REMIX_LINUX_NATIVE
+      void ensureSymbolsAreInitialized() { symInitOk = true; }
+#else
       void ensureSymbolsAreInitialized() {
         std::call_once(symInitFlag, [this]() {
           std::lock_guard<std::mutex> lock(dbghelpMutex);
@@ -116,6 +124,7 @@ namespace dxvk {
           }
         });
       }
+#endif
     };
 
     StackTrace stackTrace;
@@ -191,6 +200,19 @@ namespace dxvk {
   }
 
   // NV-DXVK start: capture stack trace for debug messages
+#ifdef REMIX_LINUX_NATIVE
+  std::string captureStackTrace(DxvkDebugUtilsContext& ctx) {
+    std::array<void*, 64> frames{};
+    const int captured = backtrace(frames.data(), static_cast<int>(frames.size()));
+    char** symbols = backtrace_symbols(frames.data(), captured);
+    std::ostringstream stream;
+    for (int i = 1; i < captured; ++i) {
+      stream << "  [" << i << "] " << (symbols ? symbols[i] : "<unknown>") << "\n";
+    }
+    free(symbols);
+    return stream.str();
+  }
+#else
   std::string captureStackTrace(DxvkDebugUtilsContext& ctx) {
     ctx.stackTrace.ensureSymbolsAreInitialized();
 
@@ -243,6 +265,8 @@ namespace dxvk {
 
     return stream.str();
   }
+
+#endif
 
   bool filterDuplicateMessages(DxvkDebugUtilsContext& ctx, const char* pMsg) {
     std::lock_guard<std::mutex> lock(ctx.seenMessagesMutex);
@@ -377,7 +401,7 @@ namespace dxvk {
         " unregistered, ", crashInfo.driverInternalShaderCount, " driver internal"));
     }
 
-    std::ofstream dumpFile = std::ofstream(str::tows(dumpFilename.c_str()).c_str(), std::ios::binary);
+    std::ofstream dumpFile = std::ofstream(std::filesystem::path(str::tows(dumpFilename.c_str())), std::ios::binary);
     if (dumpFile.is_open()) {
       dumpFile.write((char*) pGpuCrashDump, gpuCrashDumpSize);
       dumpFile.close();
@@ -405,7 +429,7 @@ namespace dxvk {
 
     std::string sdiFilename = str::format(shaderDumpInfoDir, std::uppercase, std::setfill('0'), std::setw(16), std::hex, sdiIdentifier.id[0], "-", sdiIdentifier.id[1], "-0000", ".nvdbg");
 
-    std::ofstream sdiFile = std::ofstream(str::tows(sdiFilename.c_str()).c_str(), std::ios::binary);
+    std::ofstream sdiFile = std::ofstream(std::filesystem::path(str::tows(sdiFilename.c_str())), std::ios::binary);
     if (sdiFile.is_open()) {
       sdiFile.write((char*) pShaderDebugInfo, shaderDebugInfoSize);
       sdiFile.close();

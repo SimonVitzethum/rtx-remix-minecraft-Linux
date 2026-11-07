@@ -118,7 +118,7 @@ namespace {
     using namespace dxvk;
 
     std::string tostr(const remixapi_MaterialHandle& h) {
-      static_assert(sizeof h == sizeof uint64_t);
+      static_assert(sizeof(h) == sizeof(uint64_t));
       return std::to_string(reinterpret_cast<uint64_t>(h));
     }
 
@@ -545,8 +545,8 @@ namespace {
             params->nearPlane,
             params->farPlane,
             isLhs ? PROJ_LEFT_HANDED : 0);
-          static_assert(sizeof result.viewToProjection == sizeof proj);
-          memcpy(&result.viewToProjection, &proj, sizeof float4x4);
+          static_assert(sizeof(result.viewToProjection) == sizeof(proj));
+          memcpy(&result.viewToProjection, &proj, sizeof(float4x4));
         }
         return result;
       }
@@ -1688,8 +1688,8 @@ namespace {
       hwnd = info->hwnd;
       auto hwndRect = RECT {};
       GetClientRect(info->hwnd, &hwndRect);
-      width = static_cast<uint32_t>(std::max(0l, hwndRect.right - hwndRect.left));
-      height = static_cast<uint32_t>(std::max(0l, hwndRect.bottom - hwndRect.top));
+      width = static_cast<uint32_t>(std::max<LONG>(0, hwndRect.right - hwndRect.left));
+      height = static_cast<uint32_t>(std::max<LONG>(0, hwndRect.bottom - hwndRect.top));
     }
 
     IDirect3DDevice9Ex* d3d9Device = nullptr;
@@ -1786,8 +1786,8 @@ namespace {
       if (hwnd) {
         RECT hwndRect = {};
         GetClientRect(hwnd, &hwndRect);
-        windowWidth = static_cast<UINT>(std::max(0l, hwndRect.right - hwndRect.left));
-        windowHeight = static_cast<UINT>(std::max(0l, hwndRect.bottom - hwndRect.top));
+        windowWidth = static_cast<UINT>(std::max<LONG>(0, hwndRect.right - hwndRect.left));
+        windowHeight = static_cast<UINT>(std::max<LONG>(0, hwndRect.bottom - hwndRect.top));
       }
     }
 

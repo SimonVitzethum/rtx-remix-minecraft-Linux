@@ -21,12 +21,12 @@
 */
 #pragma once
 
-#include <imgui\imgui.h>
-#include <imgui\imgui_internal.h>
-#include "..\rtx_render\rtx_option.h"
-#include "..\rtx_render\rtx_gui_widgets.h"
-#include "..\util\util_string.h"
-#include "..\util\util_vector.h"
+#include <imgui/imgui.h>
+#include <imgui/imgui_internal.h>
+#include "../rtx_render/rtx_option.h"
+#include "../rtx_render/rtx_gui_widgets.h"
+#include "../util/util_string.h"
+#include "../util/util_vector.h"
 #include <type_traits>
 #include <utility>
 
@@ -375,8 +375,8 @@ namespace RemixGui {
     ComboWithKey& operator=(const ComboWithKey&) = delete;
     ComboWithKey& operator=(ComboWithKey&&) noexcept = delete;
 
-    template <typename T, std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, bool> = true>
-    bool getKey(T* key) {
+    template <typename K, std::enable_if_t<std::is_integral_v<K> || std::is_enum_v<K>, bool> = true>
+    bool getKey(K* key) {
       auto it = m_keyToComboIdx.find(*key);
 
       int comboIdx = it != m_keyToComboIdx.end() ? it->second : 0;

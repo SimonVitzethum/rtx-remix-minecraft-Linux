@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "d3d9_fixed_function.h"
 
 #include "d3d9_device.h"
@@ -2780,7 +2781,7 @@ namespace dxvk {
 
     if (dumpPath.size() != 0) {
       std::ofstream dumpStream(
-        str::tows(str::format(dumpPath, "/", Name, ".spv").c_str()).c_str(),
+        std::filesystem::path(str::tows(str::format(dumpPath, "/", Name, ".spv").c_str())),
         std::ios_base::binary | std::ios_base::trunc);
       
       m_shader->dump(dumpStream);

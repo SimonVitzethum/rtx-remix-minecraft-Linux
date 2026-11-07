@@ -51,10 +51,16 @@
 #include "rtx_hashing.h"
 #include "rtx_mod_manager.h"
 
+// NV-DXVK start: GCC does not accept opaque enum declarations without an underlying type
+#ifdef REMIX_LINUX_NATIVE
+#include "../../util/util_nvapi.h"
+#else
 enum _NV_GPU_ARCHITECTURE_ID;
 typedef enum _NV_GPU_ARCHITECTURE_ID NV_GPU_ARCHITECTURE_ID;
 enum _NV_GPU_ARCH_IMPLEMENTATION_ID;
 typedef enum _NV_GPU_ARCH_IMPLEMENTATION_ID NV_GPU_ARCH_IMPLEMENTATION_ID;
+#endif
+// NV-DXVK end
 
 // RTX specific options
 

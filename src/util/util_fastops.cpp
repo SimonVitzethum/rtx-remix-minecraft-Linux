@@ -19,6 +19,7 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#pragma GCC target("avx512f,avx512bw,avx512vl,avx512dq")
 #include <math.h>
 #include <intrin.h>
 #include "util_math.h"

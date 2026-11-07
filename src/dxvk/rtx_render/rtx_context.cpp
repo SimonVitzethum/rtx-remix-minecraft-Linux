@@ -68,10 +68,9 @@
 #include "imgui/dxvk_imgui.h"
 
 #include <ctime>
-#include <nvapi.h>
+#include "../../util/util_nvapi.h"
 
-#include <NvLowLatencyVk.h>
-#include <pclstats.h>
+#include "../../util/util_reflex.h"
 
 #include "rtx_matrix_helpers.h"
 #include "../util/util_fastops.h"

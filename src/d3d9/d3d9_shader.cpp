@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "d3d9_shader.h"
 
 #include "d3d9_caps.h"
@@ -33,7 +34,7 @@ namespace dxvk {
       DxsoReader reader(
         reinterpret_cast<const char*>(pShaderBytecode));
 
-      reader.store(std::ofstream(str::tows(str::format(dumpPath, "/", name, ".dxso").c_str()).c_str(),
+      reader.store(std::ofstream(std::filesystem::path(str::tows(str::format(dumpPath, "/", name, ".dxso").c_str())),
         std::ios_base::binary | std::ios_base::trunc), bytecodeLength);
 
       char comment[2048];
@@ -45,7 +46,7 @@ namespace dxvk {
         &blob);
       
       if (SUCCEEDED(hr)) {
-        std::ofstream disassembledOut(str::tows(str::format(dumpPath, "/", name, ".dxso.dis").c_str()).c_str(), std::ios_base::binary | std::ios_base::trunc);
+        std::ofstream disassembledOut(std::filesystem::path(str::tows(str::format(dumpPath, "/", name, ".dxso.dis").c_str())), std::ios_base::binary | std::ios_base::trunc);
         disassembledOut.write(
           reinterpret_cast<const char*>(blob->GetBufferPointer()),
           blob->GetBufferSize());
@@ -87,7 +88,7 @@ namespace dxvk {
     
     if (dumpPath.size() != 0) {
       std::ofstream dumpStream(
-        str::tows(str::format(dumpPath, "/", name, ".spv").c_str()).c_str(),
+        std::filesystem::path(str::tows(str::format(dumpPath, "/", name, ".spv").c_str())),
         std::ios_base::binary | std::ios_base::trunc);
       
       m_shaders[0]->dump(dumpStream);

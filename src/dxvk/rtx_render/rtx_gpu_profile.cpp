@@ -25,7 +25,7 @@
 #include <cstring>
 #include <string>
 
-#include <nvapi.h>
+#include "../../util/util_nvapi.h"
 
 #include "rtx_gpu_profile.h"
 #include "rtx_dlss.h"

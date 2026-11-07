@@ -1293,6 +1293,10 @@ namespace dxvk {
     return true;
   }
 
+  // NV-DXVK start
+  DxvkDLFG::~DxvkDLFG() = default;
+  // NV-DXVK end
+
   DxvkDLFG::DxvkDLFG(DxvkDevice* device)
     : CommonDeviceObject(device)
     // xxxnsubtil: use swapchain frame count here

@@ -45,7 +45,10 @@ namespace dxvk {
     static std::string renderToString(const RtxOptionLayer* layer, const char* layerName);
     
     // Render layer's state to ImGui with colored text
-    static void renderToImGui(const RtxOptionLayer* layer, const RenderOptions& options = {});
+    // NV-DXVK start: GCC cannot use a default argument that requires the default member initializers of a nested struct
+    static void renderToImGui(const RtxOptionLayer* layer, const RenderOptions& options);
+    static void renderToImGui(const RtxOptionLayer* layer) { renderToImGui(layer, RenderOptions()); }
+    // NV-DXVK end
     
     // Convenience: display all options in a layer with optional filtering
     // Shows unsaved status for layers with config files
