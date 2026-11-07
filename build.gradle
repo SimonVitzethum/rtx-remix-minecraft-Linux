@@ -498,6 +498,21 @@ tasks.register('compileNativeArm64', Exec) {
                   file('build/native/arm64/remixbridge.pdb')
 }
 
+// Linux native bridge (POSIX / ELF). Counterpart of build_native.bat; uses
+// build_native.sh with g++/clang. The bridge shares remixbridge.cpp, which is
+// guarded for both platforms. Not wired into setupRuntime yet: the runtime
+// payload is still Windows-only, so this task is opt-in for now.
+tasks.register('compileNativeLinux', Exec) {
+    description = 'Compiles remixbridge.so for Linux (x86_64 ELF)'
+    group = 'build'
+    workingDir file('rtxremix-java/native')
+    commandLine 'bash', file('rtxremix-java/native/build_native.sh').absolutePath, 'x64'
+    inputs.files file('rtxremix-java/native/build_native.sh'),
+                 file('rtxremix-java/native/remixbridge.cpp'),
+                 file('rtxremix-java/native/include/remix_c.h')
+    outputs.files file('build/native/linux64/remixbridge.so')
+}
+
 jar {
     from("LICENSE") {
         rename { "${it}_${projectArchiveName}" }

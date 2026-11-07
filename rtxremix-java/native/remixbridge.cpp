@@ -11,6 +11,7 @@
  * a JNI native function consumed by com.nvidia.rtxremix.RemixBridge.
  */
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winternl.h>
@@ -18,6 +19,20 @@
 #include <dbghelp.h>
 #include <tlhelp32.h>
 #include <malloc.h>
+// HACKHACK: link to OpenGL to expose 'glSemaphoreParameterui64vEXT',
+//           reason: LWJGL does not expose that function
+#include <gl/GL.h>
+#pragma comment(lib, "opengl32.lib")
+#else // POSIX / Linux
+#include <dlfcn.h>
+#include <unistd.h>
+#include <link.h>
+#include <pthread.h>
+#include <signal.h>
+#include <execinfo.h>
+#include <GL/gl.h>
+#endif
+
 #include <jni.h>
 #include <cstring>
 #include <cstdint>
@@ -28,10 +43,16 @@
 #include <string>
 #include <vector>
 
-// HACKHACK: link to OpenGL to expose 'glSemaphoreParameterui64vEXT',
-//           reason: LWJGL does not expose that function
-#include <gl/GL.h>
-#pragma comment(lib, "opengl32.lib")
+// Platform-neutral globals. The crash-dump detail flag is referenced from the
+// Win32-only dump writer and from RemixBridge.setCrashDumpDetail.
+static volatile bool g_crashDumpDetail = false;
+#if !defined(_WIN32)
+// Linux: no VEH/minidump machinery yet; fault forwarding is left to HotSpot.
+static void installCrashHandler() {}
+static void uninstallCrashHandler() {}
+template <typename Call>
+static auto remixCall(Call&& call) -> decltype(call()) { return call(); }
+#endif
 
 #include "remix_c.h"
 
@@ -46,6 +67,7 @@
 // Both land in ./crash/ relative to the working directory (typically run/).
 // ════════════════════════════════════════════════════════════════════════════
 
+#if defined(_WIN32)
 static const char* exceptionCodeName(DWORD code) {
     switch (code) {
         case 0xC0000005: return "EXCEPTION_ACCESS_VIOLATION";
@@ -190,7 +212,6 @@ static void writeAllThreadStacks(FILE* f, DWORD faultingTid, EXCEPTION_POINTERS*
 }
 
 // Set from Java through RemixBridge.setCrashDumpDetail; see writeCrashFiles.
-static volatile bool g_crashDumpDetail = false;
 
 // Writes both a .dmp and a .txt crash report for the given exception.
 static void writeCrashFiles(EXCEPTION_POINTERS* ep) {
@@ -302,6 +323,8 @@ static void uninstallCrashHandler() {
     g_prevFilter = nullptr;
 }
 
+#endif // defined(_WIN32): crash-dump + unhandled-exception machinery
+
 // ════════════════════════════════════════════════════════════════════════════
 // Remix call guard: a fault under a Remix call is reported as unhandled.
 //
@@ -328,6 +351,7 @@ static uintptr_t g_jvmImageEnd   = 0;
 
 // Records where jvm.dll is mapped, so the filter can tell a HotSpot fault
 // without asking the loader, whose lock the faulting thread may hold.
+#if defined(_WIN32)
 static void recordJvmImage() {
     HMODULE jvm = GetModuleHandleW(L"jvm.dll");
     if (!jvm) return;
@@ -409,6 +433,8 @@ static LONG remixFaultFilter(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 #endif
 }
+
+#endif // defined(_WIN32): fault-forward helpers
 
 // Runs one call into the runtime under the guard. Keep the body to the call
 // itself, so a fault in the bridge's own marshalling is not reported as one in
