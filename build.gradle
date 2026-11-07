@@ -32,9 +32,9 @@ def gitDirty = providers.exec {
 // which native bridges are compiled. Omit for the default dual-arch fat JAR;
 // pass -Parch=win64 or -Parch=arm64 for a single-arch dev JAR.
 def archProperty = project.findProperty('arch')
-if (archProperty && !(archProperty in ['win64', 'arm64'])) {
+if (archProperty && !(archProperty in ['win64', 'arm64', 'linux64'])) {
     throw new GradleException(
-        "Invalid -Parch value: '${archProperty}'. Use win64 or arm64 " +
+        "Invalid -Parch value: '${archProperty}'. Use win64, arm64 or linux64 " +
         "(or omit for dual-arch fat JAR).")
 }
 def buildArches = archProperty ? [archProperty] : ['win64', 'arm64']
@@ -276,7 +276,8 @@ tasks.withType(JavaCompile).configureEach {
     options.release = 21
 }
 
-def currentRuntimeArch = System.getProperty("os.arch") == "aarch64" ? "arm64" : "win64"
+def isLinuxHost = System.getProperty("os.name", "").toLowerCase().contains("linux")
+def currentRuntimeArch = isLinuxHost ? "linux64" : (System.getProperty("os.arch") == "aarch64" ? "arm64" : "win64")
 def runtimeArch = archProperty ?: currentRuntimeArch
 def runtimeSdkDir = "remix-runtime/${runtimeArch}"
 def runtimeBridgeDir = "build/native/${runtimeArch}"
@@ -323,13 +324,27 @@ def fetchRuntimeSdkTasks = ['win64', 'arm64'].collectEntries { arch ->
     [(arch): fetchTask]
 }
 
+// The Linux runtime has no published package. It is built natively from dxvk-remix and staged locally with
+// tools/stage_linux_runtime.sh, so the "fetch" only checks that staging happened.
+def checkLinuxRuntimeTask = tasks.register('checkLinuxRuntimeStaged') {
+    description = 'Fails with the staging command when remix-runtime/linux64 is missing'
+    group = 'build'
+    doLast {
+        if (!file('remix-runtime/linux64/libremixapi.so').exists()) {
+            throw new GradleException("The Linux runtime is not staged. Build dxvk-remix natively, then run:\n" +
+                "  tools/stage_linux_runtime.sh [dxvk-remix checkout] [dxvk-deps directory]")
+        }
+    }
+}
+fetchRuntimeSdkTasks['linux64'] = checkLinuxRuntimeTask
+
 // Dev run/ keeps full SDK contents including PDBs so debugger sessions against
 // a locally-built (possibly debug-flavor) dxvk can resolve symbols. packageJar
 // still strips SDK PDBs for distribution. Bridge copies inside the SDK directory
 // stay excluded so the freshly-built build/native/{arch} copy wins.
 def syncRuntimeSdkTask = tasks.register('syncRuntimeSdk', Sync) {
     dependsOn fetchRuntimeSdkTasks[runtimeArch]
-    dependsOn runtimeArch == "arm64" ? 'compileNativeArm64' : 'compileNativeWin64'
+    dependsOn runtimeArch == "arm64" ? 'compileNativeArm64' : (runtimeArch == "linux64" ? 'compileNativeLinux' : 'compileNativeWin64')
     doFirst {
         // Sync treats a missing `from` dir as empty and would silently strip
         // run/remix-sdk down to just the bridge DLL. Fail with the fix instead.
@@ -341,10 +356,10 @@ def syncRuntimeSdkTask = tasks.register('syncRuntimeSdk', Sync) {
         }
     }
     from(runtimeSdkDir) {
-        exclude 'remixbridge.dll', 'remixbridge.pdb'
+        exclude 'remixbridge.dll', 'remixbridge.pdb', 'remixbridge.so'
     }
     from(runtimeBridgeDir) {
-        include 'remixbridge.dll', 'remixbridge.pdb'
+        include 'remixbridge.dll', 'remixbridge.pdb', 'remixbridge.so'
     }
     into 'run/remix-sdk'
 }
@@ -500,8 +515,7 @@ tasks.register('compileNativeArm64', Exec) {
 
 // Linux native bridge (POSIX / ELF). Counterpart of build_native.bat; uses
 // build_native.sh with g++/clang. The bridge shares remixbridge.cpp, which is
-// guarded for both platforms. Not wired into setupRuntime yet: the runtime
-// payload is still Windows-only, so this task is opt-in for now.
+// guarded for both platforms. syncRuntimeSdk and packageJar depend on it for -Parch=linux64.
 tasks.register('compileNativeLinux', Exec) {
     description = 'Compiles remixbridge.so for Linux (x86_64 ELF)'
     group = 'build'
@@ -538,6 +552,7 @@ def packageJarTask = tasks.register('packageJar', Zip) {
     dependsOn buildArches.collect { fetchRuntimeSdkTasks[it] }
     if (buildArches.contains('win64')) dependsOn 'compileNativeWin64'
     if (buildArches.contains('arm64')) dependsOn 'compileNativeArm64'
+    if (buildArches.contains('linux64')) dependsOn 'compileNativeLinux'
 
     archiveBaseName.set(projectArchiveName)
     archiveVersion.set(resolvedBuildVersion)
@@ -577,6 +592,17 @@ def packageJarTask = tasks.register('packageJar', Zip) {
         from("build/native/arm64") {
             into("native/remix-sdk-arm64")
             include "remixbridge.dll", "remixbridge.pdb"
+        }
+    }
+
+    if (buildArches.contains('linux64')) {
+        from("remix-runtime/linux64") {
+            into("native/remix-sdk-linux64")
+            exclude 'remixbridge.so'
+        }
+        from("build/native/linux64") {
+            into("native/remix-sdk-linux64")
+            include "remixbridge.so"
         }
     }
 
@@ -621,6 +647,11 @@ def verifyPackageJarTask = tasks.register('verifyPackageJar') {
             def required = ['META-INF/MANIFEST.MF', 'fabric.mod.json', 'native/rtx.conf',
                             'rtx-remix-shipped-payload.sha256']
             buildArches.each { arch ->
+                if (arch == 'linux64') {
+                    required.add("native/remix-sdk-${arch}/libremixapi.so")
+                    required.add("native/remix-sdk-${arch}/remixbridge.so")
+                    return
+                }
                 required.add("native/remix-sdk-${arch}/d3d9.dll")
                 required.add("native/remix-sdk-${arch}/remixbridge.dll")
                 required.add("native/remix-sdk-${arch}/remixbridge.pdb")
@@ -645,7 +676,7 @@ def verifyPackageJarTask = tasks.register('verifyPackageJar') {
             if (entryNames.contains('README.md')) {
                 throw new GradleException('Distributable JAR must not contain repository resource notes')
             }
-            def unexpectedArches = ['win64', 'arm64'].findAll { !buildArches.contains(it) }
+            def unexpectedArches = ['win64', 'arm64', 'linux64'].findAll { !buildArches.contains(it) }
             unexpectedArches.each { arch ->
                 def prefix = "native/remix-sdk-${arch}/"
                 if (entryNames.any { it.startsWith(prefix) }) {

@@ -39,7 +39,24 @@
 #if defined(_WIN32)
 #define RTX_BRIDGE_GET_GL_PROC(n) wglGetProcAddress(n)
 #else
-#define RTX_BRIDGE_GET_GL_PROC(n) glXGetProcAddressARB((const unsigned char*)(n))
+// Wayland clients render through EGL, X11 clients through GLX. remixapi_linux_SetWaylandDisplay selects EGL.
+static bool g_useEglProcs = false;
+static void* rtxResolveGlProc(const char* name)
+{
+    if (g_useEglProcs) {
+        using PFN_eglGetProcAddress = void* (*)(const char*);
+        static PFN_eglGetProcAddress eglGetProc = (PFN_eglGetProcAddress) dlsym(RTLD_DEFAULT, "eglGetProcAddress");
+        if (!eglGetProc) {
+            void* egl = dlopen("libEGL.so.1", RTLD_NOW | RTLD_GLOBAL);
+            eglGetProc = egl ? (PFN_eglGetProcAddress) dlsym(egl, "eglGetProcAddress") : nullptr;
+        }
+        if (eglGetProc) {
+            return eglGetProc(name);
+        }
+    }
+    return (void*) glXGetProcAddressARB((const unsigned char*)name);
+}
+#define RTX_BRIDGE_GET_GL_PROC(n) rtxResolveGlProc(n)
 #endif
 
 #include <jni.h>
@@ -2382,5 +2399,26 @@ Java_com_nvidia_rtxremix_RemixBridge_openglCreateSemaphoresNV(JNIEnv* env, jclas
     glCreateSemaphoresNV(1, &semaphore);
     return (jint)semaphore;
 }
+
+#if !defined(_WIN32)
+// Selects Wayland presentation in the runtime and EGL for GL entry point lookup. display is the GLFW wl_display.
+JNIEXPORT void JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_linuxSetWaylandDisplay(JNIEnv*, jclass, jlong display)
+{
+    g_useEglProcs = display != 0;
+    if (!g_remixDll) return;
+    auto fn = (void (*)(void*)) dlsym(g_remixDll, "remixapi_linux_SetWaylandDisplay");
+    if (fn) fn((void*)(uintptr_t) display);
+}
+
+// Wayland surfaces cannot be queried for their size, so the client reports it.
+JNIEXPORT void JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_linuxSetWindowSize(JNIEnv*, jclass, jint width, jint height)
+{
+    if (!g_remixDll) return;
+    static auto fn = (void (*)(uint32_t, uint32_t)) dlsym(g_remixDll, "remixapi_linux_SetWindowSize");
+    if (fn) fn((uint32_t) width, (uint32_t) height);
+}
+#endif
 
 } // extern "C"

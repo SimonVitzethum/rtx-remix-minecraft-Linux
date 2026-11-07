@@ -9,6 +9,7 @@ import com.nvidia.rtxremix.CameraInfoParameterizedEXT;
 import com.nvidia.rtxremix.CameraType;
 import com.nvidia.rtxremix.InteropInfo;
 import com.nvidia.rtxremix.PresentInfo;
+import com.nvidia.rtxremix.RemixBridge;
 import com.nvidia.rtxremix.RemixAPI;
 import com.nvidia.rtxremix.RemixException;
 import com.nvidia.rtxremix.StartupInfo;
@@ -61,7 +62,10 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import org.lwjgl.glfw.GLFW;
+import org.lwjgl.glfw.GLFWNativeWayland;
 import org.lwjgl.glfw.GLFWNativeWin32;
+import org.lwjgl.glfw.GLFWNativeX11;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLCapabilities;
 import org.slf4j.Logger;
@@ -93,6 +97,8 @@ import java.util.concurrent.TimeUnit;
  * context and input handling on the host window.
  */
 public class RemixRenderer {
+    private static final boolean IS_LINUX = System.getProperty("os.name", "").toLowerCase().contains("linux");
+
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RemixRenderer.class);
 
@@ -256,6 +262,7 @@ public class RemixRenderer {
             }
             
             LOGGER.info("Got window handle: 0x{}", Long.toHexString(windowHandle));
+            reportLinuxWindowSize();
             
             Path dll = runtimeDll(FabricLoader.getInstance().getGameDir());
             if (!Files.isRegularFile(dll)) {
@@ -531,7 +538,30 @@ public class RemixRenderer {
      * Gets the Win32 HWND from a GLFW window handle.
      */
     private long getHwndFromGlfw(long glfwHandle) {
-        return GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
+        if (!IS_LINUX) {
+            return GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
+        }
+        if (GLFW.glfwGetPlatform() == GLFW.GLFW_PLATFORM_WAYLAND) {
+            // The runtime presents into the wl_surface of the same connection GLFW uses.
+            long display = GLFWNativeWayland.glfwGetWaylandDisplay();
+            long surface = GLFWNativeWayland.glfwGetWaylandWindow(glfwHandle);
+            if (display == 0 || surface == 0) {
+                return 0;
+            }
+            RemixBridge.linuxSetWaylandDisplay(display);
+            LOGGER.info("Presenting through Wayland (wl_display 0x{})", Long.toHexString(display));
+            return surface;
+        }
+        RemixBridge.linuxSetWaylandDisplay(0);
+        return GLFWNativeX11.glfwGetX11Window(glfwHandle);
+    }
+
+    /** Wayland surfaces cannot be queried for their size, so the runtime is told on every frame. */
+    private static void reportLinuxWindowSize() {
+        if (IS_LINUX) {
+            net.minecraft.client.util.Window window = MinecraftClient.getInstance().getWindow();
+            RemixBridge.linuxSetWindowSize(window.getFramebufferWidth(), window.getFramebufferHeight());
+        }
     }
     
     /**
@@ -540,7 +570,7 @@ public class RemixRenderer {
      * path is searched.
      */
     static Path runtimeDll(Path gameDir) {
-        return gameDir.resolve("remix-sdk").resolve("d3d9.dll");
+        return gameDir.resolve("remix-sdk").resolve(IS_LINUX ? "libremixapi.so" : "d3d9.dll");
     }
     
     /**
@@ -1350,6 +1380,7 @@ public class RemixRenderer {
     }
     
     private void submitFrame() {
+        reportLinuxWindowSize();
         remixApi.submit(null);
     }
     
@@ -1373,6 +1404,7 @@ public class RemixRenderer {
                 failed = true;
                 logPresentFailureOnce("Error copying GL frame to Remix", e);
             }
+            reportLinuxWindowSize();
             PresentInfo presentInfo = new PresentInfo();
             presentInfo.hwndOverride = 0;
             presentInfo.skipVulkanSwapchain = 0;

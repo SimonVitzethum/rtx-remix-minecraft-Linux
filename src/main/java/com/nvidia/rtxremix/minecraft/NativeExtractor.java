@@ -78,11 +78,11 @@ public final class NativeExtractor {
 
     /**
      * The binary that proves an extracted runtime is present: d3d9.dll on
-     * Windows, remixbridge.so on Linux.
+     * Windows, libremixapi.so on Linux.
      */
     static String sdkMarkerBinary() {
         String os = System.getProperty("os.name", "");
-        return os.toLowerCase().contains("linux") ? "remixbridge.so" : "d3d9.dll";
+        return os.toLowerCase().contains("linux") ? "libremixapi.so" : "d3d9.dll";
     }
 
     /**

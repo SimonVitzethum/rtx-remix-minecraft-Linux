@@ -275,6 +275,15 @@ public final class RemixBridge {
     // ─── D3D9 COM helpers ────────────────────────────────────────────────
 
     /** IDirect3D9Ex::CreateDeviceEx → returns IDirect3DDevice9Ex* */
+    /**
+     * Linux only: selects Wayland presentation. The window handle given to startup must then be the wl_surface.
+     * Pass 0 to stay on X11.
+     */
+    public static native void linuxSetWaylandDisplay(long wlDisplay);
+
+    /** Linux only: reports the size of the window in pixels, required on Wayland where it cannot be queried. */
+    public static native void linuxSetWindowSize(int width, int height);
+
     public static native long d3d9CreateDevice(long pD3D9Ex, long hwnd,
                                                int width, int height);
 

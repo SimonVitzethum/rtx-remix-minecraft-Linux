@@ -12,10 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static org.lwjgl.opengl.EXTMemoryObject.*;
-import static org.lwjgl.opengl.EXTMemoryObjectWin32.GL_HANDLE_TYPE_OPAQUE_WIN32_EXT;
-import static org.lwjgl.opengl.EXTMemoryObjectWin32.glImportMemoryWin32HandleEXT;
 import static org.lwjgl.opengl.EXTSemaphore.*;
-import static org.lwjgl.opengl.EXTSemaphoreWin32.glImportSemaphoreWin32HandleEXT;
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
 import static org.lwjgl.opengl.GL21.GL_SRGB8_ALPHA8;
@@ -29,6 +26,33 @@ import static org.lwjgl.opengl.GL45.*;
  */
 public final class GlInterop {
     private static final Logger LOGGER = LoggerFactory.getLogger(GlInterop.class);
+    private static final boolean IS_LINUX = System.getProperty("os.name", "").toLowerCase().contains("linux");
+
+    /**
+     * Imports a Vulkan memory object. Windows hands out a HANDLE that stays valid, Linux an opaque file descriptor that
+     * the import consumes, which is why the runtime reports each descriptor once and repeats the number afterwards.
+     */
+    private static void importMemory(int memoryObject, long allocationSize, long handle) {
+        if (IS_LINUX) {
+            org.lwjgl.opengl.EXTMemoryObjectFD.glImportMemoryFdEXT(
+                    memoryObject, allocationSize,
+                    org.lwjgl.opengl.EXTMemoryObjectFD.GL_HANDLE_TYPE_OPAQUE_FD_EXT, (int) handle);
+        } else {
+            org.lwjgl.opengl.EXTMemoryObjectWin32.glImportMemoryWin32HandleEXT(
+                    memoryObject, allocationSize,
+                    org.lwjgl.opengl.EXTMemoryObjectWin32.GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, handle);
+        }
+    }
+
+    private static void importSemaphore(int semaphore, long handle) {
+        if (IS_LINUX) {
+            org.lwjgl.opengl.EXTSemaphoreFD.glImportSemaphoreFdEXT(
+                    semaphore, org.lwjgl.opengl.EXTSemaphoreFD.GL_HANDLE_TYPE_OPAQUE_FD_EXT, (int) handle);
+        } else {
+            org.lwjgl.opengl.EXTSemaphoreWin32.glImportSemaphoreWin32HandleEXT(
+                    semaphore, org.lwjgl.opengl.EXTSemaphoreWin32.GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, handle);
+        }
+    }
     private static final int[] NO_BUFFERS = new int[0];
 
     private final InteropImage colorImage = new InteropImage(true);
@@ -69,9 +93,8 @@ public final class GlInterop {
         if (result != 0) {
             throw new IllegalStateException("Failed to configure timeline semaphore " + debugName);
         }
-        glImportSemaphoreWin32HandleEXT(
-                semaphore, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, win32Handle);
-        checkGlError("glImportSemaphoreWin32HandleEXT " + debugName);
+        importSemaphore(semaphore, win32Handle);
+        checkGlError("glImportSemaphoreEXT " + debugName);
         return semaphore;
     }
 
@@ -303,12 +326,8 @@ public final class GlInterop {
             try {
                 drainStaleGlErrors();
                 memoryObject = glCreateMemoryObjectsEXT();
-                glImportMemoryWin32HandleEXT(
-                        memoryObject,
-                        allocationSize,
-                        GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
-                        newMemoryHandle);
-                checkGlError("glImportMemoryWin32HandleEXT(" + debugName + ")");
+                importMemory(memoryObject, allocationSize, newMemoryHandle);
+                checkGlError("glImportMemoryEXT(" + debugName + ")");
 
                 texture = glCreateTextures(GL_TEXTURE_2D);
                 glTextureStorageMem2DEXT(

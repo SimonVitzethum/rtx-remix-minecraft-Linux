@@ -16,7 +16,8 @@
     "environment": "*",
     "entrypoints": {
         "preLaunch": [
-            "com.nvidia.rtxremix.minecraft.WorkerPoolCap"
+            "com.nvidia.rtxremix.minecraft.WorkerPoolCap",
+            "com.nvidia.rtxremix.minecraft.LinuxWindowPlatform"
         ],
         "main": [
             "com.nvidia.rtxremix.minecraft.RtxRemixCommonMod"

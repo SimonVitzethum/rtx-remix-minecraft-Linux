@@ -121,7 +121,9 @@ public class RemixAPI {
         // Load our JNI bridge DLL from the same directory as d3d9.dll
         String parentDir = dllFile.getParent();
         if (parentDir != null) {
-            String bridgePath = parentDir + java.io.File.separator + "remixbridge.dll";
+            String bridgeName = System.getProperty("os.name", "").toLowerCase().contains("linux")
+                    ? "remixbridge.so" : "remixbridge.dll";
+            String bridgePath = parentDir + java.io.File.separator + bridgeName;
             java.io.File bridgeFile = new java.io.File(bridgePath);
             if (bridgeFile.exists()) {
                 System.load(bridgeFile.getAbsolutePath());
