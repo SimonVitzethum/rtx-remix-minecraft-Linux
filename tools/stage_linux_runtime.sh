@@ -25,6 +25,7 @@ done
 rm -rf "$out"
 mkdir -p "$out"
 cp "$runtime" "$out/libremixapi.so"
+strip --strip-unneeded "$out/libremixapi.so" 2>/dev/null || true
 cp "$nrd" "$out/libNRD.so"
 
 # OpenUSD, built without Python and imaging. The runtime finds the plugin descriptors in usd/ beside the library.

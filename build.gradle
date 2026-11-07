@@ -402,7 +402,11 @@ def fetchRuntimeTexturesTask = tasks.register('fetchRuntimeTextures', Exec) {
     // spaces, and cmd skips the current folder for a bare name when
     // NoDefaultCurrentDirectoryInExePath is set.
     workingDir file('packman')
-    commandLine 'cmd', '/d', '/c', '.\\packman.cmd', 'pull', manifest.absolutePath
+    if (isLinuxHost) {
+        commandLine 'bash', './packman', 'pull', manifest.absolutePath
+    } else {
+        commandLine 'cmd', '/d', '/c', '.\\packman.cmd', 'pull', manifest.absolutePath
+    }
     def legacyLink = file('packaging/textures').toPath()
     def texturesDir = file(runtimeTexturesDir)
     doFirst {
@@ -440,6 +444,8 @@ def syncRuntimeTexturesTask = tasks.register('syncRuntimeTextures', Sync) {
 }
 
 def migrateDevelopmentResourcePacksTask = tasks.register('migrateDevelopmentResourcePacks', Exec) {
+    // The migration removes legacy pack copies that only Windows installs ever had.
+    onlyIf { !isLinuxHost }
     commandLine 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
             '-File', file('packaging/migrate_resource_packs.ps1').absolutePath,
             '-McDir', file('run').absolutePath, '-LegacyPackName', 'rtx-remix'

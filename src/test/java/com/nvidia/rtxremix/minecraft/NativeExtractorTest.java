@@ -77,15 +77,15 @@ class NativeExtractorTest {
     void extractTreeWithoutAKeptCountReplacesExistingFiles(@TempDir Path tmp) throws IOException {
         Path src = Files.createDirectories(tmp.resolve("src"));
         Path dst = Files.createDirectories(tmp.resolve("dst"));
-        Files.writeString(src.resolve("d3d9.dll"), "shipped");
-        Files.writeString(dst.resolve("d3d9.dll"), "stale");
+        Files.writeString(src.resolve(NativeExtractor.sdkMarkerBinary()), "shipped");
+        Files.writeString(dst.resolve(NativeExtractor.sdkMarkerBinary()), "stale");
 
         AtomicInteger files = new AtomicInteger();
         AtomicLong bytes = new AtomicLong();
         NativeExtractor.extractTree(src, dst, files, bytes);
 
         // Mod-owned payload: the shipped copy always wins.
-        assertEquals("shipped", Files.readString(dst.resolve("d3d9.dll")));
+        assertEquals("shipped", Files.readString(dst.resolve(NativeExtractor.sdkMarkerBinary())));
         assertEquals(1, files.get());
     }
 
@@ -215,13 +215,13 @@ class NativeExtractorTest {
         Path nativeRoot = createNativePayload(tmp);
         Path gameDir = Files.createDirectories(tmp.resolve("game"));
         NativeExtractor.extractIfNeeded(nativeRoot, gameDir, "1.0", "remix-sdk-win64", NO_HISTORY, INLINE_CLEANUP);
-        Files.delete(gameDir.resolve("remix-sdk/d3d9.dll"));
+        Files.delete(gameDir.resolve("remix-sdk").resolve(NativeExtractor.sdkMarkerBinary()));
         Files.writeString(gameDir.resolve("remix-sdk/runtime.dll"), "stale runtime");
         Files.writeString(gameDir.resolve("rtx.conf"), "stale defaults");
 
         NativeExtractor.extractIfNeeded(nativeRoot, gameDir, "1.0", "remix-sdk-win64", NO_HISTORY, INLINE_CLEANUP);
 
-        assertEquals("shipped runtime", Files.readString(gameDir.resolve("remix-sdk/d3d9.dll")));
+        assertEquals("shipped runtime", Files.readString(gameDir.resolve("remix-sdk").resolve(NativeExtractor.sdkMarkerBinary())));
         assertEquals("shipped companion", Files.readString(gameDir.resolve("remix-sdk/runtime.dll")));
         assertEquals("shipped defaults", Files.readString(gameDir.resolve("rtx.conf")));
         assertEquals("1.0|remix-sdk-win64", Files.readString(gameDir.resolve(".rtx-remix-version")));
@@ -235,7 +235,7 @@ class NativeExtractorTest {
 
         NativeExtractor.extractIfNeeded(nativeRoot, gameDir, "1.0", "remix-sdk-win64", NO_HISTORY, INLINE_CLEANUP);
 
-        assertEquals("shipped runtime", Files.readString(gameDir.resolve("remix-sdk/d3d9.dll")));
+        assertEquals("shipped runtime", Files.readString(gameDir.resolve("remix-sdk").resolve(NativeExtractor.sdkMarkerBinary())));
         assertEquals("shipped companion", Files.readString(gameDir.resolve("remix-sdk/runtime.dll")));
     }
 
@@ -247,12 +247,12 @@ class NativeExtractorTest {
         NativeExtractor.extractIfNeeded(nativeRoot, gameDir, "1.0", "remix-sdk-win64", NO_HISTORY, INLINE_CLEANUP);
         Path waterConf = gameDir.resolve("rtx-remix/mods/minecraft-logic/confs/water.conf");
         Files.delete(waterConf);
-        Files.writeString(gameDir.resolve("remix-sdk/d3d9.dll"), "existing runtime");
+        Files.writeString(gameDir.resolve("remix-sdk").resolve(NativeExtractor.sdkMarkerBinary()), "existing runtime");
 
         NativeExtractor.extractIfNeeded(nativeRoot, gameDir, "1.0", "remix-sdk-win64", NO_HISTORY, INLINE_CLEANUP);
 
         assertEquals("shipped water", Files.readString(waterConf));
-        assertEquals("existing runtime", Files.readString(gameDir.resolve("remix-sdk/d3d9.dll")));
+        assertEquals("existing runtime", Files.readString(gameDir.resolve("remix-sdk").resolve(NativeExtractor.sdkMarkerBinary())));
     }
 
     @Test
@@ -269,7 +269,7 @@ class NativeExtractorTest {
         assertEquals("author's water", Files.readString(waterConf));
         assertEquals("edited defaults", Files.readString(gameDir.resolve("rtx.conf")));
 
-        Files.delete(gameDir.resolve("remix-sdk/d3d9.dll"));
+        Files.delete(gameDir.resolve("remix-sdk").resolve(NativeExtractor.sdkMarkerBinary()));
         NativeExtractor.extractIfNeeded(nativeRoot, gameDir, "1.0", "remix-sdk-win64", NO_HISTORY, INLINE_CLEANUP);
         assertEquals("author's water", Files.readString(waterConf),
                 "repairing a missing runtime must preserve author-owned files too");
@@ -317,12 +317,12 @@ class NativeExtractorTest {
         NativeExtractor.extractIfNeeded(nativeRoot, gameDir, "1.0", "remix-sdk-win64", NO_HISTORY, INLINE_CLEANUP);
         Path waterNormals = gameDir.resolve("textures/water_normals_flipbook.dds");
         Files.delete(waterNormals);
-        Files.writeString(gameDir.resolve("remix-sdk/d3d9.dll"), "existing runtime");
+        Files.writeString(gameDir.resolve("remix-sdk").resolve(NativeExtractor.sdkMarkerBinary()), "existing runtime");
 
         NativeExtractor.extractIfNeeded(nativeRoot, gameDir, "1.0", "remix-sdk-win64", NO_HISTORY, INLINE_CLEANUP);
 
         assertEquals("shipped water normals", Files.readString(waterNormals));
-        assertEquals("existing runtime", Files.readString(gameDir.resolve("remix-sdk/d3d9.dll")));
+        assertEquals("existing runtime", Files.readString(gameDir.resolve("remix-sdk").resolve(NativeExtractor.sdkMarkerBinary())));
     }
 
     @Test
@@ -406,7 +406,7 @@ class NativeExtractorTest {
     private static Path createNativePayload(Path tmp) throws IOException {
         Path nativeRoot = Files.createDirectories(tmp.resolve("native"));
         Path sdk = Files.createDirectories(nativeRoot.resolve("remix-sdk-win64"));
-        Files.writeString(sdk.resolve("d3d9.dll"), "shipped runtime");
+        Files.writeString(sdk.resolve(NativeExtractor.sdkMarkerBinary()), "shipped runtime");
         Files.writeString(sdk.resolve("runtime.dll"), "shipped companion");
         Files.writeString(nativeRoot.resolve("rtx.conf"), "shipped defaults");
         Path confs = Files.createDirectories(nativeRoot.resolve("rtx-remix/mods/minecraft-logic/confs"));
