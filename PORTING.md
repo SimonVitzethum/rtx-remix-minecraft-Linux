@@ -102,6 +102,18 @@ structs (`RTXIOVkDevice`, `RTXIOVkImage`, destination types) are matched
 directly from the vendored headers. This is the practical replacement for the
 closed `rtxio.dll`.
 
+## Build progress
+
+Toolchain + first dependencies built on Linux:
+- **DXC** v1.9.2609 (prebuilt, from microsoft/DirectXShaderCompiler releases) →
+  `dxvk-tools/bin/bin/dxc`.
+- **NRD** built from the NVIDIA-RTX/NRD source → `libNRD.so` (SPIR-V shaders
+  compiled and embedded via ShaderMake/DXC). CMake config:
+  `cmake -S . -B build_linux -DCMAKE_BUILD_TYPE=Release -DNRD_EMBEDS_SPIRV_SHADERS=ON`
+- Remaining deps to build/obtain: OpenUSD, Slang, glslang/SPIRV-Tools,
+  Sentry-native, NRC, XeSS, Reflex, Aftermath (Linux .so), DLSS/NGX (Linux via
+  Streamline).
+
 ## Scope assessment
 
 This is a multi-week to multi-month engineering effort. The meson/build
