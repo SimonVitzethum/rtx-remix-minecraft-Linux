@@ -22,6 +22,42 @@
 #include "rtx_semaphore.h"
 
 namespace dxvk {
+
+  namespace {
+#ifdef REMIX_LINUX_NATIVE
+    // On native Linux the shared handle is an opaque file descriptor stored in the HANDLE.
+    constexpr VkExternalSemaphoreHandleTypeFlagBits kSharedSemaphoreHandleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+    HANDLE exportSharedSemaphoreHandle(DxvkDevice* device, VkSemaphore semaphore) {
+      VkSemaphoreGetFdInfoKHR handleInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR };
+      handleInfo.semaphore = semaphore;
+      handleInfo.handleType = kSharedSemaphoreHandleType;
+
+      int fd = -1;
+      if (device->vkd()->vkGetSemaphoreFdKHR == nullptr
+       || device->vkd()->vkGetSemaphoreFdKHR(device->handle(), &handleInfo, &fd) != VK_SUCCESS) {
+        return INVALID_HANDLE_VALUE;
+      }
+      return reinterpret_cast<HANDLE>(static_cast<intptr_t>(fd));
+    }
+#else
+    constexpr VkExternalSemaphoreHandleTypeFlagBits kSharedSemaphoreHandleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+
+    HANDLE exportSharedSemaphoreHandle(DxvkDevice* device, VkSemaphore semaphore) {
+      VkSemaphoreGetWin32HandleInfoKHR handleInfo = {};
+      handleInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR;
+      handleInfo.semaphore = semaphore;
+      handleInfo.handleType = kSharedSemaphoreHandleType;
+
+      HANDLE win32Handle = INVALID_HANDLE_VALUE;
+      if (device->vkd()->vkGetSemaphoreWin32HandleKHR(device->handle(), &handleInfo, &win32Handle) == VK_SUCCESS) {
+        return win32Handle;
+      }
+      return INVALID_HANDLE_VALUE;
+    }
+#endif
+  }
+
   RtxSemaphore* RtxSemaphore::createTimeline(DxvkDevice* device, const char* name, uint64_t initialValue, bool win32Shared) {
     RtxSemaphore* ret = new RtxSemaphore();
     ret->m_device = device;
@@ -37,7 +73,7 @@ namespace dxvk {
     if (win32Shared) {
       sharedInfo.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO;
       sharedInfo.pNext = nullptr;
-      sharedInfo.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+      sharedInfo.handleTypes = kSharedSemaphoreHandleType;
 
       timelineCreateInfo.pNext = &sharedInfo;
     }
@@ -57,6 +93,12 @@ namespace dxvk {
 
     ret->labelSemaphore(name);
     
+    // NV-DXVK start: export the handle of shared timeline semaphores as well
+    if (win32Shared) {
+      ret->m_handle = exportSharedSemaphoreHandle(device, ret->m_sema);
+    }
+    // NV-DXVK end
+
     return ret;
   }
 
@@ -73,7 +115,7 @@ namespace dxvk {
     VkExportSemaphoreCreateInfoKHR exportSemaphoreInfo = {};
     if (shared) {
       exportSemaphoreInfo.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO_KHR;
-      exportSemaphoreInfo.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR;
+      exportSemaphoreInfo.handleTypes = kSharedSemaphoreHandleType;
       createInfo.pNext = &exportSemaphoreInfo;
     }
    
@@ -82,16 +124,7 @@ namespace dxvk {
                                                    &createInfo,
                                                    nullptr, &ret->m_sema);
     if (shared) {
-      // Retrieve Windows HANDLE from the semaphore
-      VkSemaphoreGetWin32HandleInfoKHR handleInfo = {};
-      handleInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR; 
-      handleInfo.semaphore = ret->m_sema;
-      handleInfo.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR;
-
-      HANDLE win32Handle;
-      if (device->vkd()->vkGetSemaphoreWin32HandleKHR(device->handle(), &handleInfo, &win32Handle) == VK_SUCCESS) {
-        ret->m_handle = win32Handle;
-      }
+      ret->m_handle = exportSharedSemaphoreHandle(device, ret->m_sema);
     }
 
 
@@ -118,7 +151,13 @@ namespace dxvk {
 
   RtxSemaphore::~RtxSemaphore() {
     m_device->vkd()->vkDestroySemaphore(m_device->handle(), m_sema, nullptr);
-    CloseHandle(m_handle);
+    if (m_handle != INVALID_HANDLE_VALUE) {
+#ifdef REMIX_LINUX_NATIVE
+      close(static_cast<int>(reinterpret_cast<intptr_t>(m_handle)));
+#else
+      CloseHandle(m_handle);
+#endif
+    }
   }
 
   uint64_t RtxSemaphore::value() const {

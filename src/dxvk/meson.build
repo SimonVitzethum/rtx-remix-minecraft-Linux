@@ -332,6 +332,8 @@ dxvk_src = files([
   'rtx_render/rtx_ray_reconstruction.h',
   'rtx_render/rtx_reflex.cpp',
   'rtx_render/rtx_reflex.h',
+  'rtx_render/rtx_external_texture.cpp',
+  'rtx_render/rtx_external_texture.h',
   'rtx_render/rtx_remix_api.cpp',
   'rtx_render/rtx_resources.cpp',
   'rtx_render/rtx_resources.h',
@@ -463,15 +465,20 @@ endif
 
 thread_dep = dependency('threads')
 
-nrd_include_dir = include_directories(join_paths('../../', 'external/nrd/Include'))
+if host_machine.system() == 'windows'
+  nrd_include_dir = include_directories(join_paths('../../', 'external/nrd/Include'))
+else
+  # Native POSIX build: headers matching the libNRD.so built from source (see PORT_KNOWLEDGE.md).
+  nrd_include_dir = include_directories(join_paths('../../', 'external/nrd_linux/Include'))
+endif
 if host_machine.system() == 'windows'
   nrd_dep = declare_dependency(
     include_directories : nrd_include_dir
   )
 else
-  # Native POSIX build: libNRD.so built from source (see PORT_KNOWLEDGE.md).
+  # Native POSIX build: libNRD.so is built from source (see PORT_KNOWLEDGE.md) and loaded at runtime from the
+  # directory of libremixapi.so, so only the headers are needed here.
   nrd_dep = declare_dependency(
-    dependencies : [ dxvk_compiler.find_library('NRD', dirs : join_paths(global_src_root_norm, '../dxvk-deps/NRD/_Bin')) ],
     include_directories : nrd_include_dir
   )
 endif

@@ -109,7 +109,7 @@ if host_machine.system() != 'windows'
   d3d9_vs_defs = []
 endif
 d3d9_impl_name = host_machine.system() == 'windows' ? 'd3d9' + d3d9_arch_str : 'remixapi'
-d3d9_extra_kwargs = host_machine.system() == 'windows' ? { 'vs_module_defs' : d3d9_vs_defs } : {}
+d3d9_extra_kwargs = host_machine.system() == 'windows' ? { 'vs_module_defs' : d3d9_vs_defs } : { 'build_rpath' : usd_linux_prefix + '/lib', 'install_rpath' : '$ORIGIN' }
 d3d9_impl_dll = shared_library(d3d9_impl_name, d3d9_src, dxvk_version, glsl_generator.process(d3d9_shaders), d3d9_res,
   name_prefix         : host_machine.system() == 'windows' ? '' : 'lib',
 

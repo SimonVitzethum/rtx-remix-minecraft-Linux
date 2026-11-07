@@ -466,10 +466,48 @@ namespace dxvk {
     ScopedCpuProfileZone();
 
     // NV-DXVK start: Restart RTX capture on the new frame
-    m_parent->m_rtx.EndFrame(m_backBuffers[0]->GetCommonTexture()->GetImage());
+    // An interop submit has already rendered this frame.
+    const bool interopSubmitted = m_interop.enabled && m_interop.submitted;
+    if (!interopSubmitted) {
+      m_parent->m_rtx.EndFrame(m_backBuffers[0]->GetCommonTexture()->GetImage());
+    }
     // NV-DXVK end
 
     D3D9DeviceLock lock = m_parent->LockDevice();
+
+    // NV-DXVK start: copy what the client composed in the interop image back into the back buffer
+    if (interopSubmitted) {
+      m_interop.submitted = false;
+
+      m_parent->EmitCs([cSrc = m_interop.image,
+                        cDst = m_backBuffers[0]->GetCommonTexture()->GetImage(),
+                        cClientDone = m_interop.clientDone,
+                        cValue = m_interop.clientDoneValue,
+                        cFlipY = m_interop.flipY](DxvkContext* ctx) {
+        if (cValue > 0 && cClientDone != nullptr) {
+          ctx->getCommandList()->addWaitSemaphore(cClientDone->handle(), cValue);
+        }
+
+        const DxvkFormatInfo* dstFormatInfo = imageFormatInfo(cDst->info().format);
+        const DxvkFormatInfo* srcFormatInfo = imageFormatInfo(cSrc->info().format);
+        const VkExtent3D srcExtent = cSrc->mipLevelExtent(0);
+        const VkExtent3D dstExtent = cDst->mipLevelExtent(0);
+
+        VkImageBlit blitInfo = {};
+        blitInfo.dstSubresource = { dstFormatInfo->aspectMask, 0, 0, 1 };
+        blitInfo.srcSubresource = { srcFormatInfo->aspectMask, 0, 0, 1 };
+        blitInfo.dstOffsets[0] = VkOffset3D{ 0, cFlipY ? int32_t(dstExtent.height) : 0, 0 };
+        blitInfo.dstOffsets[1] = VkOffset3D{ int32_t(dstExtent.width), cFlipY ? 0 : int32_t(dstExtent.height), 1 };
+        blitInfo.srcOffsets[0] = VkOffset3D{ 0, 0, 0 };
+        blitInfo.srcOffsets[1] = VkOffset3D{ int32_t(srcExtent.width), int32_t(srcExtent.height), 1 };
+
+        const VkComponentMapping swizzle = {
+          VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+          VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
+        ctx->blitImage(cDst, swizzle, cSrc, swizzle, blitInfo, VK_FILTER_NEAREST);
+      });
+    }
+    // NV-DXVK end
 
     uint32_t presentInterval = m_presentParams.PresentationInterval;
 
@@ -1987,4 +2025,132 @@ namespace dxvk {
     return this->GetParent()->IsExtended() ? "D3D9Ex" : "D3D9";
   }
 
+
+  // NV-DXVK start: interop image for clients that render with another graphics API
+  void D3D9SwapChainEx::EnsureInteropSemaphores() {
+    if (m_interop.dxvkDone == nullptr) {
+      m_interop.dxvkDone = RtxSemaphore::createTimeline(m_device.ptr(), "Interop::dxvkDone", 0, true);
+    }
+    if (m_interop.clientDone == nullptr) {
+      m_interop.clientDone = RtxSemaphore::createTimeline(m_device.ptr(), "Interop::clientDone", 0, true);
+    }
+  }
+
+  void D3D9SwapChainEx::EnsureInteropImage(uint32_t width, uint32_t height) {
+    if (m_interop.image != nullptr) {
+      const VkExtent3D extent = m_interop.image->info().extent;
+      if (extent.width == width && extent.height == height) {
+        return;
+      }
+    }
+
+    DxvkImageCreateInfo info = {};
+    info.type = VK_IMAGE_TYPE_2D;
+    info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    info.flags = 0;
+    info.sampleCount = VK_SAMPLE_COUNT_1_BIT;
+    info.extent = { width, height, 1 };
+    info.numLayers = 1;
+    info.mipLevels = 1;
+    info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    info.stages = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    info.access = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.layout = VK_IMAGE_LAYOUT_GENERAL;
+    info.shared = true;
+    info.sharing.mode = DxvkSharedHandleMode::Export;
+#ifdef REMIX_LINUX_NATIVE
+    info.sharing.type = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+#else
+    info.sharing.type = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#endif
+
+    m_interop.image = m_device->createImage(info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, DxvkMemoryStats::Category::RTXRenderTarget, "Interop image");
+  }
+
+  HRESULT D3D9SwapChainEx::SubmitInterop(uint32_t flags) {
+    if (!m_interop.enabled) {
+      return D3DERR_INVALIDCALL;
+    }
+
+    try {
+      D3D9DeviceLock lock = m_parent->LockDevice();
+
+      auto backBuffer = m_backBuffers[0]->GetCommonTexture()->GetImage();
+      const VkExtent3D extent = backBuffer->info().extent;
+
+      EnsureInteropSemaphores();
+      EnsureInteropImage(extent.width, extent.height);
+
+      m_parent->m_rtx.EndFrame(backBuffer);
+
+      const uint64_t signalValue = ++m_interop.dxvkDoneValue;
+      m_parent->EmitCs([cSrc = backBuffer,
+                        cDst = m_interop.image,
+                        cDone = m_interop.dxvkDone,
+                        signalValue](DxvkContext* ctx) {
+        RtxContext::blitImageHelper(ctx, cSrc, cDst, VK_FILTER_NEAREST);
+        ctx->getCommandList()->addSignalSemaphore(cDone->handle(), signalValue);
+        ctx->flushCommandList();
+      });
+
+      if (!(flags & kSubmitDisableQueueSubmit)) {
+        m_parent->Flush();
+      }
+      if (!(flags & kSubmitDisableCpuWaitForVkSubmit)) {
+        m_parent->SynchronizeCsThread();
+      }
+      if (flags & kSubmitForceWaitDeviceIdle) {
+        m_device->waitForIdle();
+      }
+
+      m_interop.submitted = true;
+      return D3D_OK;
+    } catch (const DxvkError& e) {
+      Logger::err(e.message());
+      return D3DERR_DEVICEREMOVED;
+    }
+  }
+
+  HRESULT D3D9SwapChainEx::GetInteropInfo(InteropInfo* pInfo) {
+    if (!m_interop.enabled || pInfo == nullptr) {
+      return D3DERR_INVALIDCALL;
+    }
+
+    try {
+      D3D9DeviceLock lock = m_parent->LockDevice();
+
+      EnsureInteropSemaphores();
+
+      auto toHandle = [](HANDLE handle) -> uint64_t {
+        // Every call hands out its own descriptor, the client takes ownership of it.
+#ifdef REMIX_LINUX_NATIVE
+        const int fd = static_cast<int>(reinterpret_cast<intptr_t>(handle));
+        return fd >= 0 ? static_cast<uint64_t>(dup(fd)) : 0;
+#else
+        return reinterpret_cast<uint64_t>(handle);
+#endif
+      };
+
+      *pInfo = {};
+      pInfo->dxvkDoneSemaphoreHandle = toHandle(m_interop.dxvkDone->sharedHandle());
+      pInfo->dxvkDoneSemaphoreValue = m_interop.dxvkDoneValue;
+      pInfo->clientDoneSemaphoreHandle = toHandle(m_interop.clientDone->sharedHandle());
+
+      if (m_interop.image != nullptr) {
+        // Linux hands out a fresh file descriptor on each call, Windows a handle that stays valid.
+        HANDLE memoryHandle = m_interop.image->sharedHandle();
+        pInfo->imageMemoryHandle = reinterpret_cast<uint64_t>(memoryHandle);
+        pInfo->allocationSize = m_interop.image->allocationSize();
+        pInfo->width = static_cast<int32_t>(m_interop.image->info().extent.width);
+        pInfo->height = static_cast<int32_t>(m_interop.image->info().extent.height);
+        pInfo->format = m_interop.image->info().format;
+      }
+      return D3D_OK;
+    } catch (const DxvkError& e) {
+      Logger::err(e.message());
+      return D3DERR_DEVICEREMOVED;
+    }
+  }
+  // NV-DXVK end
 }

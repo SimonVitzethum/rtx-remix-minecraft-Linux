@@ -228,6 +228,10 @@ void AssetReplacer::makeMaterialWithTexturePreload(DxvkContext& ctx, remixapi_Ma
   }
 }
 
+void AssetReplacer::updateMaterialWithTexturePreload(DxvkContext& ctx, remixapi_MaterialHandle handle, MaterialData&& data) {
+  m_extMaterials.insert_or_assign(handle, std::move(data));
+}
+
 const MaterialData* AssetReplacer::accessExternalMaterial(remixapi_MaterialHandle handle) const {
   auto found = m_extMaterials.find(handle);
   if (found == m_extMaterials.end()) {

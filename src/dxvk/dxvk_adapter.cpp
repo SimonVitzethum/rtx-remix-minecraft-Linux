@@ -345,7 +345,7 @@ namespace dxvk {
           DxvkDeviceFeatures  enabledFeatures) {
     DxvkDeviceExtensions devExtensions;
 
-    std::array<DxvkExt*, 43> devExtensionList = {{
+    std::array<DxvkExt*, 45> devExtensionList = {{
       &devExtensions.amdMemoryOverallocationBehaviour,
       &devExtensions.amdShaderFragmentMask,
       &devExtensions.ext4444Formats,
@@ -368,11 +368,15 @@ namespace dxvk {
       &devExtensions.khrDrawIndirectCount,
       &devExtensions.khrDriverProperties,
       &devExtensions.khrExternalMemoryWin32,
+      // NV-DXVK start: file descriptor interop for native Linux
+      &devExtensions.khrExternalMemoryFd,
+      &devExtensions.khrExternalSemaphoreFd,
+      // NV-DXVK end
       &devExtensions.khrImageFormatList,
       &devExtensions.khrSamplerMirrorClampToEdge,
       &devExtensions.khrShaderFloatControls,
       &devExtensions.khrSwapchain,
-#ifdef _WIN64
+#if defined(_WIN64) || defined(REMIX_LINUX_NATIVE)
       &devExtensions.khrDeferredHostOperations,
       &devExtensions.khrAccelerationStructure,
       &devExtensions.khrRayQueries,
@@ -536,7 +540,7 @@ namespace dxvk {
     enabledFeatures.vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     enabledFeatures.vulkan12Features.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.vulkan12Features);
 
-#ifdef _WIN64
+#if defined(_WIN64) || defined(REMIX_LINUX_NATIVE)
     if (devExtensions.khrAccelerationStructure) {
       enabledFeatures.khrAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
       enabledFeatures.khrAccelerationStructureFeatures.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.khrAccelerationStructureFeatures);

@@ -20,6 +20,7 @@
 * DEALINGS IN THE SOFTWARE.
 */
 #include "vulkan_presenter.h"
+#include <windows.h>
 #include "../dxvk/dxvk_scoped_annotation.h"
 
 #include "../dxvk/dxvk_format.h"
@@ -605,7 +606,59 @@ namespace dxvk::vk {
   VkResult Presenter::createSurface() {
     // NV-DXVK start: no window system integration on native Linux, rendering is exported through external memory
 #ifdef REMIX_LINUX_NATIVE
-    return VK_ERROR_EXTENSION_NOT_PRESENT;
+    // The window handle is either a wl_surface of the client's Wayland display or an X11 window id.
+    if (void* waylandDisplay = RemixGetWaylandDisplay()) {
+      VkWaylandSurfaceCreateInfoKHR waylandInfo = { VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR };
+      waylandInfo.display = static_cast<wl_display*>(waylandDisplay);
+      waylandInfo.surface = reinterpret_cast<wl_surface*>(m_window);
+
+      if (m_vki->vkCreateWaylandSurfaceKHR == nullptr)
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+
+      VkResult waylandStatus = m_vki->vkCreateWaylandSurfaceKHR(m_vki->instance(), &waylandInfo, nullptr, &m_surface);
+
+      if (waylandStatus != VK_SUCCESS)
+        return waylandStatus;
+
+      VkBool32 waylandSupport = VK_FALSE;
+
+      if ((waylandStatus = m_vki->vkGetPhysicalDeviceSurfaceSupportKHR(m_device.adapter,
+          m_device.queueFamily, m_surface, &waylandSupport)) != VK_SUCCESS)
+        return waylandStatus;
+
+      if (!waylandSupport) {
+        m_vki->vkDestroySurfaceKHR(m_vki->instance(), m_surface, nullptr);
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+      }
+
+      return VK_SUCCESS;
+    }
+
+    // A dedicated XCB connection presents into the X11 window.
+    VkXcbSurfaceCreateInfoKHR xcbInfo = { VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR };
+    xcbInfo.connection = static_cast<xcb_connection_t*>(RemixGetXcbConnection());
+    xcbInfo.window     = static_cast<xcb_window_t>(reinterpret_cast<uintptr_t>(m_window));
+
+    if (xcbInfo.connection == nullptr || m_vki->vkCreateXcbSurfaceKHR == nullptr)
+      return VK_ERROR_EXTENSION_NOT_PRESENT;
+
+    VkResult status = m_vki->vkCreateXcbSurfaceKHR(m_vki->instance(), &xcbInfo, nullptr, &m_surface);
+
+    if (status != VK_SUCCESS)
+      return status;
+
+    VkBool32 supportStatus = VK_FALSE;
+
+    if ((status = m_vki->vkGetPhysicalDeviceSurfaceSupportKHR(m_device.adapter,
+        m_device.queueFamily, m_surface, &supportStatus)) != VK_SUCCESS)
+      return status;
+
+    if (!supportStatus) {
+      m_vki->vkDestroySurfaceKHR(m_vki->instance(), m_surface, nullptr);
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+
+    return VK_SUCCESS;
 #else
     // NV-DXVK end
     HINSTANCE instance = reinterpret_cast<HINSTANCE>(

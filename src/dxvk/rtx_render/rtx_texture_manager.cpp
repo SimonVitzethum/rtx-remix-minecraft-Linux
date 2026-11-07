@@ -1128,6 +1128,15 @@ namespace dxvk {
     };
   }
 
+  void RtxTextureManager::reuploadTexture(const Rc<ManagedTexture>& tex) {
+    if (!tex.ptr()) {
+      return;
+    }
+    tex->requestMips(0);
+    constexpr bool forceUnload = true; // do not check current mip count
+    scheduleTextureLoad(tex, false, forceUnload);
+  }
+
   void RtxTextureManager::processAllHotReloadRequests() {
     if (!RtxOptions::TextureManager::hotReload()) {
       return;

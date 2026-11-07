@@ -26,6 +26,10 @@
 
 // NV-DXVK start: native Linux has no Win32 surface or handles
 #define VK_USE_PLATFORM_WIN32_KHR 1
+#ifdef REMIX_LINUX_NATIVE
+#define VK_USE_PLATFORM_XCB_KHR 1
+#define VK_USE_PLATFORM_WAYLAND_KHR 1
+#endif
 // NV-DXVK end
 #include <vulkan/vulkan.h>
 

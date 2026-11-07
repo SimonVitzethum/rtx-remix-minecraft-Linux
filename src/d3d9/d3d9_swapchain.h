@@ -37,6 +37,7 @@
 
 // NV-DXVK start: input-queue liveness ping
 #include "../dxvk/rtx_render/rtx_options.h"
+#include "../dxvk/rtx_render/rtx_semaphore.h"
 // NV-DXVK end
 
 // NV-DXVK start: Queue rendering-output copies for the external presenter.
@@ -301,6 +302,53 @@ namespace dxvk {
     HWND getPresentationHwnd() const { return m_presentParams.hDeviceWindow; }
     HWND getWinProcHwnd() const { return getPresentationHwnd() ? getPresentationHwnd() : getFocusHwnd(); }
     void HookWindowProc(HWND window);
+    // NV-DXVK end
+
+  public:
+    // NV-DXVK start: interop image for clients that render with another graphics API, see remixapi_dxvk_InteropInfo.
+    struct InteropInfo {
+      uint64_t dxvkDoneSemaphoreHandle = 0;
+      uint64_t dxvkDoneSemaphoreValue = 0;
+      uint64_t clientDoneSemaphoreHandle = 0;
+      uint64_t imageMemoryHandle = 0;
+      uint64_t allocationSize = 0;
+      int32_t width = 0;
+      int32_t height = 0;
+      VkFormat format = VK_FORMAT_UNDEFINED;
+    };
+
+    static constexpr uint32_t kSubmitForceWaitDeviceIdle = 1u << 0;
+    static constexpr uint32_t kSubmitDisableCpuWaitForVkSubmit = 1u << 1;
+    static constexpr uint32_t kSubmitDisableQueueSubmit = 1u << 2;
+
+    // Renders the frame into the interop image and signals the dxvk-done semaphore. Present() then shows the image.
+    HRESULT SubmitInterop(uint32_t flags);
+
+    // Creates the interop semaphores on first use and returns handles the client can import. Every handle is a new duplicate.
+    HRESULT GetInteropInfo(InteropInfo* pInfo);
+
+    // Parameters of the next Present() when an interop image has been submitted.
+    void SetInteropPresentParams(uint64_t clientDoneValue, bool flipY) {
+      m_interop.clientDoneValue = clientDoneValue;
+      m_interop.flipY = flipY;
+    }
+
+    void SetInteropEnabled(bool enabled) { m_interop.enabled = enabled; }
+
+  private:
+    struct InteropState {
+      bool enabled = false;
+      bool submitted = false;
+      bool flipY = false;
+      uint64_t clientDoneValue = 0;
+      uint64_t dxvkDoneValue = 0;
+      Rc<DxvkImage> image;
+      Rc<RtxSemaphore> dxvkDone;
+      Rc<RtxSemaphore> clientDone;
+    } m_interop;
+
+    void EnsureInteropSemaphores();
+    void EnsureInteropImage(uint32_t width, uint32_t height);
     // NV-DXVK end
   };
 

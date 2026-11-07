@@ -12,6 +12,8 @@
 #include <locale>
 #include <codecvt>
 #include <thread>
+#include <mutex>
+#include <atomic>
 
 static thread_local DWORD g_lastError = 0;
 
@@ -166,9 +168,79 @@ BOOL EnumDisplaySettingsW(const wchar_t*, DWORD, DEVMODEW* dm) { memset(dm, 0, s
 HMONITOR MonitorFromWindow(HWND, DWORD) { return (HMONITOR)(uintptr_t)1; }
 HMONITOR MonitorFromPoint(POINT, DWORD) { return (HMONITOR)(uintptr_t)1; }
 BOOL EnumDisplayMonitors(HDC, const RECT*, MONITORENUMPROC cb, LPARAM p) { RECT r{ 0, 0, 1920, 1080 }; return cb((HMONITOR)(uintptr_t)1, nullptr, &r, p); }
-BOOL GetClientRect(HWND, RECT* r) { *r = { 0, 0, 1920, 1080 }; return TRUE; }
-BOOL GetWindowRect(HWND, RECT* r) { *r = { 0, 0, 1920, 1080 }; return TRUE; }
-BOOL IsWindow(HWND h) { return h != nullptr; }
+// ---- XCB: the window handle on Linux is an X11 window id ----
+namespace {
+  struct XcbApi {
+    struct GeometryCookie { unsigned int sequence; };
+    struct GeometryReply { uint8_t response_type, depth; uint16_t sequence; uint32_t length; uint32_t root; int16_t x, y; uint16_t width, height, border_width; };
+    void* (*connect)(const char*, int*) = nullptr;
+    int (*hasError)(void*) = nullptr;
+    GeometryCookie (*getGeometry)(void*, uint32_t) = nullptr;
+    GeometryReply* (*getGeometryReply)(void*, GeometryCookie, void**) = nullptr;
+    void* connection = nullptr;
+  };
+
+  XcbApi& xcbApi() {
+    static XcbApi api;
+    static std::once_flag once;
+    std::call_once(once, [] {
+      void* lib = dlopen("libxcb.so.1", RTLD_NOW | RTLD_GLOBAL);
+      if (!lib) { return; }
+      api.connect = (void* (*)(const char*, int*))dlsym(lib, "xcb_connect");
+      api.hasError = (int (*)(void*))dlsym(lib, "xcb_connection_has_error");
+      api.getGeometry = (XcbApi::GeometryCookie (*)(void*, uint32_t))dlsym(lib, "xcb_get_geometry");
+      api.getGeometryReply = (XcbApi::GeometryReply* (*)(void*, XcbApi::GeometryCookie, void**))dlsym(lib, "xcb_get_geometry_reply");
+      if (api.connect && api.hasError) {
+        void* c = api.connect(nullptr, nullptr);
+        if (c && !api.hasError(c)) { api.connection = c; }
+      }
+    });
+    return api;
+  }
+
+  bool queryWindowSize(HWND hwnd, uint32_t& w, uint32_t& h) {
+    XcbApi& api = xcbApi();
+    if (!api.connection || !api.getGeometry || !api.getGeometryReply || (uintptr_t)hwnd <= 1) { return false; }
+    auto* reply = api.getGeometryReply(api.connection, api.getGeometry(api.connection, (uint32_t)(uintptr_t)hwnd), nullptr);
+    if (!reply) { return false; }
+    w = reply->width; h = reply->height;
+    free(reply);
+    return true;
+  }
+}
+
+void* RemixGetXcbConnection() { return xcbApi().connection; }
+
+// ---- Wayland: the window handle is a wl_surface*, the client passes its wl_display and the surface size ----
+namespace {
+  std::atomic<void*> g_waylandDisplay { nullptr };
+  std::atomic<uint32_t> g_waylandWidth { 1280 };
+  std::atomic<uint32_t> g_waylandHeight { 720 };
+}
+
+void* RemixGetWaylandDisplay() { return g_waylandDisplay.load(); }
+
+extern "C" {
+  // Selects Wayland presentation. 'display' is the client's wl_display, the window handle given to Startup must be its wl_surface.
+  __attribute__((visibility("default"))) void remixapi_linux_SetWaylandDisplay(void* display) { g_waylandDisplay = display; }
+  // Wayland surfaces have no queryable size, the client reports it whenever it changes.
+  __attribute__((visibility("default"))) void remixapi_linux_SetWindowSize(uint32_t width, uint32_t height) {
+    if (width > 0 && height > 0) { g_waylandWidth = width; g_waylandHeight = height; }
+  }
+}
+
+BOOL GetClientRect(HWND hwnd, RECT* r) {
+  uint32_t w = 1920, h = 1080;
+  if (g_waylandDisplay.load() != nullptr) {
+    w = g_waylandWidth; h = g_waylandHeight;
+  } else {
+    queryWindowSize(hwnd, w, h);
+  }
+  *r = { 0, 0, (LONG)w, (LONG)h };
+  return TRUE;
+}
+BOOL GetWindowRect(HWND hwnd, RECT* r) { return GetClientRect(hwnd, r); }
+BOOL IsWindow(HWND h) { uint32_t w, h2; return h != nullptr && (g_waylandDisplay.load() != nullptr || (uintptr_t)h <= 1 || queryWindowSize(h, w, h2)); }
 int GetSystemMetrics(int i) { return i == SM_CXSCREEN ? 1920 : i == SM_CYSCREEN ? 1080 : 0; }
 HWND GetDesktopWindow() { return (HWND)(uintptr_t)1; }
 BOOL AllocateLocallyUniqueId(LUID* l) { static uint64_t n = 1000; uint64_t v = __atomic_fetch_add(&n, 1, __ATOMIC_RELAXED); l->LowPart = (DWORD)v; l->HighPart = (LONG)(v >> 32); return TRUE; }

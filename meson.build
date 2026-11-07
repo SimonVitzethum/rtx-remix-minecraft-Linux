@@ -641,10 +641,10 @@ if host_machine.system() == 'windows'
 
   usd_linklibs += dxvk_compiler.find_library(get_option('buildtype') == 'debug' ? 'tbb12_debug' : 'tbb12', dirs: join_paths(usd_lib_path, 'lib'))
 else
-  usd_linklibs += dxvk_compiler.find_library('usd_ms')
+  foreach ulib : nvusd_deplibs
+    usd_linklibs += dxvk_compiler.find_library(ulib, dirs: join_paths(usd_linux_prefix, 'lib'))
+  endforeach
   usd_linklibs += dxvk_compiler.find_library('tbb')
-  # The system OpenUSD is built with Python support, its headers reference the interpreter.
-  usd_linklibs += dependency('python-3.14-embed')
 endif
 
 if host_machine.system() != 'windows'

@@ -365,6 +365,12 @@ namespace dxvk {
     }
     // NV-DXVK end
 
+    // NV-DXVK start: size of the memory allocation backing the image, needed to import a shared image elsewhere
+    VkDeviceSize allocationSize() const {
+      return m_image.memory.length();
+    }
+    // NV-DXVK end
+
     VkDeviceMemory getMemory() const {
       return m_image.memory.memory();
     }

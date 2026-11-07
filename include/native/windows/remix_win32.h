@@ -136,10 +136,6 @@ typedef const wchar_t* LPCTSTR_W;
 #define stricmp strcasecmp
 #define _strdup strdup
 #define _wcsdup wcsdup
-#define sprintf_s(buf, n, ...) snprintf(buf, n, __VA_ARGS__)
-#define strcpy_s(d, n, s) strncpy(d, s, n)
-#define strncpy_s(d, n, s, c) strncpy(d, s, c)
-#define wcscpy_s(d, n, s) wcsncpy(d, s, n)
 #define _snprintf snprintf
 #define _snwprintf swprintf
 #define _vsnprintf vsnprintf
@@ -740,6 +736,17 @@ typedef struct tagCURSORINFO { DWORD cbSize, flags; HCURSOR hCursor; POINT ptScr
 #define SW_SHOWNOACTIVATE 4
 typedef struct tagWINDOWPOS { HWND hwnd, hwndInsertAfter; int x, y, cx, cy; UINT flags; } WINDOWPOS, *LPWINDOWPOS;
 
+#ifdef __cplusplus
+// Bounded "secure" CRT variants, with and without the array-size deduction form.
+template<size_t N, typename... Args> inline int sprintf_s(char (&buffer)[N], const char* format, Args... args) { return snprintf(buffer, N, format, args...); }
+template<typename... Args> inline int sprintf_s(char* buffer, size_t size, const char* format, Args... args) { return snprintf(buffer, size, format, args...); }
+template<size_t N> inline int strcpy_s(char (&dst)[N], const char* src) { strncpy(dst, src, N); dst[N - 1] = 0; return 0; }
+inline int strcpy_s(char* dst, size_t size, const char* src) { strncpy(dst, src, size); if (size) dst[size - 1] = 0; return 0; }
+inline int strncpy_s(char* dst, size_t size, const char* src, size_t count) { strncpy(dst, src, count < size ? count : size); if (size) dst[size - 1] = 0; return 0; }
+template<size_t N> inline int wcscpy_s(wchar_t (&dst)[N], const wchar_t* src) { wcsncpy(dst, src, N); dst[N - 1] = 0; return 0; }
+inline int wcscpy_s(wchar_t* dst, size_t size, const wchar_t* src) { wcsncpy(dst, src, size); if (size) dst[size - 1] = 0; return 0; }
+#endif
+
 // ---- Function declarations (implemented in src/util/linux/win32_compat.cpp) ----
 #ifdef __cplusplus
 HMODULE LoadLibraryA(const char*);
@@ -887,6 +894,10 @@ LSTATUS RegQueryValueExA(HKEY, const char*, DWORD*, DWORD*, BYTE*, DWORD*);
 LSTATUS RegCloseKey(HKEY);
 LSTATUS RegNotifyChangeKeyValue(HKEY, BOOL, DWORD, HANDLE, BOOL);
 BOOL IsWindowUnicode(HWND);
+// Returns the process wide XCB connection used to query windows and to present into them, or null when unavailable.
+void* RemixGetXcbConnection();
+// The Wayland display the client's window belongs to, set through remixapi_linux_SetWaylandDisplay, or null for X11.
+void* RemixGetWaylandDisplay();
 BOOL IsIconic(HWND);
 BOOL IsWindowVisible(HWND);
 BOOL ShowWindow(HWND, int);

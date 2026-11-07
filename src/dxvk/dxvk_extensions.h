@@ -355,6 +355,8 @@ namespace dxvk {
     DxvkExt khrMaintenance4                   = { VK_KHR_MAINTENANCE_4_EXTENSION_NAME,                      DxvkExtMode::Optional };
     DxvkExt khrExternalMemory                 = { VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,                    DxvkExtMode::Optional };
     DxvkExt khrExternalMemoryWin32            = { VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,              DxvkExtMode::Optional };
+    DxvkExt khrExternalMemoryFd               = { VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,                 DxvkExtMode::Optional };
+    DxvkExt khrExternalSemaphoreFd            = { VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,              DxvkExtMode::Optional };
     DxvkExt khrExternalSemaphore              = { VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,                 DxvkExtMode::Optional };
     DxvkExt khrExternalSemaphoreWin32         = { VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME,           DxvkExtMode::Optional };
     DxvkExt extBufferDeviceAddress            = { VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,              DxvkExtMode::Optional };

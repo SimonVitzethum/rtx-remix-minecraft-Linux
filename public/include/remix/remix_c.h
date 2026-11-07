@@ -43,6 +43,14 @@
 #endif
 #define REMIXAPI_PTR  REMIXAPI_CALL
 
+#if defined(__cplusplus) && __cplusplus >= 201103L
+#define REMIXAPI_INLINE inline
+#define REMIXAPI_HELPER constexpr
+#else // C99 / C++98
+#define REMIXAPI_INLINE static inline
+#define REMIXAPI_HELPER static inline
+#endif
+
 #ifndef REMIXAPI
   #ifdef REMIX_LIBRARY_EXPORTS
     #define REMIXAPI __declspec(dllexport)
@@ -61,8 +69,8 @@
 #define REMIXAPI_VERSION_GET_PATCH(version) (((uint64_t)(version)      ) & (uint64_t)0xFFFF)
 
 #define REMIXAPI_VERSION_MAJOR 0
-#define REMIXAPI_VERSION_MINOR 6
-#define REMIXAPI_VERSION_PATCH 8
+#define REMIXAPI_VERSION_MINOR 16
+#define REMIXAPI_VERSION_PATCH 1
 
 
 // External
@@ -135,8 +143,11 @@ extern "C" {
     REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SYSTEM_EXT    = 25,
     REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_GPU_INSTANCING_EXT     = 26,
     REMIXAPI_STRUCT_TYPE_CAMERA_MEDIUM_INFO                   = 27,
-    // 28 is reserved for the particle emitter picking extension.
-    REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SPAWN_DISTRIBUTION_EXT = 29
+    REMIXAPI_STRUCT_TYPE_TEXTURE_FROM_MEMORY_INFO             = 28,
+    REMIXAPI_STRUCT_TYPE_TEXTURE_PATCH_INFO                   = 29,
+    REMIXAPI_STRUCT_TYPE_SUBMIT_INFO                          = 30,
+    REMIXAPI_STRUCT_TYPE_CONFIG_VARIABLE_RESOLVED_INFO        = 31,
+    // NOTE: always leave ',' after the number, so the git diff is cleaner!
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
     //       and only extend this enum by appending, never adjust the order of these 
     //       as that will break backwards compatibility.
@@ -162,6 +173,9 @@ extern "C" {
     // WinAPI's GetFullPathName has failed
     REMIXAPI_ERROR_CODE_GET_FULL_PATH_NAME_FAILURE        = 10,
     REMIXAPI_ERROR_CODE_NOT_INITIALIZED                   = 11,
+    REMIXAPI_ERROR_CODE_INDEX_OUT_OF_RANGE                = 12,
+    // An output buffer is too small. The call reports the size it needs.
+    REMIXAPI_ERROR_CODE_BUFFER_TOO_SMALL                  = 13,
     // Error codes that are encoded as HRESULT, i.e. returned from D3D9 functions.
     // Look MAKE_D3DHRESULT, but with _FACD3D=0x896, instead of D3D9's 0x876
     REMIXAPI_ERROR_CODE_HRESULT_NO_REQUIRED_GPU_FEATURES      = 0x88960001,
@@ -206,6 +220,9 @@ extern "C" {
   typedef struct remixapi_MaterialHandle_T* remixapi_MaterialHandle;
   typedef struct remixapi_MeshHandle_T* remixapi_MeshHandle;
   typedef struct remixapi_LightHandle_T* remixapi_LightHandle;
+  typedef struct remixapi_TextureHandle_T* remixapi_TextureHandle;
+  typedef struct remixapi_SceneInstanceHandle_T* remixapi_SceneInstanceHandle;
+  typedef struct remixapi_ConfigLayerHandle_T* remixapi_ConfigLayerHandle;
 
   typedef const wchar_t* remixapi_Path;
 
@@ -216,9 +233,6 @@ extern "C" {
     void*               pNext;
     remixapi_HWND       hwnd;
     remixapi_Bool       disableSrgbConversionForOutput;
-    // If true, 'dxvk_GetExternalSwapchain' can be used to retrieve a raw VkImage,
-    // so the application can present it, for example by using OpenGL interop:
-    // converting VkImage to OpenGL, and presenting it via OpenGL.
     // Default: false. Use VkSwapchainKHR to present frame into HWND.
     remixapi_Bool       forceNoVkSwapchain;
     remixapi_Bool       editorModeEnabled;
@@ -227,6 +241,11 @@ extern "C" {
     // remixapi_dxvk_CopyRenderingOutputType, field set to: 'REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI'
     // Otherwise the GUI will be drawn in the final color buffer.
     remixapi_Bool       combineGuiInFinalColor;
+    // If true, Remix allocates an interop image (along with semaphores) that can be used with non-Vulkan API.
+    // See comments on 'remixapi_dxvk_InteropInfo' on the interop flow.
+    remixapi_Bool       interopImage;
+    // If true, Remix presents through a child HWND while hwnd remains the input host.
+    remixapi_Bool       useRemixOwnedChildWindow;
   } remixapi_StartupInfo;
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_Startup)(const remixapi_StartupInfo* info);
@@ -235,76 +254,62 @@ extern "C" {
 
 
   typedef struct remixapi_MaterialInfoOpaqueEXT {
-    remixapi_StructType sType;
-    void*               pNext;
-    remixapi_Path       roughnessTexture;
-    remixapi_Path       metallicTexture;
-    float               anisotropy;
-    remixapi_Float3D    albedoConstant;
-    float               opacityConstant;
-    float               roughnessConstant;
-    float               metallicConstant;
-    remixapi_Bool       thinFilmThickness_hasvalue;
-    float               thinFilmThickness_value;
-    remixapi_Bool       alphaIsThinFilmThickness;
-    remixapi_Path       heightTexture;
-    float               displaceIn;
+    remixapi_StructType     sType;
+    void*                   pNext;
+    remixapi_TextureHandle  roughnessTexture;
+    remixapi_TextureHandle  metallicTexture;
+    float                   anisotropy;
+    remixapi_Float3D        albedoConstant;
+    float                   opacityConstant;
+    float                   roughnessConstant;
+    float                   metallicConstant;
+    remixapi_Bool           thinFilmThickness_hasvalue;
+    float                   thinFilmThickness_value;
+    remixapi_Bool           alphaIsThinFilmThickness;
+    remixapi_TextureHandle  heightTexture;
+    float                   displaceIn;
     // If true, InstanceInfoBlendEXT is used as a source for alpha state
-    remixapi_Bool       useDrawCallAlphaState;
-    remixapi_Bool       blendType_hasvalue;
-    int                 blendType_value;
-    remixapi_Bool       invertedBlend;
-    int                 alphaTestType;
-    uint8_t             alphaReferenceValue;
-    float               displaceOut;
+    remixapi_Bool           useDrawCallAlphaState;
+    remixapi_Bool           blendType_hasvalue;
+    int                     blendType_value;
+    remixapi_Bool           invertedBlend;
+    int                     alphaTestType;
+    uint8_t                 alphaReferenceValue;
+    float                   displaceOut;
     remixapi_Bool       enableDlssControlMask;
     float               dlssControlMaskIntensity;
     float               dlssControlMaskToneStrength;
     float               dlssControlMaskStructuralStrength;
-
-    float               textureScrollRate;
-    float               textureScrollAngle;
-    remixapi_Bool       textureScale_hasvalue;
-    remixapi_Float2D    textureScale_value;
-    remixapi_Float2D    textureOffset;
-    float               textureRotation;
   } remixapi_MaterialInfoOpaqueEXT;
 
   // Valid only if remixapi_MaterialInfo contains remixapi_MaterialInfoOpaqueEXT in pNext chain
   typedef struct remixapi_MaterialInfoOpaqueSubsurfaceEXT {
-    remixapi_StructType sType;
-    void*               pNext;
-    remixapi_Path       subsurfaceTransmittanceTexture;
-    remixapi_Path       subsurfaceThicknessTexture;
-    remixapi_Path       subsurfaceSingleScatteringAlbedoTexture;
-    remixapi_Float3D    subsurfaceTransmittanceColor;
-    float               subsurfaceMeasurementDistance;
-    remixapi_Float3D    subsurfaceSingleScatteringAlbedo;
-    float               subsurfaceVolumetricAnisotropy;
-    remixapi_Bool       subsurfaceDiffusionProfile;
-    remixapi_Float3D    subsurfaceRadius;
-    float               subsurfaceRadiusScale;
-    float               subsurfaceMaxSampleRadius;
-    remixapi_Path       subsurfaceRadiusTexture;
+    remixapi_StructType     sType;
+    void*                   pNext;
+    remixapi_TextureHandle  subsurfaceTransmittanceTexture;
+    remixapi_TextureHandle  subsurfaceThicknessTexture;
+    remixapi_TextureHandle  subsurfaceSingleScatteringAlbedoTexture;
+    remixapi_Float3D        subsurfaceTransmittanceColor;
+    float                   subsurfaceMeasurementDistance;
+    remixapi_Float3D        subsurfaceSingleScatteringAlbedo;
+    float                   subsurfaceVolumetricAnisotropy;
+    remixapi_Bool           subsurfaceDiffusionProfile;
+    remixapi_Float3D        subsurfaceRadius;
+    float                   subsurfaceRadiusScale;
+    float                   subsurfaceMaxSampleRadius;
+    remixapi_TextureHandle  subsurfaceRadiusTexture;
   } remixapi_MaterialInfoOpaqueSubsurfaceEXT;
 
   typedef struct remixapi_MaterialInfoTranslucentEXT {
-    remixapi_StructType sType;
-    void*               pNext;
-    remixapi_Path       transmittanceTexture;
-    float               refractiveIndex;
-    remixapi_Float3D    transmittanceColor;
-    float               transmittanceMeasurementDistance;
-    remixapi_Bool       thinWallThickness_hasvalue;
-    float               thinWallThickness_value;
-    remixapi_Bool       useDiffuseLayer;
-
-    float               textureScrollRate;
-    float               textureScrollAngle;
-    remixapi_Bool       textureScale_hasvalue;
-    remixapi_Float2D    textureScale_value;
-    remixapi_Float2D    textureOffset;
-    float               textureRotation;
+    remixapi_StructType     sType;
+    void*                   pNext;
+    remixapi_TextureHandle  transmittanceTexture;
+    float                   refractiveIndex;
+    remixapi_Float3D        transmittanceColor;
+    float                   transmittanceMeasurementDistance;
+    remixapi_Bool           thinWallThickness_hasvalue;
+    float                   thinWallThickness_value;
+    remixapi_Bool           useDiffuseLayer;
   } remixapi_MaterialInfoTranslucentEXT;
 
   typedef struct remixapi_MaterialInfoPortalEXT {
@@ -315,21 +320,21 @@ extern "C" {
   } remixapi_MaterialInfoPortalEXT;
 
   typedef struct remixapi_MaterialInfo {
-    remixapi_StructType sType;
-    void*               pNext;
-    uint64_t            hash;
-    remixapi_Path       albedoTexture;
-    remixapi_Path       normalTexture;
-    remixapi_Path       tangentTexture;
-    remixapi_Path       emissiveTexture;
-    float               emissiveIntensity;
-    remixapi_Float3D    emissiveColorConstant;
-    uint8_t             spriteSheetRow;
-    uint8_t             spriteSheetCol;
-    uint8_t             spriteSheetFps;
-    uint8_t             filterMode;
-    uint8_t             wrapModeU;
-    uint8_t             wrapModeV;
+    remixapi_StructType     sType;
+    void*                   pNext;
+    uint64_t                hash;
+    remixapi_TextureHandle  albedoTexture;
+    remixapi_TextureHandle  normalTexture;
+    remixapi_TextureHandle  tangentTexture;
+    remixapi_TextureHandle  emissiveTexture;
+    float                   emissiveIntensity;
+    remixapi_Float3D        emissiveColorConstant;
+    uint8_t                 spriteSheetRow;
+    uint8_t                 spriteSheetCol;
+    uint8_t                 spriteSheetFps;
+    uint8_t                 filterMode;
+    uint8_t                 wrapModeU;
+    uint8_t                 wrapModeV;
   } remixapi_MaterialInfo;
 
 
@@ -340,18 +345,112 @@ extern "C" {
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyMaterial)(
     remixapi_MaterialHandle       handle);
 
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_UpdateMaterial)(
+    remixapi_MaterialHandle       handle,
+    const remixapi_MaterialInfo*  info);
+
+  typedef enum remixapi_TextureFormat {
+    REMIXAPI_TEXTURE_FORMAT_RGBA8_UNORM    = 0,  // 4 bytes/pixel
+    REMIXAPI_TEXTURE_FORMAT_RGBA8_SRGB     = 1,  // 4 bytes/pixel
+    REMIXAPI_TEXTURE_FORMAT_BGRA8_UNORM    = 2,  // 4 bytes/pixel
+    REMIXAPI_TEXTURE_FORMAT_BGRA8_SRGB     = 3,  // 4 bytes/pixel
+    REMIXAPI_TEXTURE_FORMAT_R8_UNORM       = 4,  // 1 byte/pixel  (roughness, metallic, height)
+    REMIXAPI_TEXTURE_FORMAT_RG8_UNORM      = 5,  // 2 bytes/pixel (normal XY)
+    REMIXAPI_TEXTURE_FORMAT_RGBA16_SFLOAT  = 6,  // 8 bytes/pixel (HDR half-float)
+    REMIXAPI_TEXTURE_FORMAT_RGBA32_SFLOAT  = 7,  // 16 bytes/pixel (HDR full-float)
+    REMIXAPI_TEXTURE_FORMAT_R32_SFLOAT     = 8,  // 4 bytes/pixel (single-channel float)
+  } remixapi_TextureFormat;
+
+  // Describes how the texture will be used, affecting mip generation, encoding conversion,
+  // and sampling behavior. Format (SRGB vs UNORM etc.) controls bit interpretation;
+  // purpose controls processing semantics.
+  typedef enum remixapi_TexturePurpose {
+    // Color/albedo/emissive: standard linear mip filtering
+    REMIXAPI_TEXTURE_PURPOSE_COLOR       = 0,
+    // Linear data (roughness, metallic, opacity): linear mip filtering, no sRGB
+    REMIXAPI_TEXTURE_PURPOSE_DATA        = 1,
+    // Normal map in DirectX convention (Y+ points down): converted to octahedral internally
+    REMIXAPI_TEXTURE_PURPOSE_NORMAL_DX   = 2,
+    // Normal map in OpenGL convention (Y+ points up): converted to octahedral internally
+    REMIXAPI_TEXTURE_PURPOSE_NORMAL_OGL  = 3,
+    // Normal map already in octahedral encoding (2-channel): used as-is
+    REMIXAPI_TEXTURE_PURPOSE_NORMAL_OTH  = 4,
+    // Height/displacement map: mip levels store max values for hierarchical POM raymarching
+    REMIXAPI_TEXTURE_PURPOSE_HEIGHTMAP   = 5,
+  } remixapi_TexturePurpose;
+
+  typedef struct remixapi_TextureFromMemoryInfo {
+    remixapi_StructType      sType;
+    void*                    pNext;
+    uint64_t                 hash;
+    const uint8_t*           pixelData;
+    uint32_t                 width;
+    uint32_t                 height;
+    remixapi_TextureFormat   format;
+    remixapi_TexturePurpose  purpose;  // How to process mips and sample this texture
+  } remixapi_TextureFromMemoryInfo;
+
+  // A single sub-region patch applied to a target texture's mip 0. Pixel
+  // data must be in the destination texture's format (no conversion is
+  // performed at upload time; see remixapi_UpdateTextureFromMemory).
+  typedef struct remixapi_TexturePatch {
+    uint32_t dstX;
+    uint32_t dstY;
+    uint32_t width;
+    uint32_t height;
+    const uint8_t* pixelData;
+    uint32_t rowPitch;
+    remixapi_TextureFormat format;
+  } remixapi_TexturePatch;
+
+  // A batch entry groups one or more patches targeting the same texture.
+  // The runtime applies all patches in an entry, then regenerates the mip
+  // chain for that texture (scoped to the union of patch rects to keep
+  // cost proportional to changed pixels, not texture size).
+  typedef struct remixapi_TextureBatchEntry {
+    remixapi_TextureHandle        handle;
+    uint32_t                      patchCount;
+    const remixapi_TexturePatch*  patches;
+  } remixapi_TextureBatchEntry;
+
+  // Multi-handle batch info. A single remixapi_UpdateTextureFromMemory call
+  // can target any number of textures by supplying multiple entries; this
+  // amortizes API-crossing cost and lets the runtime coalesce work for
+  // callers that update several related atlases per frame.
+  typedef struct remixapi_TexturePatchInfo {
+    remixapi_StructType                sType;
+    void*                              pNext;
+    uint32_t                           entryCount;
+    const remixapi_TextureBatchEntry*  entries;
+  } remixapi_TexturePatchInfo;
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateTextureFromMemory)(
+    const remixapi_TextureFromMemoryInfo* info,
+    remixapi_TextureHandle*               out_handle);
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateTextureFromFile)(
+    remixapi_Path                         filePath,
+    remixapi_TextureHandle*               out_handle);
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyTexture)(
+    remixapi_TextureHandle                handle);
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_UpdateTextureFromMemory)(
+    const remixapi_TexturePatchInfo* info);
+
   typedef struct remixapi_HardcodedVertex {
     float    position[3];
     float    normal[3];
     float    texcoord[2];
     uint32_t color;
+    // Optional texture atlas region for UV wrapping: min.u, min.v, max.u, max.v as IEEE 754 half-floats.
+    // Enabled if remixapi_MeshInfoSurfaceTriangles sets REMIXAPI_MESH_INFO_SURFACE_TRIANGLES_BIT_TEXCOORD_BOUNDS.
+    uint16_t texcoordBounds[4];
     uint32_t _pad0;
     uint32_t _pad1;
     uint32_t _pad2;
     uint32_t _pad3;
     uint32_t _pad4;
-    uint32_t _pad5;
-    uint32_t _pad6;
   } remixapi_HardcodedVertex;
 
   typedef struct remixapi_MeshInfoSkinning {
@@ -366,6 +465,11 @@ extern "C" {
     uint32_t                        blendIndices_count;
   } remixapi_MeshInfoSkinning;
 
+  typedef enum remixapi_MeshInfoSurfaceTrianglesFlagBit {
+    REMIXAPI_MESH_INFO_SURFACE_TRIANGLES_BIT_TEXCOORD_BOUNDS = 1 << 0,
+  } remixapi_MeshInfoSurfaceTrianglesFlagBit;
+  typedef uint32_t remixapi_MeshInfoSurfaceTrianglesFlags;
+
   typedef struct remixapi_MeshInfoSurfaceTriangles {
     const remixapi_HardcodedVertex* vertices_values;
     uint64_t                        vertices_count;
@@ -374,12 +478,14 @@ extern "C" {
     remixapi_Bool                   skinning_hasvalue;
     remixapi_MeshInfoSkinning       skinning_value;
     remixapi_MaterialHandle         material;
+    remixapi_MeshInfoSurfaceTrianglesFlags flags;
+    uint64_t                               reserved; // Reserved for future use, must be 0
   } remixapi_MeshInfoSurfaceTriangles;
 
   typedef struct remixapi_MeshInfo {
     remixapi_StructType                      sType;
     void*                                    pNext;
-    uint64_t                                 hash;
+    uint64_t                                 hash; // deprecated: 'CreateMesh' generates a unique remixapi_MeshHandle independent of the 'hash'
     const remixapi_MeshInfoSurfaceTriangles* surfaces_values;
     uint32_t                                 surfaces_count;
   } remixapi_MeshInfo;
@@ -390,7 +496,6 @@ extern "C" {
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyMesh)(
     remixapi_MeshHandle       handle);
-
 
 
   typedef enum remixapi_CameraType {
@@ -431,7 +536,6 @@ extern "C" {
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_SetCameraMediumMaterial)(
     const remixapi_CameraMediumInfo* info);
-
 
 
 #define REMIXAPI_INSTANCE_INFO_MAX_BONES_COUNT 256
@@ -575,19 +679,6 @@ extern "C" {
     uint8_t             randomFlipAxis;
   } remixapi_InstanceInfoParticleSystemEXT;
 
-  typedef enum remixapi_ParticleSpawnDistribution {
-    REMIXAPI_PARTICLE_SPAWN_DISTRIBUTION_BY_TRIANGLE = 0,
-    REMIXAPI_PARTICLE_SPAWN_DISTRIBUTION_BY_SURFACE_AREA = 1,
-  } remixapi_ParticleSpawnDistribution;
-
-  // Extends InstanceInfo alongside its particle system extension.
-  // Omitting this extension preserves equal probability per emitter triangle.
-  typedef struct remixapi_InstanceInfoParticleSpawnDistributionEXT {
-    remixapi_StructType sType;
-    void* pNext;
-    remixapi_ParticleSpawnDistribution spawnDistribution;
-  } remixapi_InstanceInfoParticleSpawnDistributionEXT;
-
   typedef struct remixapi_InstanceInfoGpuInstancingEXT {
     remixapi_StructType       sType;
     void*                     pNext;
@@ -607,6 +698,21 @@ extern "C" {
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DrawInstance)(
     const remixapi_InstanceInfo* info);
 
+
+  // Add a retained instance to the scene. The instance will be rendered until explicitly removed by 'SceneInstanceRemove'.
+  // This avoids the overhead of calling 'DrawInstance' every frame for many objects.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_SceneInstanceAdd)(
+    const remixapi_InstanceInfo* info,
+    remixapi_SceneInstanceHandle* out_handle);
+
+  // Update the info for a previously added retained instance (by 'SceneInstanceAdd').
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_SceneInstanceUpdate)(
+    remixapi_SceneInstanceHandle handle,
+    const remixapi_InstanceInfo* info);
+
+  // Remove a retained instance from the scene.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_SceneInstanceRemove)(
+    remixapi_SceneInstanceHandle handle);
 
   typedef struct remixapi_LightInfoLightShaping {
     // The direction the Light Shaping is pointing in. Must be normalized.
@@ -686,7 +792,9 @@ extern "C" {
     remixapi_StructType             sType;
     void*                           pNext;
     remixapi_Transform              transform;
-    remixapi_Path                   colorTexture;
+    remixapi_TextureHandle          colorTexture;
+    float                           opacity;
+    int                             blendType;
   } remixapi_LightInfoDomeEXT;
 
   // Attachable to remixapi_LightInfo.
@@ -733,18 +841,155 @@ extern "C" {
     remixapi_LightHandle      lightHandle);
 
 
-  // Writes an RtxOption value to the user layer. Keys in a registered dynamic option namespace are
-  // validated immediately and applied at the next frame's option update. Returns INVALID_ARGUMENTS for an
-  // invalid key or value, GENERAL_FAILURE for an unknown key. See documentation/RemixConfig.md.
+  // Writes an RtxOption value to the User Settings layer.
+  // An option the runtime never saves, such as rtx.showUI, is written to the Derived Settings layer instead,
+  // where the runtime writes its own changes to it.
+  // A later change from the runtime's menus then takes effect, and GetConfigVariableResolved reports it.
+  // The key and value are validated immediately, and the value takes effect at the next option update.
+  // A call made before Startup takes effect at the first option update after it.
+  // The call can wait briefly while the runtime resolves options or updates its menus.
+  // Returns INVALID_ARGUMENTS for an invalid key or value.
+  // Returns GENERAL_FAILURE for an unknown key.
+  // See documentation/RemixConfig.md.
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_SetConfigVariable)(
     const char*               key,
     const char*               value);
+
+  // Reads an RtxOption's resolved value: the value the renderer uses after all option layers are
+  // combined. It accepts the keys SetConfigVariable accepts. A key in a registered dynamic option
+  // namespace that no layer sets reads as the namespace default.
+  //
+  // The value is text in the form .conf files use, so it can be passed back to SetConfigVariable.
+  // Booleans read as True or False, enums as their integer value, vectors as comma-separated components,
+  // and floats with 6 significant digits, so writing back a float or vector with more precision rounds it.
+  //
+  // Most changes, including those made by SetConfigVariable and config layers, resolve at the runtime's option update,
+  // which runs on the render thread at the end of each frame.
+  // A few of the runtime's own changes, such as starting a scene capture from its menu, resolve immediately.
+  // The render thread can trail the application by a few frames,
+  // so a read returns the value the render thread uses now, not one tied to the application's current frame.
+  //
+  // A read right after SetConfigVariable may still return the previous value.
+  // It can also return the new value, because an option update can run between the two calls,
+  // so a read does not show where a frame ends.
+  // To change a value based on its current one, track your own writes instead of reading the value back.
+  // Reading several keys does not give a consistent snapshot, because an option update can happen between calls.
+  //
+  // On input, valueSize is the capacity of value in bytes. On output, it is the size of the value
+  // including its NUL terminator. Pass a NULL value to query the size. If the value does not fit,
+  // nothing is written and the call returns REMIXAPI_ERROR_CODE_BUFFER_TOO_SMALL.
+  // A value can change between calls, so retry until the call succeeds.
+  //
+  // Returns INVALID_ARGUMENTS for a NULL info, a wrong sType, a NULL or empty key,
+  // or a malformed key in a dynamic namespace.
+  // Returns GENERAL_FAILURE for a key that no option or namespace owns.
+  // Returns NOT_INITIALIZED before the runtime has loaded its configuration, which happens during Startup.
+  // May be called from any application thread. See documentation/RemixConfig.md.
+  typedef struct remixapi_ConfigVariableResolvedInfo {
+    remixapi_StructType       sType;
+    // Reserved for extension structs that request more outputs. None exist yet, and the runtime ignores the chain.
+    void*                     pNext;
+    const char*               key;
+    char*                     value;
+    uint32_t                  valueSize;
+  } remixapi_ConfigVariableResolvedInfo;
+  REMIXAPI_HELPER remixapi_ConfigVariableResolvedInfo remixapi_ConfigVariableResolvedInfo_init() {
+    remixapi_ConfigVariableResolvedInfo info = { (remixapi_StructType)0 };
+    info.sType = REMIXAPI_STRUCT_TYPE_CONFIG_VARIABLE_RESOLVED_INFO;
+    info.pNext = NULL;
+    info.key = NULL;
+    info.value = NULL;
+    info.valueSize = 0;
+    return info;
+  }
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_GetConfigVariableResolved)(
+    remixapi_ConfigVariableResolvedInfo* inout_info);
+
+
+  // Config-layer functions require a successful Startup call. With otherwise
+  // valid arguments, calls made before Startup return
+  // REMIXAPI_ERROR_CODE_REMIX_DEVICE_WAS_NOT_REGISTERED. They may be called
+  // from any application thread; AcquireConfigLayer waits for its CS operation,
+  // while blend and release requests are enqueued in call order.
+  //
+  // Acquires (or references, if already acquired at the same priority and
+  // path) a conf-file option layer. Absolute paths are recommended; relative
+  // paths resolve against the process working directory. When no matching
+  // layer is cached, the conf is parsed synchronously: missing or unreadable
+  // files fail, while files containing no options acquire as no-op layers.
+  // Repeated acquires return the cached handle without reading the file and
+  // must be balanced by an equal number of releases.
+  // 'priority' and 'blendThreshold' must be finite. Priority orders layers and
+  // is clamped to the dynamic range; blendThreshold is clamped to [0,1] and is
+  // the initial threshold for non-float options. A newly created layer starts
+  // disabled at strength 0. See documentation/RemixConfig.md for ordering and blending details.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_AcquireConfigLayer)(
+    const char*                 path,
+    float                       priority,
+    float                       blendThreshold,
+    remixapi_ConfigLayerHandle* out_handle);
+
+  // Requests the layer's blend strength and non-float blend threshold. Both
+  // values must be finite and are clamped to [0,1]. Float/vector options LERP
+  // by strength; other option types switch when strength reaches threshold.
+  // Requests resolve with option updates and persist until changed. If this is
+  // called multiple times for one layer between resolves, the maximum strength
+  // and minimum threshold are used.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_SetConfigLayerBlending)(
+    remixapi_ConfigLayerHandle  handle,
+    float                       strength,
+    float                       blendThreshold);
+
+  // Releases one reference. At zero references the layer is removed and
+  // affected options re-resolve without it during the next option resolution.
+  // The handle must not be used after the final release.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_ReleaseConfigLayer)(
+    remixapi_ConfigLayerHandle  handle);
+
+
+
+  typedef enum remixapi_SubmitInteropFlagBit {
+    REMIXAPI_SUBMIT_INTEROP_BIT_FORCE_WAIT_DEVICE_IDLE          = 1 << 0,
+    REMIXAPI_SUBMIT_INTEROP_BIT_DISABLE_CPU_WAIT_FOR_VK_SUBMIT  = 1 << 1,
+    REMIXAPI_SUBMIT_INTEROP_BIT_DISABLE_QUEUE_SUBMIT            = 1 << 2,
+  } remixapi_SubmitInteropFlagBit;
+  typedef uint32_t remixapi_SubmitInteropFlags;
+
+  typedef struct remixapi_SubmitInfo {
+    remixapi_StructType           sType;
+    void*                         pNext;
+    remixapi_SubmitInteropFlags   interopFlags;
+  } remixapi_SubmitInfo;
+  REMIXAPI_HELPER remixapi_SubmitInfo remixapi_SubmitInfo_init() {
+    remixapi_SubmitInfo info = { (remixapi_StructType)0 };
+    info.sType = REMIXAPI_STRUCT_TYPE_SUBMIT_INFO;
+    info.pNext = NULL;
+    info.interopFlags = 0;
+    return info;
+  }
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_Submit)(const remixapi_SubmitInfo* info);
 
   typedef struct remixapi_PresentInfo {
     remixapi_StructType       sType;
     void*                     pNext;
     remixapi_HWND             hwndOverride; // Can be NULL
+    remixapi_Bool             skipVulkanSwapchain;
+    remixapi_Bool             interopFlipY; // flip interop image vertically when copying into the swapchain (e.g. user app API is OpenGL)
+    uint64_t                  clientDoneSemaphore_ValueToWait; // for interop: client signals this semaphore value, Remix waits for it before present, see 'remixapi_dxvk_InteropInfo' for reference
+    remixapi_Bool             disableCpuWaitForExternalSemaphores;
   } remixapi_PresentInfo;
+  REMIXAPI_HELPER remixapi_PresentInfo remixapi_PresentInfo_init() {
+    remixapi_PresentInfo info = { (remixapi_StructType)0 };
+    info.sType = REMIXAPI_STRUCT_TYPE_PRESENT_INFO;
+    info.pNext = NULL;
+    info.hwndOverride = NULL;
+    info.skipVulkanSwapchain = 0;
+    info.interopFlipY = 0;
+    info.clientDoneSemaphore_ValueToWait = 0;
+    return info;
+  }
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_Present)(const remixapi_PresentInfo* info);
 
@@ -792,12 +1037,6 @@ extern "C" {
     REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_NORMALS = 2,
     REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_OBJECT_PICKING = 3,
     REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI = 4,
-    // RGBA32F raw AOVs, allocated on Hydra request or with rtx.enableRawAovOutputs.
-    REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_WORLD_POSITION_RAW = 5,
-    REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_TEXCOORDS_RAW      = 6,
-    REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_NORMAL_F32         = 7,
-    // R32_SFLOAT coverage, allocated on Hydra request or with rtx.enableCoverageAov.
-    REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_COVERAGE           = 8,
   } remixapi_dxvk_CopyRenderingOutputType;
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_dxvk_CopyRenderingOutput)(
@@ -809,15 +1048,62 @@ extern "C" {
     const remixapi_Float4D* color);
 
 
+  // With 'remixapi_StartupInfo::interopImage' enabled, the interop render flow with OpenGL is:
+  // 1. User app (client) calls remix.Startup(), and remix.dxvk_GetInteropInfo() immediately after to create semaphores:
+  //     * glImportSemaphoreWin32HandleEXT( dxvkDoneSemaphore_Handle )
+  //     * glImportSemaphoreWin32HandleEXT( clientDoneSemaphore_Handle )
+  // 2. User app calls remix.Submit()
+  //     * Remix allocates the interop image of a window size
+  //     * Remix renders ray-traced output into the interop image
+  //     * Remix signals 'dxvkDoneSemaphore_Handle' semaphore
+  // 3. User app calls remix.dxvk_GetInteropInfo(), Remix returns the interop image info
+  //     * glImportMemoryWin32HandleEXT( mymem, allocationSize, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, imageMemory_Handle )
+  //     * Import depthImageMemory_Handle into a separate GL_R32F texture when nonzero
+  //     * Translate 'interopImageFormat' to 'glFormat'
+  //     * glTextureStorageMem2DEXT( mytex, 1, glFormat, width, height, mymem, 0 )
+  //     * Recreate the image when imageMemory_Handle/width/height change
+  // 4. User app calls glWaitSemaphoreEXT( dxvkDoneSemaphore_gl, .., colorAndDepthTextures )
+  //     * This requests GPU to wait for Remix to complete rendering. After that, user app can work with the image.
+  //     * User app needs to call glSemaphoreParameterui64vEXT with 'dxvkDoneSemaphore_ValueToWait', if timeline semaphore,
+  //       so that GL will wait for that value
+  // 5. User app does the OpenGL work (e.g. post-effects, UI)
+  // 6. User app calls glSignalSemaphoreEXT( clientDoneSemaphore_gl, .., mytex )
+  //     * This signals Remix that the user app is done with the image, and Remix can copy the image into the swapchain.
+  //     * User app needs to call glSemaphoreParameterui64vEXT with a value that is then passed as 'remixapi_PresentInfo::clientDoneSemaphore_ValueToWait'
+  // 7. User app calls remix.Present()
+  //     * Remix presents into the swapchain
+  //     * use 'remixapi_PresentInfo::interopFlipY' for OpenGL, if presented image is flipped vertically
+  //     * NOTE: user app MUST remove client API swapchain calls (e.g. SwapBuffers),
+  //             as Remix itself is responsible for presenting into the swapchain.
+  // For the sample app, see 'remixapi_opengl.cpp'
+  typedef struct remixapi_dxvk_InteropInfo {
+    uint64_t  dxvkDoneSemaphore_Handle;   // Win32 HANDLE - DXVK's Vulkan signals this semaphore after writing
+    uint64_t  dxvkDoneSemaphore_ValueToWait; // timeline value signaled by Remix after rendering; wait for this value
+    uint64_t  clientDoneSemaphore_Handle; // Win32 HANDLE - client signals this semaphore after writing
+    uint64_t  imageMemory_Handle;         // Win32 HANDLE - image memory, import into the client graphics API
+    uint64_t  allocationSize;             // interop image memory byte size
+    int32_t   width;                      // interop image width
+    int32_t   height;                     // interop image height
+    remixapi_TextureFormat interopImageFormat; // format of the interop image, translate to user app API
+
+    uint64_t  depthImageMemory_Handle;    // Win32 HANDLE for read-only primary depth, or 0 if unavailable
+    uint64_t  depthAllocationSize;        // depth image memory byte size
+    int32_t   depthWidth;                 // primary depth width (may differ from color)
+    int32_t   depthHeight;                // primary depth height (may differ from color)
+    remixapi_TextureFormat interopDepthImageFormat; // single-channel projected depth format
+  } remixapi_dxvk_InteropInfo;
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_dxvk_GetInteropInfo)(remixapi_dxvk_InteropInfo* out_info);
+
+
   typedef struct remixapi_InitializeLibraryInfo {
     remixapi_StructType sType;
     void*               pNext;
     uint64_t            version;
   } remixapi_InitializeLibraryInfo;
 
-  // NOTE: If adding a new function, append at the end of the struct and bump REMIXAPI_VERSION_PATCH.
-  //       Never insert, reorder, remove or reuse a slot: a client only knows the prefix of the struct
-  //       that existed at its own version, and the runtime writes only that prefix.
+  // NOTE: If adding a new function, append at the end of the struct.
+  //       Reordering breaks backwards compatibility.
   typedef struct remixapi_Interface {
     PFN_remixapi_Shutdown           Shutdown;
     PFN_remixapi_CreateMaterial     CreateMaterial;
@@ -842,10 +1128,29 @@ extern "C" {
     PFN_remixapi_pick_RequestObjectPicking  pick_RequestObjectPicking;
     PFN_remixapi_pick_HighlightObjects      pick_HighlightObjects;
 
-    PFN_remixapi_Startup            Startup;
-    PFN_remixapi_Present            Present;
+    PFN_remixapi_Startup                    Startup;
+    PFN_remixapi_Present                    Present;
+
+    PFN_remixapi_CreateTextureFromMemory    CreateTextureFromMemory;
+    PFN_remixapi_CreateTextureFromFile      CreateTextureFromFile;
+    PFN_remixapi_DestroyTexture             DestroyTexture;
 
     PFN_remixapi_SetCameraMediumMaterial SetCameraMediumMaterial;
+    PFN_remixapi_UpdateTextureFromMemory UpdateTextureFromMemory;
+
+    PFN_remixapi_dxvk_GetInteropInfo        dxvk_GetInteropInfo;
+    PFN_remixapi_Submit                     Submit;
+
+    PFN_remixapi_AcquireConfigLayer     AcquireConfigLayer;
+    PFN_remixapi_SetConfigLayerBlending SetConfigLayerBlending;
+    PFN_remixapi_ReleaseConfigLayer     ReleaseConfigLayer;
+
+    PFN_remixapi_SceneInstanceAdd           SceneInstanceAdd;
+    PFN_remixapi_SceneInstanceUpdate        SceneInstanceUpdate;
+    PFN_remixapi_SceneInstanceRemove        SceneInstanceRemove;
+    PFN_remixapi_UpdateMaterial             UpdateMaterial;
+
+    PFN_remixapi_GetConfigVariableResolved  GetConfigVariableResolved;
   } remixapi_Interface;
 
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_InitializeLibrary(
@@ -857,7 +1162,7 @@ extern "C" {
     remixapi_Interface*                   out_result);
 
 #ifndef REMIX_WINAPI_NO_LIBRARY_LOADER
-  inline remixapi_ErrorCode REMIXAPI_CALL remixapi_lib_loadRemixDllAndInitialize(
+  REMIXAPI_INLINE remixapi_ErrorCode REMIXAPI_CALL remixapi_lib_loadRemixDllAndInitialize(
     const wchar_t*      remixD3D9DllPath,
     remixapi_Interface* out_remixInterface,
     remixapi_HMODULE*   out_remixDll

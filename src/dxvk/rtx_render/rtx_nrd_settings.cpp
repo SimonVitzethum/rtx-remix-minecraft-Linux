@@ -405,8 +405,6 @@ namespace dxvk {
           ADVANCED RemixGui::SliderFloat("Luminance sigma scale", &m_reblurSettings.antilagSettings.luminanceSigmaScale, 0.0f, 10.0f, "%.2f");
           ADVANCED RemixGui::SliderFloat("Luminance sensitivity to darkness", &m_reblurSettings.antilagSettings.luminanceSensitivity, 0.0f, 100.0f, "%.2f");
 
-          ADVANCED RemixGui::SliderFloat("Hit distance sigma scale", &m_reblurSettings.antilagSettings.hitDistanceSigmaScale, 0.0f, 10.0f, "%.2f");
-          ADVANCED RemixGui::SliderFloat("Hit distance sensitivity to darkness", &m_reblurSettings.antilagSettings.hitDistanceSensitivity, 0.0f, 100.0f, "%.2f");
         }
 
         if (resetHistoryOnSettingsChange && memcmp(&m_reblurSettings, &prevReblurSettingsState, sizeof(m_reblurSettings)) != 0)

@@ -41,7 +41,7 @@ generateSlangRepro = False
 includePaths = ' '.join([f'-I{path}' for path in args.includes])
 slangDll = os.path.join(os.path.dirname(args.slangc), 'slang.dll')
 
-tools = [args.glslang, args.slangc, slangDll, __file__]
+tools = [x for x in [args.glslang, args.slangc, slangDll, __file__] if os.path.exists(x)]
 newestTool = max([os.path.getmtime(x) for x in tools])
 
 # Note: -Os (Optimize Size) used here as while one might typically expect optimizing for size to comprimise speed optimizations,

@@ -25,11 +25,11 @@
 #include <stdint.h>
 
 // The C header refuses to compile for 32-bit targets, but the bridge client only needs its types.
-#if _WIN64 != 1
+#if !defined(_WIN64) && !defined(__x86_64__)
 #define REMIX_ALLOW_X86
 #endif
 #include <remix/remix_c.h>
-#if _WIN64 != 1
+#if !defined(_WIN64) && !defined(__x86_64__)
 #undef REMIX_ALLOW_X86
 #endif
 
@@ -65,6 +65,6 @@ constexpr size_t clientInterfaceSize(uint64_t clientVersion) {
   return sizeof(remixapi_Interface);
 }
 
-static_assert(sizeof(remixapi_Interface) == 22 * sizeof(void*), "Add a branch to clientInterfaceSize for the new interface");
+static_assert(sizeof(remixapi_Interface) == 36 * sizeof(void*), "Add a branch to clientInterfaceSize for the new interface");
 
 }

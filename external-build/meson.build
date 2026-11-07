@@ -114,8 +114,9 @@ if host_machine.system() == 'windows'
   nv_usd_include_path = include_directories(join_paths('..', usd_debug_release_dir, 'include'))
   usd_include_paths = [nv_usd_include_path]
 else
-  # Native POSIX build: use the system OpenUSD (monolithic libusd_ms) and oneTBB.
-  usd_include_paths = []
+  # Native POSIX build: OpenUSD built from source without Python and imaging (see PORT_KNOWLEDGE.md), system oneTBB.
+  usd_linux_prefix = join_paths(global_src_root_norm, '../dxvk-deps/usd-install')
+  usd_include_paths = [ include_directories('../external/usd_linux/include') ]
 endif
 
 # ============================================================================

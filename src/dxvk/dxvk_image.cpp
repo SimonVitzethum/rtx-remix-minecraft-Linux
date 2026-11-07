@@ -201,10 +201,17 @@ namespace dxvk {
     if (sharingInfo.mode == DxvkSharedHandleMode::None)
       return false;
 
+#ifdef REMIX_LINUX_NATIVE
+    if (!m_device->extensions().khrExternalMemoryFd) {
+      Logger::err("Failed to create shared resource: VK_KHR_EXTERNAL_MEMORY_FD not supported");
+      return false;
+    }
+#else
     if (!m_device->extensions().khrExternalMemoryWin32) {
       Logger::err("Failed to create shared resource: VK_KHR_EXTERNAL_MEMORY_WIN32 not supported");
       return false;
     }
+#endif
 
     VkPhysicalDeviceExternalImageFormatInfo externalImageFormatInfo;
     externalImageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO;
@@ -262,7 +269,18 @@ namespace dxvk {
     if (!m_shared)
       return INVALID_HANDLE_VALUE;
 
-#ifdef _WIN32
+#ifdef REMIX_LINUX_NATIVE
+    VkMemoryGetFdInfoKHR fdInfo = { VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR };
+    fdInfo.handleType = m_info.sharing.type;
+    fdInfo.memory = m_image.memory.memory();
+
+    int fd = -1;
+    if (m_vkd->vkGetMemoryFdKHR == nullptr || m_vkd->vkGetMemoryFdKHR(m_vkd->device(), &fdInfo, &fd) != VK_SUCCESS) {
+      Logger::warn("DxvkImage::DxvkImage: Failed to get shared handle for image");
+    } else {
+      handle = reinterpret_cast<HANDLE>(static_cast<intptr_t>(fd));
+    }
+#elif defined(_WIN32)
     VkMemoryGetWin32HandleInfoKHR handleInfo;
     handleInfo.sType = VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR;
     handleInfo.pNext = nullptr;

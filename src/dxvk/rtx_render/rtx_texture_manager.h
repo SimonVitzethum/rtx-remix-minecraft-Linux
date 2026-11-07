@@ -163,6 +163,9 @@ namespace dxvk {
     }
 
     void requestHotReload(const Rc<ManagedTexture>& tex);
+
+    // Uploads the current contents of the texture's asset data again. Used for textures that are updated through the Remix API.
+    void reuploadTexture(const Rc<ManagedTexture>& tex);
     void processAllHotReloadRequests();
 
   private:
