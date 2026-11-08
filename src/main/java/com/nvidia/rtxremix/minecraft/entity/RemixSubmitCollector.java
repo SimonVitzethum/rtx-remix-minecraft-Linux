@@ -163,7 +163,9 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
         for (BakedQuad quad : quads.all()) {
             BakedQuad.MaterialInfo material = quad.materialInfo();
             // The enchantment glint is a screen-space shimmer over the surface that Remix
-            // cannot reproduce, so a glinting item captures as the plain one.
+            // cannot reproduce, so a glinting item captures as the plain one: foilType is
+            // ignored and the quad's own render type is used (26.3 draws the glint as a
+            // second sampler of a glint variant of that layer, not as an extra pass).
             RenderType renderType = material.itemRenderType();
             int tintIndex = material.tintIndex();
             quadInstance.setColor(material.isTinted() && tintIndex >= 0 && tintIndex < tintLayers.length

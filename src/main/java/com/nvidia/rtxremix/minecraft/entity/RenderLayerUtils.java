@@ -75,12 +75,12 @@ final class RenderLayerUtils {
      * Returns the texture a captured layer is submitted under, or empty when Remix has
      * nothing to draw for the layer. Results are cached by layer identity.
      *
-     * <p>Empty covers two cases. Untextured layers (shadow, debug, lines) carry no
+     * <p>Empty covers these cases. Untextured layers (shadow, debug, lines) carry no
      * material identity at all. Layers that pass the depth test unconditionally, the
      * see-through text of a name tag, are drawn over the whole scene in vanilla; no
      * placement in a ray-traced scene reproduces that, and vanilla draws the
      * depth-tested copy of the same text beside them, so their quads would only double
-     * it.
+     * it. The stand-alone glint overlay pipeline is skipped too.
      *
      * @param layer the render layer (typically from an entity renderer)
      * @return the texture identifier to capture under, or empty to skip the layer
@@ -92,6 +92,13 @@ final class RenderLayerUtils {
     private static Optional<Identifier> capturableTextureUncached(RenderType layer) {
         // A pipeline without a depth-stencil state draws over the whole scene.
         if (layer.pipeline().getDepthStencilState() == null) {
+            return Optional.empty();
+        }
+        // The stand-alone glint overlays (trimmed armor, patterned shield) draw the glint
+        // texture over a surface in screen space. Every other glint layer binds the
+        // surface's own texture as Sampler0 and only samples the glint beside it, so it
+        // captures as the plain item; this overlay alone would add a glint-textured surface.
+        if (pipelinePath(layer).equals("pipeline/glint")) {
             return Optional.empty();
         }
         return extractTexture(layer);
