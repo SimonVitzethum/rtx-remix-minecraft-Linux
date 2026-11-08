@@ -19,6 +19,9 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#ifdef REMIX_LINUX_NATIVE
+#include <dlfcn.h>
+#endif
 #include <numeric>
 
 #include "util_env.h"
@@ -276,6 +279,17 @@ namespace dxvk::env {
   }
 
   std::string getDllDirectory() {
+#ifdef REMIX_LINUX_NATIVE
+    // Directory of libremixapi.so (the exe is the JVM, the NGX feature libraries live beside the runtime)
+    Dl_info info;
+    if (dladdr(reinterpret_cast<void*>(&getDllDirectory), &info) && info.dli_fname) {
+      std::filesystem::path p(info.dli_fname);
+      std::error_code ec;
+      auto canon = std::filesystem::weakly_canonical(p, ec);
+      return (ec ? p : canon).parent_path().string();
+    }
+    return std::string();
+#else
     HMODULE hModule;
     GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR) &getDllDirectory, &hModule);
 
@@ -285,6 +299,7 @@ namespace dxvk::env {
 
     std::filesystem::path path(modulePath);
     return path.string();
+#endif
   }
   // NV-DXVK end
 

@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <mutex>
@@ -157,7 +158,12 @@ namespace dxvk
 
     const std::string exePath = env::getExePath();
     const std::string exeFolder = exePath.substr(0, exePath.find_last_of("\\/"));
+#ifdef REMIX_LINUX_NATIVE
+    // exe is the JVM: use the runtime directory (writable, beside the NGX feature libraries)
+    const auto logFolder = str::tows(env::getDllDirectory().c_str());
+#else
     const auto logFolder = str::tows(exeFolder.c_str());
+#endif
     
     NVSDK_NGX_Result result = NVSDK_NGX_Result_Fail;
 
@@ -202,6 +208,12 @@ namespace dxvk
     featureCommonInfo.LoggingInfo.LoggingCallback = &NVSDK_NGX_AppLogCallback;
     featureCommonInfo.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_ON;
     featureCommonInfo.LoggingInfo.DisableOtherLoggingSinks = true;
+#else
+    if (std::getenv("REMIX_NGX_LOG")) {
+      featureCommonInfo.LoggingInfo.LoggingCallback = &NVSDK_NGX_AppLogCallback;
+      featureCommonInfo.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_VERBOSE;
+      featureCommonInfo.LoggingInfo.DisableOtherLoggingSinks = true;
+    }
 #endif
 
     result = NGX_CALL(NVSDK_NGX_VULKAN_Init(
