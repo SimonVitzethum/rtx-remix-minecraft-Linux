@@ -93,7 +93,7 @@ final class FirstPersonShadowModelPlacement {
         if (averageAway.lengthSqr() > DIRECTION_EPSILON_SQ) {
             addUniqueDirection(directions, averageAway.normalize());
         }
-        Vec3 backward = HeldLightPlacement.horizontalForward(camera.getYRot()).reverse();
+        Vec3 backward = HeldLightPlacement.horizontalForward(camera.yRot()).reverse();
         addUniqueDirection(directions, backward);
 
         // A wall can block the preferred backward displacement without

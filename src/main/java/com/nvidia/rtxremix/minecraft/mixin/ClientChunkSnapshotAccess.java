@@ -4,12 +4,12 @@
  */
 package com.nvidia.rtxremix.minecraft.mixin;
 
-import net.minecraft.client.renderer.chunk.RenderChunk;
+import net.minecraft.client.renderer.chunk.SectionCopy;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
 @Mixin(targets = "net.minecraft.client.renderer.chunk.RenderRegionCache$ChunkInfo")
 public interface ClientChunkSnapshotAccess {
     @Accessor("renderChunk")
-    RenderChunk rtxremix$snapshotOrNull();
+    SectionCopy rtxremix$snapshotOrNull();
 }

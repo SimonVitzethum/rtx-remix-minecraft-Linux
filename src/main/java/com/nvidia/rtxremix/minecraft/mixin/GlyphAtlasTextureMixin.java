@@ -6,7 +6,7 @@ package com.nvidia.rtxremix.minecraft.mixin;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import com.mojang.blaze3d.font.SheetGlyphInfo;
+import com.mojang.blaze3d.font.GlyphBitmap;
 import com.nvidia.rtxremix.minecraft.texture.GlyphPageMirror;
 import net.minecraft.client.gui.font.FontTexture;
 import org.spongepowered.asm.mixin.Final;
@@ -43,9 +43,9 @@ public abstract class GlyphAtlasTextureMixin implements GlyphPageMirror.Owner {
 
     @WrapOperation(
         method = "add",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/font/SheetGlyphInfo;upload(II)V")
+        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/font/GlyphBitmap;upload(II)V")
     )
-    private void rtxremix$mirrorGlyphUpload(SheetGlyphInfo glyph, int x, int y, Operation<Void> original) {
+    private void rtxremix$mirrorGlyphUpload(GlyphBitmap glyph, int x, int y, Operation<Void> original) {
         GlyphPageMirror.beginUpload(rtxremix$glyphPageMirror());
         try {
             original.call(glyph, x, y);

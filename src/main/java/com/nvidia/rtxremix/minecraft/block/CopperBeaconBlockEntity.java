@@ -14,7 +14,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
@@ -102,7 +102,7 @@ public final class CopperBeaconBlockEntity extends BlockEntity
     static void register() {
         Registry.register(
                 BuiltInRegistries.BLOCK_ENTITY_TYPE,
-                ResourceLocation.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, CopperBeaconBlock.ID),
+                Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, CopperBeaconBlock.ID),
                 TYPE);
     }
 

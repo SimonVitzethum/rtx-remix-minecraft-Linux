@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.client.renderer.SectionBufferBuilderPack;
-import net.minecraft.client.renderer.chunk.RenderChunkRegion;
+import net.minecraft.client.renderer.chunk.RenderSectionRegion;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 
 /**
@@ -28,18 +28,18 @@ import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 public abstract class RebuildTaskMixin {
 
     @Shadow
-    protected RenderChunkRegion region;
+    protected RenderSectionRegion region;
 
-    private RenderChunkRegion rtxremix$consumed;
+    private RenderSectionRegion rtxremix$consumed;
 
-    @Inject(method = "doTask", at = @At("HEAD"))
+    @Inject(method = "getStartTimeNano(Lnet/minecraft/client/renderer/SectionBufferBuilderPack;)Ljava/util/concurrent/CompletableFuture;", at = @At("HEAD"))
     private void rtxremix$captureRegion(SectionBufferBuilderPack buffers, CallbackInfoReturnable<CompletableFuture<SectionRenderDispatcher.SectionTaskResult>> cir) {
         rtxremix$consumed = region;
     }
 
-    @Inject(method = "doTask", at = @At("RETURN"))
+    @Inject(method = "getStartTimeNano(Lnet/minecraft/client/renderer/SectionBufferBuilderPack;)Ljava/util/concurrent/CompletableFuture;", at = @At("RETURN"))
     private void rtxremix$releaseRegion(SectionBufferBuilderPack buffers, CallbackInfoReturnable<CompletableFuture<SectionRenderDispatcher.SectionTaskResult>> cir) {
-        RenderChunkRegion consumed = rtxremix$consumed;
+        RenderSectionRegion consumed = rtxremix$consumed;
         rtxremix$consumed = null;
         if (consumed != null) {
             ((RegionSnapshotRelease) consumed).rtxremix$release();

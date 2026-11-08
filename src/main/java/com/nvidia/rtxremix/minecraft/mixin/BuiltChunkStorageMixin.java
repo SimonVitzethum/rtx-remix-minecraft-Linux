@@ -70,12 +70,12 @@ public abstract class BuiltChunkStorageMixin
 
     @Override
     public int rtxremix$getOriginX(int slotIndex) {
-        return sections[slotIndex].getOrigin().getX();
+        return sections[slotIndex].getRenderOrigin().getX();
     }
 
     @Override
     public int rtxremix$getOriginZ(int slotIndex) {
-        return sections[slotIndex].getOrigin().getZ();
+        return sections[slotIndex].getRenderOrigin().getZ();
     }
 
     @Override
@@ -86,10 +86,10 @@ public abstract class BuiltChunkStorageMixin
     /** The slot vanilla aliases the section onto, or null unless that slot currently holds the section. */
     private SectionRenderDispatcher.RenderSection rtxremix$residentSlot(int cx, int sy, int cz) {
         int slotX = Math.floorMod(cx, sectionGridSizeX);
-        int slotY = Math.floorMod(sy - level.getMinSection(), sectionGridSizeY);
+        int slotY = Math.floorMod(sy - level.getMinSectionY(), sectionGridSizeY);
         int slotZ = Math.floorMod(cz, sectionGridSizeZ);
         SectionRenderDispatcher.RenderSection slot = sections[ChunkStorageTorus.index(slotX, slotY, slotZ, sectionGridSizeX, sectionGridSizeY)];
-        BlockPos origin = slot.getOrigin();
+        BlockPos origin = slot.getRenderOrigin();
         boolean resident = SectionPos.blockToSectionCoord(origin.getX()) == cx
                 && SectionPos.blockToSectionCoord(origin.getY()) == sy
                 && SectionPos.blockToSectionCoord(origin.getZ()) == cz;
@@ -106,7 +106,7 @@ public abstract class BuiltChunkStorageMixin
 
     @Override
     public void rtxremix$flagLoadedSection(int cx, int sy, int cz) {
-        if (!NeighbourReflagFilter.sectionInRange(sy, level.getMinSection(), sectionGridSizeY)) {
+        if (!NeighbourReflagFilter.sectionInRange(sy, level.getMinSectionY(), sectionGridSizeY)) {
             return;
         }
         rtxremix$scheduleRebuildIfResident(cx, sy, cz);
@@ -131,7 +131,7 @@ public abstract class BuiltChunkStorageMixin
 
     @Override
     public void rtxremix$clearNeighbourSnapshotBits(int cx, int cz) {
-        int bottomSection = level.getMinSection();
+        int bottomSection = level.getMinSectionY();
         for (int k = 0; k < NeighbourReflagFilter.NEIGHBOUR_COUNT; k++) {
             int bit = NeighbourReflagFilter.bit(NeighbourReflagFilter.mirroredIndex(k));
             int neighbourX = cx + NeighbourReflagFilter.DX[k];

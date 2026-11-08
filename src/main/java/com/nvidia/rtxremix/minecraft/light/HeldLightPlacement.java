@@ -32,7 +32,7 @@ final class HeldLightPlacement {
     Vec3 resolve(ClientLevel world, Camera camera, Entity source,
                   EquipmentSlot slot, double emitterRadius, float dtSeconds) {
         Vec3 origin = camera.getPosition();
-        Vec3 forward = horizontalForward(camera.getYRot());
+        Vec3 forward = horizontalForward(camera.yRot());
         double expansion = Math.max(0.0, emitterRadius) + WALL_CLEARANCE;
         double targetDistance = collisionLimitedDistance(
                 world,

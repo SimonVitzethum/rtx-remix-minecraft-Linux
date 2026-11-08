@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 
+
 class EntityRenderContextTest {
 
     private final EntityRenderContext context = EntityRenderContext.get();

@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
 import net.minecraft.client.renderer.block.model.BakedQuad;
-import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.client.renderer.block.model.BlockStateModel;
 import net.minecraft.client.resources.model.MultiPartBakedModel;
 import net.minecraft.core.Direction;
 import net.minecraft.util.RandomSource;
@@ -36,7 +36,7 @@ import net.minecraft.world.level.levelgen.LegacyRandomSource;
  * <p>The part selection and the seed handed to each part are vanilla's: the same
  * {@code random.nextLong()} draw seeds a reused {@code CheckedRandom} per part, which yields
  * the sequence {@code Random.create(seed)} would. A single matching part returns that part's
- * own quad list, as {@link net.minecraft.client.resources.model.WeightedBakedModel} already does
+ * own quad list, as {@link net.minecraft.client.resources.model.WeightedVariants} already does
  * for its chosen variant; callers treat model quad lists as read-only. Several matching parts
  * still concatenate into a new list.
  */
@@ -45,7 +45,7 @@ public abstract class MultipartBakedModelMixin {
 
     @Shadow
     @Final
-    private List<Pair<Predicate<BlockState>, BakedModel>> selectors;
+    private List<Pair<Predicate<BlockState>, BlockStateModel>> selectors;
 
     @Shadow
     @Final
@@ -54,7 +54,7 @@ public abstract class MultipartBakedModelMixin {
     private static final ThreadLocal<LegacyRandomSource> rtxremix$partRandom =
             ThreadLocal.withInitial(() -> new LegacyRandomSource(0L));
 
-    @Inject(method = "getQuads", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getStartTimeNano(Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/core/Direction;Lnet/minecraft/util/RandomSource;)Ljava/util/List;", at = @At("HEAD"), cancellable = true)
     private void rtxremix$getQuads(
             BlockState state,
             Direction face,
@@ -79,7 +79,7 @@ public abstract class MultipartBakedModelMixin {
         List<BakedQuad> result = null;
         boolean owned = false;
         for (int i = selected.nextSetBit(0); i >= 0; i = selected.nextSetBit(i + 1)) {
-            partRandom.setSeed(seed);
+            partRandom.getStartTimeTicks(seed);
             List<BakedQuad> quads = selectors.get(i).getRight().getQuads(state, face, partRandom);
             if (result == null) {
                 result = quads;

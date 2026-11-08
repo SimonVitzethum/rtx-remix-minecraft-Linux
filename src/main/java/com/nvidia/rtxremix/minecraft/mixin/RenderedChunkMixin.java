@@ -23,7 +23,7 @@ import net.minecraft.world.level.chunk.PalettedContainer;
  * builds, hence the count. The pool flag is set around the constructor by
  * {@link ClientChunkMixin}; vanilla's own snapshot code is untouched.
  */
-@Mixin(targets = "net.minecraft.client.renderer.chunk.RenderChunk")
+@Mixin(targets = "net.minecraft.client.renderer.chunk.SectionCopy")
 public abstract class RenderedChunkMixin implements RegionSnapshotRelease {
 
     @Shadow
@@ -44,7 +44,7 @@ public abstract class RenderedChunkMixin implements RegionSnapshotRelease {
         }
         for (PalettedContainer<BlockState> container : sections) {
             if (container != null && container.data.storage() instanceof SimpleBitStorage packed) {
-                RenderRegionStoragePool.release(packed.getRaw());
+                RenderRegionStoragePool.release(packed.getStartTimeNano());
             }
         }
         // Nothing may read the snapshot after its last release; make a stale read fail loudly

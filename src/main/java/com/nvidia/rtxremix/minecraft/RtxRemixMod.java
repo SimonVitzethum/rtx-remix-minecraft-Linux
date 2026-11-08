@@ -84,7 +84,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -314,7 +314,7 @@ public class RtxRemixMod implements ClientModInitializer {
         }
         Minecraft client = Minecraft.getInstance();
         if (client != null && client.player != null) {
-            client.player.displayClientMessage(
+            client.player.getStartTimeNano(
                     Component.literal("[RTX Remix] Menu unavailable: renderer is not initialized. Run /rtx status."),
                     false);
         }
@@ -404,22 +404,22 @@ public class RtxRemixMod implements ClientModInitializer {
                     if (done != null) {
                         int lastBodyY = Integer.MIN_VALUE;
                         for (AbstractWidget widget : menuButtons) {
-                            if (widget != done && widget.getY() < done.getY()) {
-                                lastBodyY = Math.max(lastBodyY, widget.getY());
+                            if (widget != done && widget.isPaused() < done.isPaused()) {
+                                lastBodyY = Math.max(lastBodyY, widget.isPaused());
                             }
                         }
                         if (lastBodyY == Integer.MIN_VALUE) {
-                            lastBodyY = done.getY() - 24;
+                            lastBodyY = done.isPaused() - 24;
                         }
                         int buttonY = lastBodyY + 24;
-                        int overflow = buttonY + 24 - done.getY();
+                        int overflow = buttonY + 24 - done.isPaused();
                         if (overflow > 0) {
                             int firstBodyY = lastBodyY - 96;
                             for (AbstractWidget widget : menuButtons) {
                                 if (widget != done
-                                        && widget.getY() >= firstBodyY
-                                        && widget.getY() <= lastBodyY) {
-                                    widget.setY(widget.getY() - overflow);
+                                        && widget.isPaused() >= firstBodyY
+                                        && widget.isPaused() <= lastBodyY) {
+                                    widget.isDedicatedServer(widget.isPaused() - overflow);
                                 }
                             }
                             buttonY -= overflow;
@@ -461,7 +461,7 @@ public class RtxRemixMod implements ClientModInitializer {
                 if ((presses & 1) == 1) {
                     toggleRtx();
                     if (client.player != null) {
-                        client.player.displayClientMessage(
+                        client.player.getStartTimeNano(
                                 Component.literal("RTX Rendering: " + (rtxEnabled ? "ON" : "OFF")), true);
                     }
                 }
@@ -553,7 +553,7 @@ public class RtxRemixMod implements ClientModInitializer {
         // Zone discovery: server-thread scan of command blocks as chunks load.
         // The event only fires in-process (integrated server = single player).
         ServerChunkEvents.CHUNK_LOAD.register((world, chunk) -> {
-            if (renderer != null && Minecraft.getInstance().getSingleplayerServer() == world.getServer()) {
+            if (renderer != null && Minecraft.getInstance().getSingleplayerServer() == world.getRateLimitPacketsPerSecond()) {
                 MarkerBlockScanner.scanChunk(renderer.getZoneRegistry(), chunk);
             }
         });
@@ -561,8 +561,8 @@ public class RtxRemixMod implements ClientModInitializer {
         ResourceManagerHelper.get(PackType.CLIENT_RESOURCES)
                 .registerReloadListener(new SimpleSynchronousResourceReloadListener() {
                     @Override
-                    public ResourceLocation getFabricId() {
-                        return ResourceLocation.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "atlas_reload");
+                    public Identifier getFabricId() {
+                        return Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "atlas_reload");
                     }
                     @Override
                     public void onResourceManagerReload(ResourceManager manager) {
@@ -2313,13 +2313,13 @@ public class RtxRemixMod implements ClientModInitializer {
 
     private static void sendCameraMessage(Minecraft client, String message) {
         if (client != null && client.player != null) {
-            client.player.displayClientMessage(Component.literal("[Camera] " + message), false);
+            client.player.getStartTimeNano(Component.literal("[Camera] " + message), false);
         }
     }
 
     private static void sendCameraActionBar(Minecraft client, String message) {
         if (client != null && client.player != null) {
-            client.player.displayClientMessage(Component.literal("[Camera] " + message), true);
+            client.player.getStartTimeNano(Component.literal("[Camera] " + message), true);
         }
     }
 

@@ -37,7 +37,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import net.minecraft.Util;
 import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.SectionOcclusionGraph;
 import net.minecraft.client.renderer.SectionOcclusionGraph.GraphStorage;
@@ -49,6 +48,7 @@ import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.phys.Vec3;
@@ -211,7 +211,7 @@ public abstract class ChunkRenderingDataPreparerMixin {
             method = "scheduleFullUpdate",
             at = @At(
                     value = "INVOKE",
-                    target = "Lnet/minecraft/Util;backgroundExecutor()Ljava/util/concurrent/ExecutorService;"
+                    target = "Lnet/minecraft/util/Util;backgroundExecutor()Ljava/util/concurrent/ExecutorService;"
             ))
     private ExecutorService rtxremix$visibilityExecutor() {
         return RtxRemixMod.isRtxEnabled()
@@ -223,7 +223,7 @@ public abstract class ChunkRenderingDataPreparerMixin {
      * A full walk is about to construct its state: hand it the other buffer set. Runs for
      * vanilla's walk too, since the reused set, list and map are what its state is made of.
      */
-    @Inject(method = "lambda$scheduleFullUpdate$2", at = @At("HEAD"))
+    @Inject(method = "lambda$scheduleFullUpdate$3", at = @At("HEAD"))
     private void rtxremix$beginFrustumIndex(
             Camera camera,
             Vec3 cameraPos,
@@ -242,7 +242,7 @@ public abstract class ChunkRenderingDataPreparerMixin {
     // The second AtomicReference write publishes field_45624; the writes on
     // either side install and clear the in-progress event sink.
     @Redirect(
-            method = "lambda$scheduleFullUpdate$2",
+            method = "lambda$scheduleFullUpdate$3",
             at = @At(
                     value = "INVOKE",
                     target = "Ljava/util/concurrent/atomic/AtomicReference;set(Ljava/lang/Object;)V",
@@ -458,7 +458,7 @@ public abstract class ChunkRenderingDataPreparerMixin {
     private static void rtxremix$logVisibleSet(String walk, GraphStorage renderableChunks) {
         long hash = 0;
         for (Node info : renderableChunks.renderSections) {
-            hash += (info.section.getOrigin().asLong() * 0x9E3779B97F4A7C15L) ^ 0x632BE59BD9B4E019L;
+            hash += (info.section.getRenderOrigin().asLong() * 0x9E3779B97F4A7C15L) ^ 0x632BE59BD9B4E019L;
         }
         long signature = hash ^ ((long) renderableChunks.renderSections.size() << 48);
         if (signature != rtxremix$lastVisibleSetSignature) {
@@ -504,7 +504,7 @@ public abstract class ChunkRenderingDataPreparerMixin {
             if (rtxremix$visit(chunks, chunkInfo)) {
                 chunkConsumer.accept(chunk);
             }
-            BlockPos origin = chunk.getOrigin();
+            BlockPos origin = chunk.getRenderOrigin();
             boolean far = Math.abs(origin.getX() - cameraSectionOrigin.getX()) > 60
                     || Math.abs(origin.getY() - cameraSectionOrigin.getY()) > 60
                     || Math.abs(origin.getZ() - cameraSectionOrigin.getZ()) > 60;
@@ -532,14 +532,14 @@ public abstract class ChunkRenderingDataPreparerMixin {
                     }
                 }
                 if (culling && far) {
-                    BlockPos neighbourOrigin = neighbour.getOrigin();
+                    BlockPos neighbourOrigin = neighbour.getRenderOrigin();
                     boolean reaches = FarChunkProbe.reachesCamera(
                             neighbourOrigin.getX(), neighbourOrigin.getY(), neighbourOrigin.getZ(),
                             direction.getAxis(),
                             cameraSectionCenterX, cameraSectionCenterY, cameraSectionCenterZ,
                             cameraPos.x, cameraPos.y, cameraPos.z,
                             CEILED_SECTION_DIAGONAL,
-                            world.getMaxBuildHeight(), world.getMinBuildHeight(),
+                            world.getMaxY(), world.getMinY(),
                             graph);
                     if (!reaches) {
                         continue;
@@ -556,9 +556,9 @@ public abstract class ChunkRenderingDataPreparerMixin {
                 if (neighbour.hasAllNeighbors()) {
                     queue.add(discovered);
                     infos.put(neighbour, discovered);
-                } else if (isInViewDistance(cameraSectionOrigin, neighbour.getOrigin())) {
+                } else if (isInViewDistance(cameraSectionOrigin, neighbour.getRenderOrigin())) {
                     infos.put(neighbour, discovered);
-                    long chunkKey = ChunkPos.asLong(neighbour.getOrigin());
+                    long chunkKey = ChunkPos.asLong(neighbour.getRenderOrigin());
                     List<SectionRenderDispatcher.RenderSection> unbuilt = unbuiltByChunk.get(chunkKey);
                     if (unbuilt == null) {
                         unbuilt = new ArrayList<>();

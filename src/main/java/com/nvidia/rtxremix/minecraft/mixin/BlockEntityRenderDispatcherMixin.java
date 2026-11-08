@@ -33,7 +33,7 @@ import org.spongepowered.asm.mixin.Mixin;
 public abstract class BlockEntityRenderDispatcherMixin {
 
     @WrapMethod(
-        method = "render(Lnet/minecraft/world/level/block/entity/BlockEntity;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;)V"
+        method = "submit(Lnet/minecraft/world/level/block/entity/BlockEntity;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;)V"
     )
     private <E extends BlockEntity> void rtxremix$captureBlockEntityInPlace(
             E be, float tickDelta, PoseStack matrices,

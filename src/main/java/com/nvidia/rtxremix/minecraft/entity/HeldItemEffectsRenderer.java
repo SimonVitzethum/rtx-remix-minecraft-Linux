@@ -10,11 +10,11 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.SpriteSet;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.block.model.BlockStateModel;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.particles.ParticleType;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.particles.SimpleParticleType;
@@ -84,7 +84,7 @@ public final class HeldItemEffectsRenderer {
      */
     public static void render(ItemStack stack, ItemDisplayContext mode,
                               PoseStack matrices, MultiBufferSource consumers,
-                              BakedModel model) {
+                              BlockStateModel model) {
         EntityRenderContext context = EntityRenderContext.get();
         if (!context.isRemixPass() || !HeldItemFlame.isHandMode(mode)) return;
         SimpleParticleType flameParticle = HeldItemFlame.particleFor(stack);

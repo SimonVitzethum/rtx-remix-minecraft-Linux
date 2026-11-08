@@ -226,7 +226,7 @@ public final class RemixBlockDamagePass {
 
         @Override
         public VertexConsumer setNormal(float x, float y, float z) {
-            Direction face = Direction.getNearest(x, y, z);
+            Direction face = Direction.getApproximateNearest(x, y, z);
             projected.set(this.x, this.y, this.z)
                     .rotateY(Mth.PI)
                     .rotateX(-Mth.HALF_PI)

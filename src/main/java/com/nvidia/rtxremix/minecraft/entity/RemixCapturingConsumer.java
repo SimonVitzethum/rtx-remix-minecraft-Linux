@@ -22,7 +22,7 @@ import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.texture.SpriteContents;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.Direction;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 /**
  * A {@link VertexConsumer} that captures vertex data for RTX Remix.
@@ -48,7 +48,7 @@ public class RemixCapturingConsumer implements VertexConsumer {
      */
     static final int MAX_VERTICES = 4096;
 
-    private ResourceLocation textureId;
+    private Identifier textureId;
     private RenderLayerUtils.Topology topology = RenderLayerUtils.Topology.QUADS;
     /**
      * Whether the layer streams its vertex content afresh every frame. Resolved with
@@ -193,11 +193,11 @@ public class RemixCapturingConsumer implements VertexConsumer {
      */
     private boolean recordParts;
 
-    public RemixCapturingConsumer(ResourceLocation textureId, boolean recordParts) {
+    public RemixCapturingConsumer(Identifier textureId, boolean recordParts) {
         this(textureId, recordParts, RenderLayerUtils.Topology.QUADS, false);
     }
 
-    public RemixCapturingConsumer(ResourceLocation textureId, boolean recordParts,
+    public RemixCapturingConsumer(Identifier textureId, boolean recordParts,
                                   RenderLayerUtils.Topology topology,
                                   boolean transientGeometry) {
         this.recordParts = recordParts;
@@ -207,7 +207,7 @@ public class RemixCapturingConsumer implements VertexConsumer {
     }
 
     /** Reinitialize a pooled consumer for a new layer. Must be called after clear(). */
-    public void reinit(ResourceLocation textureId, boolean recordParts,
+    public void reinit(Identifier textureId, boolean recordParts,
                        RenderLayerUtils.Topology topology,
                        boolean transientGeometry) {
         this.recordParts = recordParts;
@@ -883,7 +883,7 @@ public class RemixCapturingConsumer implements VertexConsumer {
         SpriteContents contents = sprite.contents();
         int[] rects = CARD_FACE_RECTS.get(contents);
         if (rects == null) {
-            rects = opaqueRects(opaqueTexels(contents), contents.width(), contents.height(),
+            rects = opaqueRects(opaqueTexels(contents), contents.getStartTimeNano(), contents.getStartTimeTicks(),
                     MAX_CARD_FACE_RECTS);
             CARD_FACE_RECTS.put(contents, rects == null ? BUSY_CARD : rects);
         }
@@ -895,8 +895,8 @@ public class RemixCapturingConsumer implements VertexConsumer {
      * ItemModelGenerator stands its slivers on, frames united the same way.
      */
     private static boolean[] opaqueTexels(SpriteContents contents) {
-        int w = contents.width();
-        int h = contents.height();
+        int w = contents.getStartTimeNano();
+        int h = contents.getStartTimeTicks();
         boolean[] opaque = new boolean[w * h];
         contents.getUniqueFrames().forEach(frame -> {
             for (int y = 0; y < h; y++) {
@@ -975,8 +975,8 @@ public class RemixCapturingConsumer implements VertexConsumer {
      */
     private void emitCardFaceRects(int[] vd, int[] rects, SpriteContents contents, int[] colors,
                                    float nx, float ny, float nz, int boundsMin, int boundsMax, int bone) {
-        int w = contents.width();
-        int h = contents.height();
+        int w = contents.getStartTimeNano();
+        int h = contents.getStartTimeTicks();
         float z = Float.intBitsToFloat(vd[2]);
         int[] cornerX = new int[4];
         int[] cornerY = new int[4];
@@ -1409,7 +1409,7 @@ public class RemixCapturingConsumer implements VertexConsumer {
     RemixVertexConsumerProvider.CapturedLayer capturedLayer() { return capturedLayer; }
     // ---- Accessors ----
 
-    public ResourceLocation getTextureId() { return textureId; }
+    public Identifier getTextureId() { return textureId; }
     public RenderLayerUtils.Topology getTopology() { return topology; }
     public boolean isTransientGeometry() { return transientGeometry; }
     public int getVertexCount() { return vertexCount; }

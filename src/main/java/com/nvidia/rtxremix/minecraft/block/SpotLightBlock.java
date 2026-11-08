@@ -12,8 +12,8 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.Item;
@@ -71,7 +71,7 @@ public abstract class SpotLightBlock extends DirectionalBlock implements Overrid
      * which is private in 1.21.1 and would otherwise need an access-widener entry.
      */
     private static final ResourceKey<CreativeModeTab> FUNCTIONAL_BLOCKS =
-            ResourceKey.create(Registries.CREATIVE_MODE_TAB, ResourceLocation.withDefaultNamespace("functional_blocks"));
+            ResourceKey.create(Registries.CREATIVE_MODE_TAB, Identifier.withDefaultNamespace("functional_blocks"));
 
     private final LightEntry.ColorOverride beamColor;
 
@@ -111,7 +111,7 @@ public abstract class SpotLightBlock extends DirectionalBlock implements Overrid
 
     /** Registers one variant, its item, and the creative tab entry. */
     private static void register(String path, SpotLightBlock block) {
-        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, path);
+        Identifier id = Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, path);
         Registry.register(BuiltInRegistries.BLOCK, id, block);
         BlockItem item = Registry.register(BuiltInRegistries.ITEM, id, new BlockItem(block, new Item.Properties()));
         ItemGroupEvents.modifyEntriesEvent(FUNCTIONAL_BLOCKS).register(entries -> entries.accept(item));

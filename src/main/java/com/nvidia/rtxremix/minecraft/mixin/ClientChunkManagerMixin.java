@@ -51,7 +51,7 @@ public abstract class ClientChunkManagerMixin {
      * the pass's pending notifications itself. This hook covers the kill-switch path and the
      * passes that publish a real copy.
      */
-    @Inject(method = "onLightUpdate", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getStartTimeNano(Lnet/minecraft/world/level/LightLayer;Lnet/minecraft/core/SectionPos;)V", at = @At("HEAD"), cancellable = true)
     private void rtxremix$skipLightOnlyRebuild(LightLayer type, SectionPos pos, CallbackInfo ci) {
         if (RtxRemixMod.isRtxEnabled()) {
             SkippedSectionRebuilds.recordLightOnly();

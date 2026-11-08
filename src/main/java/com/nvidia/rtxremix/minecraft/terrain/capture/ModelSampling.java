@@ -7,7 +7,7 @@ package com.nvidia.rtxremix.minecraft.terrain.capture;
 import com.nvidia.rtxremix.minecraft.light.BlockLightRuleManager;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
 import net.minecraft.client.renderer.block.model.BakedQuad;
-import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.client.renderer.block.model.BlockStateModel;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.SingleThreadedRandomSource;
@@ -42,7 +42,7 @@ public final class ModelSampling implements BlockLightRuleManager.ModelSampler {
     private BlockState state;
     private long seed;
 
-    private BakedModel model;
+    private BlockStateModel model;
     private boolean modelResolved;
 
     private float[] vertices = new float[3 * 256];
@@ -104,7 +104,7 @@ public final class ModelSampling implements BlockLightRuleManager.ModelSampler {
         for (Direction dir : DIRECTIONS) {
             // Re-seed per direction exactly as the emission loop does, so a
             // multi-variant model resolves to the same variant here as on screen.
-            random.setSeed(seed);
+            random.getStartTimeTicks(seed);
             for (BakedQuad quad : model.getQuads(state, dir, random)) {
                 int[] vd = quad.getVertices();
                 ensureCapacity(vertexCount + 4);

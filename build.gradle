@@ -8,7 +8,7 @@ import org.apache.tools.ant.filters.ReplaceTokens
 import org.gradle.process.ExecOperations
 
 plugins {
-    id 'fabric-loom' version '1.15.5'
+    id 'net.fabricmc.fabric-loom' version '1.17-SNAPSHOT'
     id 'java'
 }
 
@@ -128,10 +128,10 @@ repositories {
     }
 }
 
-// Minecraft 1.21.x requires Java 21
+// Minecraft 26.x requires Java 25
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
     withSourcesJar()
 }
@@ -147,17 +147,6 @@ sourceSets {
 
 loom {
     accessWidenerPath = file("src/main/resources/rtx-remix-renderer.accesswidener")
-
-    // Loom 1.15+ disabled the mixin annotation processor by default. We use
-    // mixins extensively (see src/main/resources/rtx-remix-renderer.mixins.json),
-    // so explicitly opt back into the legacy AP via the `mixin` extension's
-    // useLegacyMixinAp flag. The previous defaultRefmapName setting is no
-    // longer needed. Without it, Loom derives the refmap name from the
-    // project; our mixins.json doesn't reference the refmap by literal name,
-    // so the auto-derived name works fine.
-    mixin {
-        useLegacyMixinAp = true
-    }
 
     runs {
         client {
@@ -208,8 +197,8 @@ loom {
 // Fabric API (keep in sync with FABRIC_API_VERSION in packaging/installer.ps1,
 // which is what gets installed at runtime on the user's machine). One literal
 // serves both the compile dependency and stageFabricApi.
-def fabricApiCoordinate = "net.fabricmc.fabric-api:fabric-api:0.116.10+1.21.1"
-def fabricLoaderVersion = "0.16.5"
+def fabricApiCoordinate = "net.fabricmc.fabric-api:fabric-api:0.165.2+26.3"
+def fabricLoaderVersion = "0.19.5"
 
 configurations {
     fabricTestRuntime {
@@ -219,11 +208,10 @@ configurations {
 
 dependencies {
     // Minecraft and Fabric
-    minecraft "com.mojang:minecraft:1.21.1"
-    mappings "local.mojmap:mojmap:1.21.1:v2"
-    modImplementation "net.fabricmc:fabric-loader:${fabricLoaderVersion}"
+    minecraft "com.mojang:minecraft:26.3"
+    implementation "net.fabricmc:fabric-loader:${fabricLoaderVersion}"
 
-    modImplementation fabricApiCoordinate
+    implementation fabricApiCoordinate
 
     // Testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
@@ -274,7 +262,8 @@ processResources {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
-    options.release = 21
+    options.release = 25
+    options.compilerArgs += ["-Xmaxerrs", "20000"]
 }
 
 def isLinuxHost = System.getProperty("os.name", "").toLowerCase().contains("linux")
@@ -551,7 +540,7 @@ jar {
 // selected native payload, writing the distributable JAR to build/distributions.
 // Packaging therefore depends on an explicit task instead of guessing intent
 // from Gradle's command-line task names (`package` versus `:package`).
-def remapJarTask = tasks.named('remapJar')
+def remapJarTask = tasks.named('jar')
 def packageJarTask = tasks.register('packageJar', Zip) {
     description = 'Assembles the remapped distributable JAR with the selected platform SDKs bundled'
     group = 'build'

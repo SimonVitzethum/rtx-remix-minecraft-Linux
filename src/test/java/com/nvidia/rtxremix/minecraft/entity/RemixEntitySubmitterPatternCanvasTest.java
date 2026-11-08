@@ -7,7 +7,7 @@ package com.nvidia.rtxremix.minecraft.entity;
 import com.nvidia.rtxremix.InstanceCategoryBit;
 import com.nvidia.rtxremix.minecraft.entity.RemixEntitySubmitter.CanvasReader;
 import net.minecraft.client.model.geom.ModelPart;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.junit.jupiter.api.Test;
 
 import static com.nvidia.rtxremix.minecraft.entity.RemixBlockEntityPass.STATIC_WORLD_CANVASES;
@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 
+
 /**
  * Pins how banner and shield canvases are read off captured parts: which cuboid
  * is the dyed base, which are patterns, where one canvas ends and the next
@@ -32,12 +33,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class RemixEntitySubmitterPatternCanvasTest {
 
-    private static final ResourceLocation BANNER_ATLAS =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "textures/atlas/banner_patterns.png");
-    private static final ResourceLocation SHIELD_ATLAS =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "textures/atlas/shield_patterns.png");
-    private static final ResourceLocation CREEPER =
-            ResourceLocation.fromNamespaceAndPath("minecraft", "textures/entity/creeper/creeper.png");
+    private static final Identifier BANNER_ATLAS =
+            Identifier.fromNamespaceAndPath("minecraft", "textures/atlas/banner_patterns.png");
+    private static final Identifier SHIELD_ATLAS =
+            Identifier.fromNamespaceAndPath("minecraft", "textures/atlas/shield_patterns.png");
+    private static final Identifier CREEPER =
+            Identifier.fromNamespaceAndPath("minecraft", "textures/entity/creeper/creeper.png");
     private static final int WHITE = 0xFFFFFFFF;
 
     // Bones as a capture records them: every cuboid render pushes its own, so the

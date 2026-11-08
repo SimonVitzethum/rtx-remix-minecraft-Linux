@@ -13,8 +13,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import net.minecraft.client.renderer.chunk.RenderChunk;
-import net.minecraft.client.renderer.chunk.RenderChunkRegion;
+import net.minecraft.client.renderer.chunk.RenderSectionRegion;
+import net.minecraft.client.renderer.chunk.SectionCopy;
 import net.minecraft.world.level.Level;
 
 /**
@@ -22,18 +22,18 @@ import net.minecraft.world.level.Level;
  * until {@link #rtxremix$release}, which the rebuild task that consumed it calls exactly once;
  * see {@link RebuildTaskMixin}.
  */
-@Mixin(RenderChunkRegion.class)
+@Mixin(RenderSectionRegion.class)
 public abstract class ChunkRendererRegionMixin implements RegionSnapshotRelease {
 
     @Shadow
     @Final
-    protected RenderChunk[] chunks;
+    protected SectionCopy[] chunks;
 
     private final AtomicBoolean rtxremix$released = new AtomicBoolean();
 
     @Inject(method = "<init>", at = @At("RETURN"))
-    private void rtxremix$retainSnapshots(Level world, int chunkX, int chunkZ, RenderChunk[] renderedChunks, CallbackInfo ci) {
-        for (RenderChunk snapshot : chunks) {
+    private void rtxremix$retainSnapshots(Level world, int chunkX, int chunkZ, SectionCopy[] renderedChunks, CallbackInfo ci) {
+        for (SectionCopy snapshot : chunks) {
             ((RegionSnapshotRelease) snapshot).rtxremix$retain();
         }
     }
@@ -48,7 +48,7 @@ public abstract class ChunkRendererRegionMixin implements RegionSnapshotRelease 
         if (!rtxremix$released.compareAndSet(false, true)) {
             return;
         }
-        for (RenderChunk snapshot : chunks) {
+        for (SectionCopy snapshot : chunks) {
             ((RegionSnapshotRelease) snapshot).rtxremix$release();
         }
     }

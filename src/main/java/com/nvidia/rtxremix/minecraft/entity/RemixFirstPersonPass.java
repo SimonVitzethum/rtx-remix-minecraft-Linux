@@ -23,7 +23,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.phys.Vec3;
@@ -286,8 +286,8 @@ public final class RemixFirstPersonPass implements AutoCloseable {
      */
     private static void setCameraToWorld(Camera camera, Transform transform) {
         Vec3 pos = camera.getPosition();
-        float yawRad = (float) Math.toRadians(-camera.getYRot());
-        float pitchRad = (float) Math.toRadians(camera.getXRot());
+        float yawRad = (float) Math.toRadians(-camera.yRot());
+        float pitchRad = (float) Math.toRadians(camera.xRot());
 
         float forwardX = (float) (Math.sin(yawRad) * Math.cos(pitchRad));
         float forwardY = (float) (-Math.sin(pitchRad));

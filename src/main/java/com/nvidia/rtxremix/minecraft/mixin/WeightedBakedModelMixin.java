@@ -14,8 +14,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.util.Collections;
 import java.util.List;
 import net.minecraft.client.renderer.block.model.BakedQuad;
-import net.minecraft.client.resources.model.BakedModel;
-import net.minecraft.client.resources.model.WeightedBakedModel;
+import net.minecraft.client.renderer.block.model.BlockStateModel;
+import net.minecraft.client.resources.model.WeightedVariants;
 import net.minecraft.core.Direction;
 import net.minecraft.util.RandomSource;
 import net.minecraft.util.random.WeightedEntry;
@@ -33,7 +33,7 @@ import net.minecraft.world.level.block.state.BlockState;
  * none; a JFR allocation profile shows no remaining allocation at this site once the
  * builders are compiled.
  */
-@Mixin(WeightedBakedModel.class)
+@Mixin(WeightedVariants.class)
 public abstract class WeightedBakedModelMixin {
 
     @Shadow
@@ -42,19 +42,19 @@ public abstract class WeightedBakedModelMixin {
 
     @Shadow
     @Final
-    private List<WeightedEntry.Wrapper<BakedModel>> list;
+    private List<WeightedEntry.Wrapper<BlockStateModel>> list;
 
-    @Inject(method = "getQuads", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getStartTimeNano(Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/core/Direction;Lnet/minecraft/util/RandomSource;)Ljava/util/List;", at = @At("HEAD"), cancellable = true)
     private void rtxremix$getQuads(
             BlockState state,
             Direction face,
             RandomSource random,
             CallbackInfoReturnable<List<BakedQuad>> cir) {
         int remaining = Math.abs((int) random.nextLong()) % totalWeight;
-        List<WeightedEntry.Wrapper<BakedModel>> variants = list;
+        List<WeightedEntry.Wrapper<BlockStateModel>> variants = list;
         for (int i = 0, n = variants.size(); i < n; i++) {
-            WeightedEntry.Wrapper<BakedModel> variant = variants.get(i);
-            remaining -= variant.getWeight().asInt();
+            WeightedEntry.Wrapper<BlockStateModel> variant = variants.get(i);
+            remaining -= variant.getStartTimeNano().asInt();
             if (remaining < 0) {
                 cir.setReturnValue(variant.data().getQuads(state, face, random));
                 return;

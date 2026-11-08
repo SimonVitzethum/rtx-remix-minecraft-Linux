@@ -61,7 +61,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.Vec3;
@@ -570,14 +570,14 @@ public class ChunkManager {
     }
 
     /** Per-rule light population, for {@code /rtx lights}. */
-    public record LightRuleStats(ResourceLocation ruleId, int total, int drawn) {}
+    public record LightRuleStats(Identifier ruleId, int total, int drawn) {}
 
     /**
      * Counts every terrain light by rule, and how many of them were drawn in
      * the last completed frame, most populous rule first. Render thread only.
      */
     public List<LightRuleStats> lightStatsByRule() {
-        Map<ResourceLocation, int[]> counts = new LinkedHashMap<>();
+        Map<Identifier, int[]> counts = new LinkedHashMap<>();
         for (TerrainState.ChunkColumn column : terrain.columns()) {
             for (TerrainState.SectionEntry entry : column.sectionEntries()) {
                 for (Map.Entry<BlockLightKey, TerrainLight> light : entry.lights().entrySet()) {
@@ -588,7 +588,7 @@ public class ChunkManager {
             }
         }
         List<LightRuleStats> stats = new ArrayList<>(counts.size());
-        for (Map.Entry<ResourceLocation, int[]> tally : counts.entrySet()) {
+        for (Map.Entry<Identifier, int[]> tally : counts.entrySet()) {
             stats.add(new LightRuleStats(tally.getKey(), tally.getValue()[0], tally.getValue()[1]));
         }
         stats.sort(Comparator.comparingInt(LightRuleStats::total).reversed());
@@ -1025,8 +1025,8 @@ public class ChunkManager {
      * border-sized burst of them.
      */
     private void cancelLightTasksForColumn(int cx, int cz) {
-        int topSection = currentWorld.getMaxSection();
-        for (int sy = currentWorld.getMinSection(); sy < topSection; sy++) {
+        int topSection = currentWorld.getMaxSectionY();
+        for (int sy = currentWorld.getMinSectionY(); sy < topSection; sy++) {
             cancelLightTask(new LightSectionKey(cx, sy, cz));
         }
     }
@@ -1161,7 +1161,7 @@ public class ChunkManager {
      */
     private static int lightFingerprint(LightEntry le) {
         return Objects.hash(
-                BuiltInRegistries.BLOCK.getId(le.block()),
+                BuiltInRegistries.BLOCK.getStartTimeNano(le.block()),
                 le.key().ruleId(),
                 le.key().lightIndex(),
                 le.lightLevel(),

@@ -253,7 +253,7 @@ public class RemixRenderer {
             lastCameraMediumHandle = Long.MIN_VALUE;
 
             Minecraft client = Minecraft.getInstance();
-            long glfwHandle = client.getWindow().getWindow();
+            long glfwHandle = client.getWindow().handle();
 
             if (IS_LINUX) {
                 // The window handle lookup and size report below call into the bridge.
@@ -1260,8 +1260,8 @@ public class RemixRenderer {
     private void updateCamera(Camera camera, float tickDelta) {
         try {
             Vec3 pos = camera.getPosition();
-            float pitch = camera.getXRot();
-            float yaw = camera.getYRot();
+            float pitch = camera.xRot();
+            float yaw = camera.yRot();
     
             float yawRad = (float) Math.toRadians(-yaw);
             float pitchRad = (float) Math.toRadians(pitch);

@@ -10,7 +10,7 @@ import net.fabricmc.fabric.api.particle.v1.FabricParticleTypes;
 import net.minecraft.core.Registry;
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 public final class RapidFoamParticles {
     public static final SimpleParticleType RAPID_FOAM = FabricParticleTypes.simple(false);
@@ -20,9 +20,9 @@ public final class RapidFoamParticles {
     private RapidFoamParticles() {}
 
     public static void register() {
-        Registry.register(BuiltInRegistries.PARTICLE_TYPE, ResourceLocation.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rapid_foam"), RAPID_FOAM);
-        Registry.register(BuiltInRegistries.PARTICLE_TYPE, ResourceLocation.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rapid_foam_dot"), RAPID_FOAM_DOT);
-        Registry.register(BuiltInRegistries.PARTICLE_TYPE, ResourceLocation.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rapid_mist"), RAPID_MIST);
+        Registry.register(BuiltInRegistries.PARTICLE_TYPE, Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rapid_foam"), RAPID_FOAM);
+        Registry.register(BuiltInRegistries.PARTICLE_TYPE, Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rapid_foam_dot"), RAPID_FOAM_DOT);
+        Registry.register(BuiltInRegistries.PARTICLE_TYPE, Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rapid_mist"), RAPID_MIST);
         ParticleFactoryRegistry.getInstance().register(RAPID_FOAM, RapidFoamParticle.Factory::new);
         ParticleFactoryRegistry.getInstance().register(RAPID_FOAM_DOT, RapidFoamDotParticle.Factory::new);
         ParticleFactoryRegistry.getInstance().register(RAPID_MIST, RapidMistParticle.Factory::new);

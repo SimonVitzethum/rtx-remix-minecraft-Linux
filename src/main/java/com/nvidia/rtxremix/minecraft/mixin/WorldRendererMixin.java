@@ -60,16 +60,16 @@ import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
 import net.minecraft.client.renderer.chunk.RenderRegionCache;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.BlockDestructionProgress;
 import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.entity.Entity;
@@ -158,7 +158,7 @@ public abstract class WorldRendererMixin
     private int rtxremix$blockEntityChunkBufferUsed;
     private final BuiltChunkArrayIterator rtxremix$blockEntityChunkIterator = new BuiltChunkArrayIterator();
     private RemixWeatherRenderer rtxremix$weatherRenderer;
-    private ResourceLocation rtxremix$weatherTexture;
+    private Identifier rtxremix$weatherTexture;
     private float[] rtxremix$starVertices = new float[0];
 
     @Override
@@ -261,7 +261,7 @@ public abstract class WorldRendererMixin
             if (builtChunk.getCompiled() == SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
                 continue;
             }
-            BlockPos origin = builtChunk.getOrigin();
+            BlockPos origin = builtChunk.getRenderOrigin();
             built.add(SectionPos.asLong(
                     SectionPos.blockToSectionCoord(origin.getX()),
                     SectionPos.blockToSectionCoord(origin.getY()),
@@ -283,7 +283,7 @@ public abstract class WorldRendererMixin
 
         ArrayList<SectionRenderDispatcher.RenderSection> loadedSections = new ArrayList<>();
         for (SectionRenderDispatcher.RenderSection builtChunk : viewArea.sections) {
-            BlockPos origin = builtChunk.getOrigin();
+            BlockPos origin = builtChunk.getRenderOrigin();
             int cx = SectionPos.blockToSectionCoord(origin.getX());
             int sy = SectionPos.blockToSectionCoord(origin.getY());
             int cz = SectionPos.blockToSectionCoord(origin.getZ());
@@ -304,7 +304,7 @@ public abstract class WorldRendererMixin
         double cameraY = camera.getPosition().y;
         double cameraZ = camera.getPosition().z;
         loadedSections.sort(Comparator.comparingDouble(builtChunk -> {
-            BlockPos origin = builtChunk.getOrigin();
+            BlockPos origin = builtChunk.getRenderOrigin();
             double dx = origin.getX() + 8.0 - cameraX;
             double dy = origin.getY() + 8.0 - cameraY;
             double dz = origin.getZ() + 8.0 - cameraZ;
@@ -319,7 +319,7 @@ public abstract class WorldRendererMixin
                 // Prevent WorldRenderer.updateChunks from queueing this same slot a
                 // second time when it next walks vanilla's visible section list.
                 builtChunk.setNotDirty();
-                BlockPos origin = builtChunk.getOrigin();
+                BlockPos origin = builtChunk.getRenderOrigin();
                 queued.add(SectionPos.asLong(
                         SectionPos.blockToSectionCoord(origin.getX()),
                         SectionPos.blockToSectionCoord(origin.getY()),
@@ -564,11 +564,11 @@ public abstract class WorldRendererMixin
             method = "renderSnowAndRain",
             at = @At(
                     value = "INVOKE",
-                    target = "Lcom/mojang/blaze3d/systems/RenderSystem;setShaderTexture(ILnet/minecraft/resources/ResourceLocation;)V"
+                    target = "Lcom/mojang/blaze3d/systems/RenderSystem;setShaderTexture(ILnet/minecraft/resources/Identifier;)V"
             ))
     private void rtxremix$captureWeatherTexture(
             int textureUnit,
-            ResourceLocation texture,
+            Identifier texture,
             Operation<Void> original) {
         if (rtxremix$weatherRenderer != null && textureUnit == 0) {
             rtxremix$weatherTexture = texture;

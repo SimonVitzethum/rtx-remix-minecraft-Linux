@@ -4,13 +4,13 @@
  */
 package com.nvidia.rtxremix.minecraft.sky;
 
+import com.mojang.blaze3d.opengl.GlProgram;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.nvidia.rtxremix.minecraft.light.LightManager.SkyLightState;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import net.minecraft.client.renderer.ShaderInstance;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL;
@@ -211,7 +211,7 @@ final class AtmosphericSkyGenerator {
             }
         }
 
-        ShaderInstance previousProgram;
+        GlProgram previousProgram;
         try (ProfileScope ignored =
                 ProfileScope.begin("Sky.ProceduralGeneration.StateSave")) {
             previousProgram = RenderSystem.isOnRenderThread()

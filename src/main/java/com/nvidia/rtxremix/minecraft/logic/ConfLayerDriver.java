@@ -305,7 +305,7 @@ public final class ConfLayerDriver {
                 continue;
             }
             try {
-                names.add(((ResourceKey<?>) field.get(null)).location().getPath());
+                names.add(((ResourceKey<?>) field.get(null)).identifier().getPath());
             } catch (IllegalAccessException e) {
                 throw new AssertionError("BiomeKeys public field not readable: " + field.getName(), e);
             }
@@ -735,8 +735,8 @@ public final class ConfLayerDriver {
         // target its authored layer when one was discovered. An unconfigured
         // or modded biome targets every discovered biome layer back to 0.
         String biomeLayerName = world.getBiome(BlockPos.containing(cameraPos)).unwrapKey()
-                .filter(key -> "minecraft".equals(key.location().getNamespace()))
-                .map(key -> LogicChannels.BIOME_PREFIX + key.location().getPath())
+                .filter(key -> "minecraft".equals(key.identifier().getNamespace()))
+                .map(key -> LogicChannels.BIOME_PREFIX + key.identifier().getPath())
                 .orElse(null);
         for (LayerState layer : biomeLayers) {
             layer.target = layer.spec.name().equals(biomeLayerName) ? 1.0f : 0.0f;

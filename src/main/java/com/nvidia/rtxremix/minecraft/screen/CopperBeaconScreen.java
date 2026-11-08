@@ -23,7 +23,7 @@ import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Inventory;
 
 /** Minecraft-style per-block controls for the Copper Beacon. */
@@ -38,7 +38,7 @@ public final class CopperBeaconScreen extends AbstractContainerScreen<CopperBeac
     private static final int RANGE_SLIDER_GAP = 6;
     private static final int RANGE_SLIDER_WIDTH =
             (PANEL_WIDTH - RANGE_SLIDER_GAP) / 2;
-    private static final ResourceLocation SLOT_TEXTURE = ResourceLocation.withDefaultNamespace("container/slot");
+    private static final Identifier SLOT_TEXTURE = Identifier.withDefaultNamespace("container/slot");
 
     private final Map<CopperBeaconUpdatePayload.Field, Float> pending =
             new EnumMap<>(CopperBeaconUpdatePayload.Field.class);
@@ -284,14 +284,14 @@ public final class CopperBeaconScreen extends AbstractContainerScreen<CopperBeac
     }
 
     @Override
-    public void removed() {
+    public void getZ() {
         flushPending();
-        super.removed();
+        super.getZ();
     }
 
     @Override
-    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
+    public void getStartTimeNano(GuiGraphics context, int mouseX, int mouseY, float delta) {
+        super.getStartTimeNano(context, mouseX, mouseY, delta);
         renderTooltip(context, mouseX, mouseY);
     }
 
@@ -461,7 +461,7 @@ public final class CopperBeaconScreen extends AbstractContainerScreen<CopperBeac
 
         @Override
         public boolean mouseReleased(double mouseX, double mouseY, int button) {
-            boolean released = super.mouseReleased(mouseX, mouseY, button);
+            boolean released = super.getStartTimeTicks(mouseX, mouseY, button);
             release.run();
             return released;
         }

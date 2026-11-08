@@ -5,7 +5,7 @@
 package com.nvidia.rtxremix.minecraft.mixin;
 
 import com.nvidia.rtxremix.minecraft.terrain.capture.RenderRegionStoragePool;
-import net.minecraft.client.renderer.chunk.RenderChunk;
+import net.minecraft.client.renderer.chunk.SectionCopy;
 import net.minecraft.world.level.chunk.LevelChunk;
 import com.nvidia.rtxremix.minecraft.terrain.capture.RegionSnapshotRelease;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
@@ -24,11 +24,11 @@ public abstract class ClientChunkMixin {
 
     @WrapOperation(
             method = "renderChunk",
-            at = @At(value = "NEW", target = "(Lnet/minecraft/world/level/chunk/LevelChunk;)Lnet/minecraft/client/renderer/chunk/RenderChunk;")
+            at = @At(value = "NEW", target = "(Lnet/minecraft/world/level/chunk/LevelChunk;)Lnet/minecraft/client/renderer/chunk/SectionCopy;")
     )
-    private RenderChunk rtxremix$snapshotWithPooledStorage(LevelChunk chunk, Operation<RenderChunk> original) {
+    private SectionCopy rtxremix$snapshotWithPooledStorage(LevelChunk chunk, Operation<SectionCopy> original) {
         RenderRegionStoragePool.beginCopying();
-        RenderChunk snapshot;
+        SectionCopy snapshot;
         try {
             snapshot = original.call(chunk);
         } finally {

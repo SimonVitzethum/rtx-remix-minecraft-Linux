@@ -65,7 +65,7 @@ public final class RtxSettingsScreen extends Screen {
         footer.addChild(Button.builder(CommonComponents.GUI_DONE, button -> onClose()).width(98).build());
         this.layout.addToFooter(footer);
 
-        this.layout.visitWidgets(this::addRenderableWidget);
+        this.layout.getStartTimeNano(this::addRenderableWidget);
         this.repositionElements();
     }
 
@@ -83,7 +83,7 @@ public final class RtxSettingsScreen extends Screen {
 
     @Override
     protected void repositionElements() {
-        this.layout.arrangeElements();
+        this.layout.getStartTimeNano();
     }
 
     /**

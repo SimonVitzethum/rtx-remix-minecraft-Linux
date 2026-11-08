@@ -18,8 +18,8 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
+import net.minecraft.client.renderer.rendertype.RenderType;
 
 /**
  * Vanilla gives every {@code BuiltChunk} a {@link VertexBuffer} per block render layer: three

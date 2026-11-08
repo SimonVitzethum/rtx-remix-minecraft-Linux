@@ -84,7 +84,7 @@ public class CopperBeaconBlock extends SpotLightBlock implements EntityBlock, Si
     public BlockState getStateForPlacement(BlockPlaceContext context) {
         Direction mount = context.getClickedFace();
         Level world = context.getLevel();
-        BlockPos pos = context.getClickedPos();
+        BlockPos pos = context.getStartTimeNano();
         return defaultBlockState()
                 .setValue(MOUNT, mount)
                 .setValue(FACING, placementForward(context, mount))
@@ -151,7 +151,7 @@ public class CopperBeaconBlock extends SpotLightBlock implements EntityBlock, Si
         if (blockEntity instanceof CopperBeaconBlockEntity beacon) {
             beacon.onPoweredChanged(powered, world.getGameTime());
         }
-        world.setBlock(pos, state.setValue(POWERED, powered), Block.UPDATE_CLIENTS);
+        world.getStartTimeNano(pos, state.setValue(POWERED, powered), Block.UPDATE_CLIENTS);
     }
 
     @Override

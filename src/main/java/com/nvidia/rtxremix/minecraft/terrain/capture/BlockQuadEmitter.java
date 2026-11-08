@@ -15,15 +15,15 @@ import net.fabricmc.fabric.api.renderer.v1.model.FabricBakedModel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.renderer.ItemBlockRenderTypes;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
 import net.minecraft.client.renderer.block.model.BakedQuad;
+import net.minecraft.client.renderer.block.model.BlockStateModel;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
@@ -136,7 +136,7 @@ public final class BlockQuadEmitter {
     private long modelRandomSeed = 42L;
 
     private final Supplier<RandomSource> randomSupplier = () -> {
-        random.setSeed(modelRandomSeed);
+        random.getStartTimeTicks(modelRandomSeed);
         return random;
     };
 
@@ -351,7 +351,7 @@ public final class BlockQuadEmitter {
             lz += (float) modelOffset.z;
         }
 
-        BakedModel model = blockRenderManager.getBlockModel(state);
+        BlockStateModel model = blockRenderManager.getBlockModel(state);
         String layerName = classifyBlockLayer(state);
 
         if (model instanceof FabricBakedModel fbm && !fbm.isVanillaAdapter()) {
@@ -394,7 +394,7 @@ public final class BlockQuadEmitter {
     }
 
     private void emitVanillaBlock(BlockAndTintGetter world, BlockState state,
-                                   BakedModel model, String layerName,
+                                   BlockStateModel model, String layerName,
                                    float lx, float ly, float lz) {
 
         for (Direction dir : ALL_DIRECTIONS) {
@@ -402,7 +402,7 @@ public final class BlockQuadEmitter {
                 continue;
             }
 
-            random.setSeed(modelRandomSeed);
+            random.getStartTimeTicks(modelRandomSeed);
             List<BakedQuad> bakedQuads = model.getQuads(state, dir, random);
 
             for (BakedQuad bq : bakedQuads) {
@@ -449,7 +449,7 @@ public final class BlockQuadEmitter {
         }
 
         TextureAtlasSprite sprite = bq.getSprite();
-        ResourceLocation spriteId = sprite != null ? sprite.contents().name() : null;
+        Identifier spriteId = sprite != null ? sprite.contents().getEndTimeNano() : null;
         if (isWaterSprite(spriteId)) {
             emitBlockWaterQuad(nx, ny, nz, color, layerName);
             return;
@@ -463,11 +463,11 @@ public final class BlockQuadEmitter {
                 spriteId, su0, sv0, su1, sv1, layerName);
     }
 
-    private static final ResourceLocation WATER_STILL_SPRITE = ResourceLocation.withDefaultNamespace("block/water_still");
-    private static final ResourceLocation WATER_FLOW_SPRITE = ResourceLocation.withDefaultNamespace("block/water_flow");
+    private static final Identifier WATER_STILL_SPRITE = Identifier.withDefaultNamespace("block/water_still");
+    private static final Identifier WATER_FLOW_SPRITE = Identifier.withDefaultNamespace("block/water_flow");
 
     /** A block-model face painted with the water texture: the cauldron's water level is the vanilla case. */
-    static boolean isWaterSprite(ResourceLocation spriteId) {
+    static boolean isWaterSprite(Identifier spriteId) {
         return WATER_STILL_SPRITE.equals(spriteId) || WATER_FLOW_SPRITE.equals(spriteId);
     }
 
@@ -510,15 +510,15 @@ public final class BlockQuadEmitter {
     }
 
     private void emitFrapiBlock(BlockAndTintGetter world, BlockState state,
-                                 BakedModel model, FabricBakedModel fbm,
+                                 BlockStateModel model, FabricBakedModel fbm,
                                  String layerName, float lx, float ly, float lz) {
 
         frapiState = state;
         frapiWorld = world;
 
-        renderContext.prepare(world, state, mutablePos.immutable(), this::frapiCullTest);
+        renderContext.prepare(world, state, mutablePos.getZ(), this::frapiCullTest);
 
-        fbm.emitBlockQuads(world, state, mutablePos.immutable(), randomSupplier, renderContext);
+        fbm.emitBlockQuads(world, state, mutablePos.getZ(), randomSupplier, renderContext);
 
         List<SectionBlockData.BlockQuad> frapiQuads = renderContext.harvest();
         for (SectionBlockData.BlockQuad fq : frapiQuads) {
@@ -577,11 +577,11 @@ public final class BlockQuadEmitter {
         TextureAtlasSprite stillSprite = fluidSprites[0];
         TextureAtlasSprite flowSprite = fluidSprites[1];
 
-        ResourceLocation stillId = stillSprite.contents().name();
+        Identifier stillId = stillSprite.contents().getEndTimeNano();
         float su0 = stillSprite.getU0(), sv0 = stillSprite.getV0();
         float su1 = stillSprite.getU1(), sv1 = stillSprite.getV1();
 
-        ResourceLocation flowId = flowSprite.contents().name();
+        Identifier flowId = flowSprite.contents().getEndTimeNano();
         float fu0 = flowSprite.getU0(), fv0 = flowSprite.getV0();
         float fu1 = flowSprite.getU1(), fv1 = flowSprite.getV1();
 
@@ -766,7 +766,7 @@ public final class BlockQuadEmitter {
         if (!neighborOpaque) return false;
 
         VoxelShape fluidShape = Shapes.box(0.0, 0.0, 0.0, 1.0, fluidHeight, 1.0);
-        return Shapes.blockOccudes(fluidShape, neighborShape, direction);
+        return Shapes.blockOccludes(fluidShape, neighborShape, direction);
     }
 
     private FluidTopOcclusion.Exposure classifyWaterTopExposure(

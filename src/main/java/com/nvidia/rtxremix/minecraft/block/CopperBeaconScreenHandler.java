@@ -9,7 +9,7 @@ import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
@@ -46,7 +46,7 @@ public final class CopperBeaconScreenHandler extends AbstractContainerMenu {
     public static void register() {
         Registry.register(
                 BuiltInRegistries.MENU,
-                ResourceLocation.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, CopperBeaconBlock.ID),
+                Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, CopperBeaconBlock.ID),
                 TYPE);
     }
 

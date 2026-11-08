@@ -24,8 +24,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LightTexture;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.util.Mth;
@@ -761,7 +761,7 @@ public class RemixEntityPass {
         int boneCount = ctx.getBoneCount();
 
         String typeKey = entityTypeKeyCache.computeIfAbsent(entity.getType(),
-                t -> BuiltInRegistries.ENTITY_TYPE.getKey(t).toString());
+                t -> BuiltInRegistries.ENTITY_TYPE.getStartTimeTicks(t).toString());
 
         return new EntityCaptureResult(
             entity,

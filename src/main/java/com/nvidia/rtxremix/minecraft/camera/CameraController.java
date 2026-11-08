@@ -136,7 +136,7 @@ public final class CameraController {
             }
             recordingHudTicks++;
             if (client.player != null && recordingHudTicks % 20 == 0) {
-                client.player.displayClientMessage(Component.literal("[Camera] " + status()), true);
+                client.player.getStartTimeNano(Component.literal("[Camera] " + status()), true);
             }
         }
 
@@ -272,7 +272,7 @@ public final class CameraController {
 
         if (client.level != null) {
             return "world-" + safePathComponent(
-                    client.level.dimension().location().toString(),
+                    client.level.dimension().identifier().toString(),
                     "unknown-dimension"
             );
         }
@@ -838,7 +838,7 @@ public final class CameraController {
             return;
         }
         LocalPlayer player = client.player;
-        player.moveTo(shot.x(), shot.y(), shot.z(), shot.yaw(), shot.pitch());
+        player.snapTo(shot.x(), shot.y(), shot.z(), shot.yaw(), shot.pitch());
         player.setDeltaMovement(0.0, 0.0, 0.0);
         applyTimeOfDay(client, shot.timeOfDay());
     }
@@ -859,7 +859,7 @@ public final class CameraController {
             if (serverPlayer == null) {
                 return;
             }
-            serverPlayer.teleportTo(serverPlayer.serverLevel(),
+            serverPlayer.teleportTo(serverPlayer.level(),
                     shot.x(), shot.y(), shot.z(), shot.yaw(), shot.pitch());
             serverPlayer.setDeltaMovement(0.0, 0.0, 0.0);
         });
@@ -1196,7 +1196,7 @@ public final class CameraController {
         // Keep Minecraft's previous/current entity transforms identical so
         // Camera.update() does not interpolate that pose a second time against
         // the 20 Hz client-tick history.
-        player.moveTo(
+        player.snapTo(
                 sample.x(),
                 sample.y(),
                 sample.z(),

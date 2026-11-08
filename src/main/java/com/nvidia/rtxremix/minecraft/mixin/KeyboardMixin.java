@@ -39,7 +39,7 @@ public class KeyboardMixin implements RemixKeyboardAccess {
     private long debugCrashKeyReportedCount;
 
     @Shadow
-    private boolean handledDebugKey;
+    private boolean usedDebugKeyAsModifier;
 
     @Inject(method = "keyPress", at = @At("HEAD"), cancellable = true)
     private void rtxremix$onKey(long window, int key, int scancode, int action, int mods, CallbackInfo ci) {
@@ -96,6 +96,6 @@ public class KeyboardMixin implements RemixKeyboardAccess {
         debugCrashKeyTime = -1L;
         debugCrashKeyReportedTime = -1L;
         debugCrashKeyReportedCount = -1L;
-        handledDebugKey = false;
+        usedDebugKeyAsModifier = false;
     }
 }

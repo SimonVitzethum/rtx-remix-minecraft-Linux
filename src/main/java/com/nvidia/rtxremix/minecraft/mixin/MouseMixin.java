@@ -37,7 +37,7 @@ public abstract class MouseMixin implements RemixMouseAccess {
     private int clickDepth;
 
     @Shadow
-    private void onPress(long window, int button, int action, int mods) { }
+    private void onButton(long window, int button, int action, int mods) { }
 
     private boolean rtxremix$releasingActiveButton;
 
@@ -51,7 +51,7 @@ public abstract class MouseMixin implements RemixMouseAccess {
         clickDepth = minecraft.options.touchscreen().get() ? 1 : 0;
         rtxremix$releasingActiveButton = true;
         try {
-            onPress(minecraft.getWindow().getWindow(), activeButton, GLFW.GLFW_RELEASE, 0);
+            onButton(minecraft.getWindow().handle(), activeButton, GLFW.GLFW_RELEASE, 0);
         } finally {
             rtxremix$releasingActiveButton = false;
         }
@@ -102,7 +102,7 @@ public abstract class MouseMixin implements RemixMouseAccess {
         }
     }
 
-    @Inject(method = "onPress", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "onButton", at = @At("HEAD"), cancellable = true)
     private void rtxremix$blockClickWhileMenuOpen(long window, int button, int action, int mods, CallbackInfo ci) {
         boolean syntheticRelease = rtxremix$releasingActiveButton
                 && action == GLFW.GLFW_RELEASE

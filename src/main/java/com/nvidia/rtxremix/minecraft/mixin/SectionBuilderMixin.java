@@ -7,7 +7,7 @@ package com.nvidia.rtxremix.minecraft.mixin;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import net.minecraft.client.renderer.SectionBufferBuilderPack;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
-import net.minecraft.client.renderer.chunk.RenderChunkRegion;
+import net.minecraft.client.renderer.chunk.RenderSectionRegion;
 import net.minecraft.client.renderer.chunk.SectionCompiler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
@@ -86,7 +86,7 @@ public class SectionBuilderMixin {
     @Inject(method = "compile", at = @At("HEAD"))
     private void rtxremix$onBuildHead(
             SectionPos sectionPos,
-            RenderChunkRegion renderRegion,
+            RenderSectionRegion renderRegion,
             VertexSorting vertexSorter,
             SectionBufferBuilderPack allocatorStorage,
             CallbackInfoReturnable<SectionCompiler.Results> cir) {
@@ -164,7 +164,7 @@ public class SectionBuilderMixin {
     @Inject(method = "compile", at = @At("RETURN"))
     private void rtxremix$onBuildReturn(
             SectionPos sectionPos,
-            RenderChunkRegion renderRegion,
+            RenderSectionRegion renderRegion,
             VertexSorting vertexSorter,
             SectionBufferBuilderPack allocatorStorage,
             CallbackInfoReturnable<SectionCompiler.Results> cir) {

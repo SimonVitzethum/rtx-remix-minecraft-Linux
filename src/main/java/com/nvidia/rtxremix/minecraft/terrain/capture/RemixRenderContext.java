@@ -11,11 +11,11 @@ import net.fabricmc.fabric.api.renderer.v1.mesh.QuadEmitter;
 import net.fabricmc.fabric.api.renderer.v1.mesh.QuadView;
 import net.fabricmc.fabric.api.renderer.v1.render.RenderContext;
 import net.minecraft.client.renderer.block.model.BakedQuad;
+import net.minecraft.client.renderer.block.model.BlockStateModel;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.BlockAndTintGetter;
 import net.minecraft.world.level.block.state.BlockState;
@@ -113,12 +113,12 @@ final class RemixRenderContext implements RenderContext {
     public BakedModelConsumer bakedModelConsumer() {
         return new BakedModelConsumer() {
             @Override
-            public void accept(BakedModel model) {
+            public void accept(BlockStateModel model) {
                 accept(model, RemixRenderContext.this.state);
             }
 
             @Override
-            public void accept(BakedModel model, @Nullable BlockState state) {
+            public void accept(BlockStateModel model, @Nullable BlockState state) {
                 if (state == null) state = RemixRenderContext.this.state;
 
                 // Vanilla's per-position model-randomisation seed, matching
@@ -218,10 +218,10 @@ final class RemixRenderContext implements RenderContext {
             int capturedColorIndex = materialVal != null && materialVal.disableColorIndex()
                     ? -1 : colorIndexVal;
 
-            ResourceLocation spriteId = null;
+            Identifier spriteId = null;
             float su0 = 0, sv0 = 0, su1 = 1, sv1 = 1;
             if (bakedSprite != null) {
-                spriteId = bakedSprite.contents().name();
+                spriteId = bakedSprite.contents().getEndTimeNano();
                 su0 = bakedSprite.getU0();
                 sv0 = bakedSprite.getV0();
                 su1 = bakedSprite.getU1();
@@ -555,7 +555,7 @@ final class RemixRenderContext implements RenderContext {
         @Override
         public Direction lightFace() {
             if (nominalFaceVal != null) return nominalFaceVal;
-            return Direction.getNearest(faceNormal().x(), faceNormal().y(), faceNormal().z());
+            return Direction.getApproximateNearest(faceNormal().x(), faceNormal().y(), faceNormal().z());
         }
 
         @Override public @Nullable Direction nominalFace() { return nominalFaceVal; }

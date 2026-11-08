@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 @Mixin(Deadmau5EarsLayer.class)
 public abstract class Deadmau5FeatureRendererMixin {
     @Redirect(
-            method = "render(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;ILnet/minecraft/client/player/AbstractClientPlayer;FFFFFF)V",
+            method = "submit(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;ILnet/minecraft/client/player/AbstractClientPlayer;FFFFFF)V",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/AbstractClientPlayer;getName()Lnet/minecraft/network/chat/Component;"))
     private Component rtxremix$cachedName(AbstractClientPlayer player) {
         return ((PlayerNameText) player).rtxremix$nameText();

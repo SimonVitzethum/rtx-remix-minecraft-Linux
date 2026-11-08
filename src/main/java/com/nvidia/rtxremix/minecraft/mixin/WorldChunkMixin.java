@@ -45,7 +45,7 @@ public abstract class WorldChunkMixin {
             original.call(self);
             return;
         }
-        ((SkyLightSurfaceAccess) self.getSkyLightSources())
+        ((SkyLightSurfaceAccess) self.pollTask())
                 .rtxremix$refreshSurfaceY(self, self.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE));
         // Counted only while capture is on, like the paced-chunk counters: the terrain
         // counters that drain it run only while capture and world rendering are on, and

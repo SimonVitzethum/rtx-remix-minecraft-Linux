@@ -594,7 +594,7 @@ public class BenchmarkController {
 
     private void notifyPlayer(Minecraft client, String message) {
         if (client.player != null) {
-            client.player.displayClientMessage(Component.literal("[Benchmark] " + message), false);
+            client.player.getStartTimeNano(Component.literal("[Benchmark] " + message), false);
         }
     }
 

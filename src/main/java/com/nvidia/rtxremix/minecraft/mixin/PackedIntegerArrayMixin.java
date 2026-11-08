@@ -32,7 +32,7 @@ public abstract class PackedIntegerArrayMixin {
     @Final
     private int size;
 
-    @Inject(method = "copy", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getEndTimeTicks", at = @At("HEAD"), cancellable = true)
     private void rtxremix$pooledCopy(CallbackInfoReturnable<BitStorage> cir) {
         if (RenderRegionStoragePool.copying()) {
             long[] copy = RenderRegionStoragePool.acquire(data.length);

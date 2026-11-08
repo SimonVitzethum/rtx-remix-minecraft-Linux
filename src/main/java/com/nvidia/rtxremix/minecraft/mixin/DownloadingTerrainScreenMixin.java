@@ -25,7 +25,7 @@ public abstract class DownloadingTerrainScreenMixin {
 
     private boolean rtxremix$holdBegun;
 
-    @Inject(method = "onClose", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getEndTimeTicks", at = @At("HEAD"), cancellable = true)
     private void rtxremix$holdUntilSettled(CallbackInfo ci) {
         JoinBurstHold hold = RemixRenderer.activeJoinBurstHold();
         if (hold == null) {

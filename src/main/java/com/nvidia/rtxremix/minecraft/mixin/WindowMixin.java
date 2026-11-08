@@ -26,7 +26,7 @@ import static org.lwjgl.glfw.GLFW.glfwWindowHint;
 public abstract class WindowMixin {
     
     @Shadow
-    private long window;
+    private long handle;
 
     @Inject(
         method = "<init>",
@@ -50,6 +50,6 @@ public abstract class WindowMixin {
         at = @At("TAIL")
     )
     private void rtxremix$onWindowCreated(CallbackInfo ci) {
-        RtxRemixMod.LOGGER.info("Window created with GLFW handle: {}", window);
+        RtxRemixMod.LOGGER.info("Window created with GLFW handle: {}", handle);
     }
 }

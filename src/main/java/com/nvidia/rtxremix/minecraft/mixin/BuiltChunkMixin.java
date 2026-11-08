@@ -45,7 +45,7 @@ public abstract class BuiltChunkMixin implements ChunkBuilderBlockEntityAccess, 
 
     @Shadow
     @Final
-    BlockPos.MutableBlockPos origin;
+    BlockPos.MutableBlockPos renderOrigin;
 
     @Shadow
     protected abstract double getDistToPlayerSqr();
@@ -111,9 +111,9 @@ public abstract class BuiltChunkMixin implements ChunkBuilderBlockEntityAccess, 
         int mask = 0;
         for (int k = 0; k < NeighbourReflagFilter.NEIGHBOUR_COUNT; k++) {
             rtxremix$neighbourProbe.set(
-                    origin.getX() + NeighbourReflagFilter.DX[k] * 16,
-                    origin.getY(),
-                    origin.getZ() + NeighbourReflagFilter.DZ[k] * 16);
+                    renderOrigin.getX() + NeighbourReflagFilter.DX[k] * 16,
+                    renderOrigin.getY(),
+                    renderOrigin.getZ() + NeighbourReflagFilter.DZ[k] * 16);
             if (doesChunkExistAt(rtxremix$neighbourProbe)) {
                 mask |= NeighbourReflagFilter.bit(k);
             }
@@ -131,9 +131,9 @@ public abstract class BuiltChunkMixin implements ChunkBuilderBlockEntityAccess, 
         if (!chunkData.hasNoRenderableLayers()) {
             return;
         }
-        int x = origin.getX();
-        int y = origin.getY();
-        int z = origin.getZ();
+        int x = renderOrigin.getX();
+        int y = renderOrigin.getY();
+        int z = renderOrigin.getZ();
         if (x == -1 && y == -1 && z == -1) {
             return;
         }

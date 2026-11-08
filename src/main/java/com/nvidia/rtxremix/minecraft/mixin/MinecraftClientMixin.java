@@ -413,7 +413,7 @@ public abstract class MinecraftClientMixin {
         method = "tick",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/texture/TextureManager;tick()V"
+            target = "Lnet/minecraft/client/renderer/texture/TextureManager;getProfilerResults()V"
         ),
         require = 0
     )
@@ -425,7 +425,7 @@ public abstract class MinecraftClientMixin {
         method = "tick",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/texture/TextureManager;tick()V",
+            target = "Lnet/minecraft/client/renderer/texture/TextureManager;getProfilerResults()V",
             shift = At.Shift.AFTER
         ),
         require = 0
