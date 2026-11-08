@@ -28,6 +28,7 @@ import java.util.List;
  *
  * <pre>
  * open [dev|graphics]      RtxRemixMod.openRemixMenu
+ * conf KEY VALUE          Remix config variable (SetConfigVariable), e.g. conf rtx.qualityDLSS 2
  * close                    close the menu like Alt+X does
  * altx                     Alt+X chord through KeyboardHandler.keyPress (toggles the developer menu)
  * move X Y                 cursor in window coordinates; "c" is the window centre; X and Y may be fractions like 0.5
@@ -120,6 +121,10 @@ public final class RemixInputTestScript {
         switch (w[0]) {
             case "open" -> RtxRemixMod.openRemixMenu(w.length > 1 && w[1].startsWith("g")
                     ? RemixInputGate.Menu.GRAPHICS_SETTINGS : RemixInputGate.Menu.DEVELOPER);
+            case "conf" -> {
+                RtxRemixMod.renderer.getRemixApi().setConfigVariable(w[1], w[2]);
+                LOGGER.info("conf {} = {}", w[1], w[2]);
+            }
             case "close" -> {
                 if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
                     RtxRemixMod.toggleRemixMenu();
