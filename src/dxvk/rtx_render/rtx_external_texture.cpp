@@ -122,7 +122,8 @@ namespace dxvk {
     m_info.filename = "";
   }
 
-  void MemoryAssetData::generateMips() {
+  void MemoryAssetData::generateMips(uint32_t rx0, uint32_t ry0, uint32_t rx1, uint32_t ry1) {
+    // The dirty rectangle (mip 0 texels, [rx0,rx1) x [ry0,ry1)) shrinks by half per level; only it is regenerated.
     const uint32_t channels = m_format.channels;
     for (size_t level = 1; level < m_levels.size(); ++level) {
       const VkExtent2D src = m_extents[level - 1];
@@ -167,8 +168,11 @@ namespace dxvk {
         }
       };
 
-      for (uint32_t y = 0; y < dst.height; ++y) {
-        for (uint32_t x = 0; x < dst.width; ++x) {
+      rx1 = std::min(rx1, src.width); ry1 = std::min(ry1, src.height);
+      rx0 >>= 1; ry0 >>= 1; rx1 = (rx1 + 1) >> 1; ry1 = (ry1 + 1) >> 1;
+      const uint32_t yEnd = std::min(ry1, dst.height), xEnd = std::min(rx1, dst.width);
+      for (uint32_t y = ry0; y < yEnd; ++y) {
+        for (uint32_t x = rx0; x < xEnd; ++x) {
           const uint32_t x0 = std::min(x * 2, src.width - 1);
           const uint32_t x1 = std::min(x * 2 + 1, src.width - 1);
           const uint32_t y0 = std::min(y * 2, src.height - 1);
@@ -213,7 +217,7 @@ namespace dxvk {
                   pixels + row * pitch, rowBytes);
     }
 
-    generateMips();
+    generateMips(dstX, dstY, dstX + width, dstY + height);
     return true;
   }
 

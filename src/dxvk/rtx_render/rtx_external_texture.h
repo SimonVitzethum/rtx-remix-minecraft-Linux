@@ -71,7 +71,7 @@ namespace dxvk {
     bool patch(uint32_t dstX, uint32_t dstY, uint32_t width, uint32_t height, const uint8_t* pixels, uint32_t rowPitch);
 
   private:
-    void generateMips();
+    void generateMips(uint32_t rx0 = 0, uint32_t ry0 = 0, uint32_t rx1 = UINT32_MAX, uint32_t ry1 = UINT32_MAX);
 
     ExternalTextureFormat m_format;
     bool m_useMaxFilter;
