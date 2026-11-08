@@ -676,6 +676,13 @@ public class RtxRemixMod implements ClientModInitializer {
             int remixTexture;
             try {
                 renderer.renderAndSubmitFrame();
+                if (renderer.usesVulkanInterop()) {
+                    // The composite is recorded into the frame submission; the OpenGL overlay and weather passes do not apply.
+                    if (isRtxEnabled()) {
+                        renderer.compositeRemixOutputVulkan();
+                    }
+                    return;
+                }
                 remixTexture = renderer.blitVkImageToGL();
             } catch (RuntimeException e) {
                 // Compositing is skipped, so this frame presents whatever GL drew, which

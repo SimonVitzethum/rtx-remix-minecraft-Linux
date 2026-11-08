@@ -33,3 +33,6 @@ accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationS
 accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState subFrame I
 accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState animationInfo Lnet/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture;
 accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState isDirty Z
+
+# Vulkan interop (VulkanBackendSupport): the VulkanDevice behind the frontend device
+accessible field com/mojang/renderpearl/frontend/FrontendGpuDevice backend Lcom/mojang/renderpearl/backend/api/GpuDeviceBackend;
