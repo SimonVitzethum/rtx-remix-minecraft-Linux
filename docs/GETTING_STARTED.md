@@ -514,6 +514,14 @@ shader precompiler with its launcher script. The runtime library is
 `libremixapi.so`; the JNI bridge `remixbridge.so` is
 compiled separately into `build/native/linux64/`.
 
+### Launcher Script
+
+`tools/linux/rtx.sh` automates the Linux workflow: `launch` builds the mod,
+installs it into a Prism instance, and starts Minecraft through Prism;
+`precompile` runs the shader precompiler for the instance; `instance` creates
+the instance; `status` reports what is set up. See the script's header for its
+environment variables.
+
 ### Windowing
 
 Minecraft 26.3 uses SDL3. `LinuxWindowPlatform` picks the SDL video driver
