@@ -38,7 +38,7 @@ public record CopperBeaconUpdatePayload(int syncId, Field field, float value)
             };
 
     public static void register() {
-        PayloadTypeRegistry.playC2S().register(ID, PACKET_CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(ID, PACKET_CODEC);
         ServerPlayNetworking.registerGlobalReceiver(ID, (payload, context) ->
                 context.server().execute(() -> {
                     if (context.player().containerMenu

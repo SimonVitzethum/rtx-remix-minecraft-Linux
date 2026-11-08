@@ -64,6 +64,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -596,8 +597,8 @@ public class ChunkManager {
     }
 
     public void onChunkUnloaded(ChunkPos p) {
-        BlockDataQueue.markChunkUnloaded(p.x, p.z);
-        chunkUnloadEvents.add(packChunkKey(p.x, p.z));
+        BlockDataQueue.markChunkUnloaded(p.x(), p.z());
+        chunkUnloadEvents.add(packChunkKey(p.x(), p.z()));
     }
 
     private static long packChunkKey(int cx, int cz) {
@@ -868,8 +869,12 @@ public class ChunkManager {
             return false;
         }
 
-        LevelChunk wc = currentWorld.getChunkSource().getChunk(cx, cz, false);
-        return wc != null && wc.isSectionEmpty(sy);
+        LevelChunk wc = currentWorld.getChunkSource().getChunk(cx, cz, ChunkStatus.FULL, false);
+        if (wc == null) {
+            return false;
+        }
+        int index = wc.getSectionIndexFromSectionY(sy);
+        return index >= 0 && index < wc.getSectionsCount() && wc.getSection(index).hasOnlyAir();
     }
 
     private int drainBlockData() {
@@ -1161,7 +1166,7 @@ public class ChunkManager {
      */
     private static int lightFingerprint(LightEntry le) {
         return Objects.hash(
-                BuiltInRegistries.BLOCK.getStartTimeNano(le.block()),
+                BuiltInRegistries.BLOCK.getId(le.block()),
                 le.key().ruleId(),
                 le.key().lightIndex(),
                 le.lightLevel(),
