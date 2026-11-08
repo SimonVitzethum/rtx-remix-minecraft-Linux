@@ -13,6 +13,7 @@ import com.nvidia.rtxremix.minecraft.RtxRemixMod;
 import com.nvidia.rtxremix.minecraft.cloud.WorldRendererCloudAccess;
 import com.nvidia.rtxremix.minecraft.entity.RemixBlockDamagePass;
 import com.nvidia.rtxremix.minecraft.entity.RemixExtractedEntities;
+import com.nvidia.rtxremix.minecraft.profiling.VanillaPhaseMirror;
 import com.nvidia.rtxremix.minecraft.profiling.WorldRendererProfilingAccess;
 import com.nvidia.rtxremix.minecraft.sky.WorldRendererStarAccess;
 import com.nvidia.rtxremix.minecraft.terrain.WorldRendererTerrainAccess;
@@ -39,6 +40,7 @@ import net.minecraft.client.renderer.state.level.BlockBreakingRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
+import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.lighting.LevelLightEngine;
@@ -127,7 +129,38 @@ public abstract class WorldRendererMixin
 
     @Override
     public void rtxremix$closeProfilerPhaseForFabricEvent() {
-        // Vanilla's phase labels are not mirrored on 26.3.
+        // Nothing is held open across Fabric events: the mirrored phases below are
+        // balanced push/pop pairs inside LevelRenderer.render.
+    }
+
+    // ---- Profiler phase labels ----
+
+    /** Mirrors vanilla's profiler phases of the level render into Tracy/JFR; see {@link VanillaPhaseMirror}. */
+    @WrapOperation(
+            method = "render",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/util/profiling/ProfilerFiller;push(Ljava/lang/String;)V"))
+    private void rtxremix$mirrorPush(ProfilerFiller profiler, String name, Operation<Void> original) {
+        original.call(profiler, name);
+        VanillaPhaseMirror.push(name);
+    }
+
+    @WrapOperation(
+            method = "render",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/util/profiling/ProfilerFiller;popPush(Ljava/lang/String;)V"))
+    private void rtxremix$mirrorPopPush(ProfilerFiller profiler, String name, Operation<Void> original) {
+        original.call(profiler, name);
+        VanillaPhaseMirror.popPush(name);
+    }
+
+    @WrapOperation(
+            method = "render",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/util/profiling/ProfilerFiller;pop()V"))
+    private void rtxremix$mirrorPop(ProfilerFiller profiler, Operation<Void> original) {
+        original.call(profiler);
+        VanillaPhaseMirror.pop();
     }
 
     // ---- Entity frame and block-breaking crack ----
