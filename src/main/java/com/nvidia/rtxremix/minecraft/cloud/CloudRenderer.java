@@ -265,7 +265,8 @@ public final class CloudRenderer {
                     }
                     CloudMeshGenerator.GeneratedMesh generated =
                             CloudMeshGenerator.generate(
-                                    CloudPlacement.mix(PALETTE_SEED + i));
+                                    CloudPlacement.mix(PALETTE_SEED + i),
+                                    CloudMeshGenerator.LOD_COUNT);
                     if (epoch != paletteGenerationEpoch) {
                         return;
                     }
@@ -310,11 +311,28 @@ public final class CloudRenderer {
         GeneratedPaletteMesh generatedResult = (GeneratedPaletteMesh) result;
         CloudMeshGenerator.GeneratedMesh generated = generatedResult.mesh();
         try {
-            RemixMesh mesh = createMesh(generated);
+            int levels = 1 + generated.coarser().length;
+            RemixMesh[] meshes = new RemixMesh[levels];
+            int[] vertexCounts = new int[levels];
+            int[] triangleCounts = new int[levels];
+            try {
+                for (int level = 0; level < levels; level++) {
+                    CloudMeshGenerator.GeneratedMesh source =
+                            level == 0 ? generated : generated.coarser()[level - 1];
+                    meshes[level] = createMesh(source);
+                    vertexCounts[level] = source.vertexCount();
+                    triangleCounts[level] = source.triangleCount();
+                }
+            } catch (RuntimeException e) {
+                for (RemixMesh created : meshes) {
+                    if (created != null) {
+                        created.destroy();
+                    }
+                }
+                throw e;
+            }
             palette[generatedResult.index()] = new PaletteEntry(
-                    mesh,
-                    generated.vertexCount(),
-                    generated.triangleCount());
+                    meshes, vertexCounts, triangleCounts);
         } catch (RuntimeException e) {
             throw failPalette("Failed to publish procedural cloud palette", e);
         }
@@ -344,8 +362,13 @@ public final class CloudRenderer {
 
     private boolean isPaletteReady() {
         for (PaletteEntry entry : palette) {
-            if (entry == null || entry.mesh.isDeleted()) {
+            if (entry == null) {
                 return false;
+            }
+            for (RemixMesh mesh : entry.meshes) {
+                if (mesh.isDeleted()) {
+                    return false;
+                }
             }
         }
         return true;
@@ -362,15 +385,20 @@ public final class CloudRenderer {
     private static void destroyEntries(Iterable<PaletteEntry> entries) {
         RuntimeException failure = null;
         for (PaletteEntry entry : entries) {
-            try {
-                if (entry != null && !entry.mesh.isDeleted()) {
-                    entry.mesh.destroy();
-                }
-            } catch (RuntimeException e) {
-                if (failure == null) {
-                    failure = e;
-                } else {
-                    failure.addSuppressed(e);
+            if (entry == null) {
+                continue;
+            }
+            for (RemixMesh mesh : entry.meshes) {
+                try {
+                    if (!mesh.isDeleted()) {
+                        mesh.destroy();
+                    }
+                } catch (RuntimeException e) {
+                    if (failure == null) {
+                        failure = e;
+                    } else {
+                        failure.addSuppressed(e);
+                    }
                 }
             }
         }
@@ -480,7 +508,9 @@ public final class CloudRenderer {
         }
         vanillaChunks.put(
                 generatedChunk.textureKey(),
-                new PaletteEntry(mesh, generated.vertexCount(), generated.triangleCount()));
+                new PaletteEntry(new RemixMesh[] {mesh},
+                        new int[] {generated.vertexCount()},
+                        new int[] {generated.triangleCount()}));
         lastPaletteCreateCount++;
     }
 
@@ -623,15 +653,15 @@ public final class CloudRenderer {
                     matrix[10] = 1.0f;
                     matrix[11] = (float) placement.z;
                     api.drawInstance(
-                            entry.mesh.getHandle(),
+                            entry.meshes[0].getHandle(),
                             matrix,
                             INSTANCE_CATEGORIES,
                             0,
                             0L);
                     lastDrawCount++;
                     lastInstanceCount++;
-                    lastVertexCount += entry.vertexCount;
-                    lastTriangleCount += entry.triangleCount;
+                    lastVertexCount += entry.vertexCounts[0];
+                    lastTriangleCount += entry.triangleCounts[0];
                 });
         lastCloudCount = lastInstanceCount;
     }
@@ -641,19 +671,24 @@ public final class CloudRenderer {
         double windX = elapsedTicks * CloudPlacement.WIND_X_PER_TICK;
         double windZ = elapsedTicks * CloudPlacement.WIND_Z_PER_TICK;
         RemixAPI api = renderer.getRemixApi();
+        int lodBase = CloudLod.getDistance();
         for (ActiveCloud cloud : clouds.values()) {
             updateTransform(cloud, cameraPos, cloudHeight, windX, windZ);
             PaletteEntry entry = palette[cloud.paletteIndex];
+            int level = cloud.lodLevel = CloudLod.select(
+                    Math.hypot(cloud.placement.x() + windX - cameraPos.x,
+                            cloud.placement.z() + windZ - cameraPos.z),
+                    cloud.lodLevel, lodBase, entry.meshes.length - 1);
             api.drawInstance(
-                    entry.mesh.getHandle(),
+                    entry.meshes[level].getHandle(),
                     cloud.transform.matrix,
                     INSTANCE_CATEGORIES,
                     0,
                     0L);
             lastDrawCount++;
             lastInstanceCount++;
-            lastVertexCount += entry.vertexCount;
-            lastTriangleCount += entry.triangleCount;
+            lastVertexCount += entry.vertexCounts[level];
+            lastTriangleCount += entry.triangleCounts[level];
         }
     }
 
@@ -872,6 +907,7 @@ public final class CloudRenderer {
     private static final class ActiveCloud {
         private CloudPlacement.Placement placement;
         private final int paletteIndex;
+        private int lodLevel;
         private final Transform transform = new Transform();
 
         private ActiveCloud(
@@ -922,9 +958,9 @@ public final class CloudRenderer {
     }
 
     private record PaletteEntry(
-            RemixMesh mesh,
-            int vertexCount,
-            int triangleCount) {
+            RemixMesh[] meshes,
+            int[] vertexCounts,
+            int[] triangleCounts) {
     }
 
     @FunctionalInterface

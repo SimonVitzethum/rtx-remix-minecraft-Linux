@@ -77,6 +77,7 @@ class SettingsRowWidthTest {
             entry("rtxremix.setting.dist.autoFade", "OFF"),
             entry("rtxremix.setting.dist.light", "Auto"),
             entry("rtxremix.setting.dist.entity", "Auto"),
+            entry("rtxremix.setting.dist.cloudLod", "1152"),
             entry("rtxremix.setting.light.reach", "256"),
             entry("rtxremix.setting.framerate.unfocused", "Unlimited"),
             entry("rtxremix.setting.sky.enabled", "OFF"),

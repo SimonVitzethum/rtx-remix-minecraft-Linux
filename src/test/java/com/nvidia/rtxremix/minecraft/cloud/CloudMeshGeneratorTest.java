@@ -31,6 +31,53 @@ class CloudMeshGeneratorTest {
     }
 
     @Test
+    void coarserLevelsKeepShapeWithFarFewerTriangles() {
+        CloudMeshGenerator.GeneratedMesh fine = CloudMeshGenerator.generate(
+                0x77L, CloudMeshGenerator.LOD_COUNT);
+        assertEquals(CloudMeshGenerator.LOD_COUNT - 1, fine.coarser().length);
+        float[] fineBounds = bounds(fine);
+        int previousTriangles = fine.triangleCount();
+        for (CloudMeshGenerator.GeneratedMesh coarse : fine.coarser()) {
+            assertTrue(coarse.triangleCount() > 0);
+            assertTrue(coarse.triangleCount() < previousTriangles / 2);
+            previousTriangles = coarse.triangleCount();
+            for (int index : coarse.indices()) {
+                assertTrue(index >= 0 && index < coarse.vertexCount());
+            }
+            float[] coarseBounds = bounds(coarse);
+            for (int i = 0; i < 6; i++) {
+                // The silhouette moves by at most a coarse cell or two.
+                assertEquals(fineBounds[i], coarseBounds[i], 8.0f);
+            }
+        }
+    }
+
+    @Test
+    void lodSelectionHasHysteresis() {
+        assertEquals(0, CloudLod.select(100, 0, 256, 2));
+        assertEquals(0, CloudLod.select(270, 0, 256, 2));
+        assertEquals(1, CloudLod.select(290, 0, 256, 2));
+        assertEquals(1, CloudLod.select(250, 1, 256, 2));
+        assertEquals(0, CloudLod.select(230, 1, 256, 2));
+        assertEquals(2, CloudLod.select(700, 0, 256, 2));
+        assertEquals(1, CloudLod.select(700, 0, 256, 1));
+        assertEquals(0, CloudLod.select(5000, 0, 0, 2));
+    }
+
+    private static float[] bounds(CloudMeshGenerator.GeneratedMesh mesh) {
+        float[] b = {Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE,
+                -Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
+        float[] v = mesh.vertices();
+        for (int i = 0; i < mesh.vertexCount(); i++) {
+            for (int a = 0; a < 3; a++) {
+                b[a] = Math.min(b[a], v[i * 6 + a]);
+                b[a + 3] = Math.max(b[a + 3], v[i * 6 + a]);
+            }
+        }
+        return b;
+    }
+
+    @Test
     void sameSeedProducesIdenticalMesh() {
         CloudMeshGenerator.GeneratedMesh first = CloudMeshGenerator.generate(0x1234_5678L);
         CloudMeshGenerator.GeneratedMesh second = CloudMeshGenerator.generate(0x1234_5678L);

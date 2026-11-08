@@ -95,6 +95,13 @@ public final class RtxSettingsFactory {
                 ChunkManager.MIN_LIGHT_REACH_BLOCKS, ChunkManager.MAX_LIGHT_REACH_BLOCKS,
                 chunks.getLightReach(), chunks::getLightReach, chunks::setLightReach));
 
+        list.add(RtxSetting.ofInt("dist.cloudLod", SettingGroup.RENDER_DISTANCE,
+                "rtxremix.setting.dist.cloudLod", "rtxremix.setting.dist.cloudLod.tip",
+                0, com.nvidia.rtxremix.minecraft.cloud.CloudLod.MAX_DISTANCE,
+                com.nvidia.rtxremix.minecraft.cloud.CloudLod.getDistance(),
+                com.nvidia.rtxremix.minecraft.cloud.CloudLod::getDistance,
+                com.nvidia.rtxremix.minecraft.cloud.CloudLod::setDistance));
+
         // --- Framerate ---
         list.add(unfocusedFramerate());
 

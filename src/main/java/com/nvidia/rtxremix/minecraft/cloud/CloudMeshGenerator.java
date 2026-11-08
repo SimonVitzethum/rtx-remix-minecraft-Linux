@@ -40,16 +40,36 @@ final class CloudMeshGenerator {
     private CloudMeshGenerator() {
     }
 
+    /** Grid decimation factors of the LOD levels: level 0 is the full 1.5 m lattice. */
+    static final int[] LOD_STEPS = {1, 2, 4};
+    static final int LOD_COUNT = LOD_STEPS.length;
+
     static GeneratedMesh generate(long seed) {
+        return generate(seed, 1);
+    }
+
+    /**
+     * Generates the full-detail mesh plus {@code lodCount - 1} coarser meshes of the same
+     * density field (lattice decimated by {@link #LOD_STEPS}), so the renderer can swap an
+     * instance's mesh by distance without changing the cloud's shape.
+     */
+    static GeneratedMesh generate(long seed, int lodCount) {
         long startNanos = System.nanoTime();
         Workspace workspace = WORKSPACE.get();
         workspace.configure(seed);
         workspace.sampleGrid();
         MarchingCubes.MeshData data = workspace.marchingCubes.extract(workspace);
+        int coarseCount = Math.max(0, Math.min(lodCount, LOD_COUNT) - 1);
+        GeneratedMesh[] coarse = new GeneratedMesh[coarseCount];
+        for (int i = 0; i < coarseCount; i++) {
+            MarchingCubes.MeshData lod = workspace.extractLod(i + 1);
+            coarse[i] = new GeneratedMesh(lod.vertices(), lod.indices(), 0L);
+        }
         return new GeneratedMesh(
                 data.vertices(),
                 data.indices(),
-                System.nanoTime() - startNanos);
+                System.nanoTime() - startNanos,
+                coarse);
     }
 
     static void releaseWorkspace() {
@@ -59,7 +79,12 @@ final class CloudMeshGenerator {
     record GeneratedMesh(
             float[] vertices,
             int[] indices,
-            long generationNanos) {
+            long generationNanos,
+            GeneratedMesh[] coarser) {
+        GeneratedMesh(float[] vertices, int[] indices, long generationNanos) {
+            this(vertices, indices, generationNanos, new GeneratedMesh[0]);
+        }
+
         int vertexCount() {
             return vertices.length / 6;
         }
@@ -87,8 +112,42 @@ final class CloudMeshGenerator {
                 STEP_Y,
                 STEP_Z,
                 density);
+        private final float[][] lodDensity = new float[LOD_COUNT][];
+        private final MarchingCubes[] lodCubes = new MarchingCubes[LOD_COUNT];
         private long randomState;
         private long noiseSeed;
+
+        Workspace() {
+            for (int i = 1; i < LOD_COUNT; i++) {
+                int step = LOD_STEPS[i];
+                int sx = (GRID_X - 1) / step + 1;
+                int sy = (GRID_Y - 1) / step + 1;
+                int sz = (GRID_Z - 1) / step + 1;
+                lodDensity[i] = new float[sx * sy * sz];
+                lodCubes[i] = new MarchingCubes(
+                        sx, sy, sz,
+                        ORIGIN_X, ORIGIN_Y, ORIGIN_Z,
+                        STEP_X * step, STEP_Y * step, STEP_Z * step,
+                        lodDensity[i]);
+            }
+        }
+
+        /** Marches a lattice decimated by {@code LOD_STEPS[level]}; vertices/normals sample the fine field. */
+        MarchingCubes.MeshData extractLod(int level) {
+            int step = LOD_STEPS[level];
+            int sx = (GRID_X - 1) / step + 1;
+            int sy = (GRID_Y - 1) / step + 1;
+            int sz = (GRID_Z - 1) / step + 1;
+            float[] dst = lodDensity[level];
+            for (int z = 0; z < sz; z++) {
+                for (int y = 0; y < sy; y++) {
+                    for (int x = 0; x < sx; x++) {
+                        dst[(z * sy + y) * sx + x] = density[index(x * step, y * step, z * step)];
+                    }
+                }
+            }
+            return lodCubes[level].extract(this);
+        }
 
         void configure(long seed) {
             randomState = seed;
