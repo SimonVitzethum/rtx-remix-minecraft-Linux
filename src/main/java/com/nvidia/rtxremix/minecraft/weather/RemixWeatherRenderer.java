@@ -4,31 +4,34 @@
  */
 package com.nvidia.rtxremix.minecraft.weather;
 
-import com.mojang.blaze3d.opengl.GlProgram;
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferUploader;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.blaze3d.vertex.VertexSorting;
+import com.mojang.renderpearl.backend.opengl.GlTextureView;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.nvidia.rtxremix.minecraft.RtxRemixCommonMod;
-import net.fabricmc.fabric.api.client.rendering.v1.CoreShaderRegistrationCallback;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.GameRenderer;
-import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.Lightmap;
 import net.minecraft.resources.Identifier;
 import org.joml.Matrix4f;
-import org.joml.Matrix4fStack;
 import org.joml.Quaternionf;
+import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL14;
+import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.system.MemoryStack;
+import org.slf4j.Logger;
+import com.mojang.logging.LogUtils;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -40,35 +43,137 @@ import java.util.List;
  * <p>Render thread only, and after Remix has presented its image into GL: the
  * renderer owns its GL buffers and reads the interop textures the frame just
  * produced.
+ *
+ * <p>Minecraft 26.3 renders through renderpearl, and the legacy immediate-mode
+ * shader bridge (CoreShaderRegistrationCallback, RenderSystem.setShader,
+ * BufferUploader.drawWithShader, the vanilla particle shader) is gone. This
+ * renderer therefore compiles its own GL programs from the mod's shader
+ * resources and draws the captured meshes directly, exactly as the depth
+ * seeding pass already did.
  */
 public final class RemixWeatherRenderer {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final float NEAR_PLANE = 0.05f;
     private static final float FAR_PLANE = 1000.0f;
     private static final Identifier RAIN_TEXTURE =
             Identifier.withDefaultNamespace("textures/environment/rain.png");
-    private static final Identifier RAIN_SHADER =
-            Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rain_refraction");
+    private static final Identifier SNOW_TEXTURE =
+            Identifier.withDefaultNamespace("textures/environment/snow.png");
+    private static final Identifier RAIN_SHADER_VERTEX =
+            Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "shaders/core/rain_refraction.vsh");
+    private static final Identifier RAIN_SHADER_FRAGMENT =
+            Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "shaders/core/rain_refraction.fsh");
 
-    private static GlProgram rainShader;
+    private static final String SNOW_VERTEX_SHADER = """
+            #version 150
+            in vec3 Position;
+            in vec2 UV0;
+            in vec4 Color;
+            in ivec2 UV2;
+
+            uniform mat4 ModelViewMat;
+            uniform mat4 ProjMat;
+            uniform vec4 ColorModulator;
+
+            out vec2 texCoord0;
+            out vec2 texCoord2;
+            out vec4 vertexColor;
+
+            void main() {
+                gl_Position = ProjMat * ModelViewMat * vec4(Position, 1.0);
+                texCoord0 = UV0;
+                texCoord2 = vec2(UV2) / 256.0;
+                vertexColor = Color * ColorModulator;
+            }
+            """;
+
+    private static final String SNOW_FRAGMENT_SHADER = """
+            #version 150
+            uniform sampler2D Sampler0;
+            uniform sampler2D Sampler2;
+
+            in vec2 texCoord0;
+            in vec2 texCoord2;
+            in vec4 vertexColor;
+
+            out vec4 fragColor;
+
+            void main() {
+                vec4 color = texture(Sampler0, texCoord0) * vertexColor;
+                vec4 lightColor = texture(Sampler2, texCoord2);
+                fragColor = color * lightColor;
+            }
+            """;
+
+    private static GlShaderProgram rainShader;
+    private static GlShaderProgram snowShader;
+    private static boolean rainShaderFailed;
+    private static boolean snowShaderFailed;
 
     private final List<DeferredDraw> draws = new ArrayList<>(2);
     private Matrix4f projection;
     private Matrix4f modelView;
-    private LightTexture lightmap;
+    private Lightmap lightmap;
     private DepthSeeder depthSeeder;
     private int capturedQuadCount;
     private int lastDrawCount;
     private int lastQuadCount;
 
+    private int vertexArray;
+    private int vertexBuffer;
+    private int indexBuffer;
+    private int maxQuadCount;
+    private ByteBuffer indexScratch;
+    private int mainFramebuffer;
+    private int mainFramebufferColor;
+    private int mainFramebufferDepth;
+    private int mainFramebufferWidth;
+    private int mainFramebufferHeight;
+
     public static void registerShaders() {
-        CoreShaderRegistrationCallback.EVENT.register(context ->
-                context.register(
-                        RAIN_SHADER,
-                        DefaultVertexFormat.PARTICLE,
-                        shader -> rainShader = shader));
+        compileShaders();
     }
 
-    public void beginCaptureFrame(LightTexture lightmapTextureManager) {
+    private static void compileShaders() {
+        if (rainShader == null && !rainShaderFailed) {
+            rainShader = compileRainShader();
+            if (rainShader == null) {
+                rainShaderFailed = true;
+            }
+        }
+        if (snowShader == null && !snowShaderFailed) {
+            snowShader = GlShaderProgram.link(SNOW_VERTEX_SHADER, SNOW_FRAGMENT_SHADER);
+            if (snowShader == null) {
+                snowShaderFailed = true;
+            }
+        }
+    }
+
+    private static GlShaderProgram compileRainShader() {
+        String vertexSource = readShaderSource(RAIN_SHADER_VERTEX);
+        String fragmentSource = readShaderSource(RAIN_SHADER_FRAGMENT);
+        if (vertexSource == null || fragmentSource == null) {
+            return null;
+        }
+        return GlShaderProgram.link(vertexSource, fragmentSource);
+    }
+
+    private static String readShaderSource(Identifier location) {
+        try (var reader = Minecraft.getInstance().getResourceManager().openAsReader(location)) {
+            StringBuilder builder = new StringBuilder();
+            char[] buffer = new char[4096];
+            int read;
+            while ((read = reader.read(buffer)) >= 0) {
+                builder.append(buffer, 0, read);
+            }
+            return builder.toString();
+        } catch (IOException | RuntimeException e) {
+            LOGGER.error("Failed to read shader source {}", location, e);
+            return null;
+        }
+    }
+
+    public void beginCaptureFrame(Lightmap lightmapTextureManager) {
         closePendingDraws();
         lightmap = lightmapTextureManager;
         capturedQuadCount = 0;
@@ -113,7 +218,6 @@ public final class RemixWeatherRenderer {
         }
 
         Minecraft client = Minecraft.getInstance();
-        client.getMainRenderTarget().bindWrite(true);
         try {
             if (depthSeeder == null) {
                 depthSeeder = new DepthSeeder();
@@ -132,8 +236,7 @@ public final class RemixWeatherRenderer {
     }
 
     private void renderDeferredDraws(int finalColorTexture) {
-        Matrix4f savedProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
-        Matrix4fStack modelViewStack = RenderSystem.getModelViewStack();
+        int mainFramebuffer = bindMainRenderTarget();
         boolean depthTest = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
         boolean blend = GL11.glIsEnabled(GL11.GL_BLEND);
         boolean cull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
@@ -148,15 +251,26 @@ public final class RemixWeatherRenderer {
         int blendEquationRgb = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_RGB);
         int blendEquationAlpha = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_ALPHA);
         boolean[] colorMask = readColorMask();
-        float[] shaderColor = RenderSystem.getShaderColor().clone();
+        int previousProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
+        int previousVertexArray = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
+        int previousArrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
+        int previousElementBuffer = GL11.glGetInteger(GL15.GL_ELEMENT_ARRAY_BUFFER_BINDING);
+        int previousActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+        int previousTexture0 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL13.glActiveTexture(GL13.GL_TEXTURE1);
+        int previousTexture1 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL13.glActiveTexture(GL13.GL_TEXTURE2);
+        int previousTexture2 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
 
-        RenderSystem.setProjectionMatrix(projection, VertexSorting.ORTHOGRAPHIC_Z);
-        modelViewStack.pushMatrix();
-        modelViewStack.set(modelView);
-        RenderSystem.applyModelViewMatrix();
+        int lightmapTexture = resolveLightmapTexture();
+        int totalQuads = 0;
+        for (DeferredDraw draw : draws) {
+            totalQuads += draw.buffer().drawState().vertexCount() / 4;
+        }
+        ensureQuadStorage(totalQuads);
 
         try {
-            lightmap.turnOnLightLayer();
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glEnable(GL11.GL_DEPTH_TEST);
             GL11.glDisable(GL11.GL_CULL_FACE);
@@ -170,11 +284,9 @@ public final class RemixWeatherRenderer {
                     GL11.GL_ONE,
                     GL11.GL_ZERO);
             GL20.glBlendEquationSeparate(GL14.GL_FUNC_ADD, GL14.GL_FUNC_ADD);
-            RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
-            renderRain(finalColorTexture);
-            renderSnow();
+            renderRain(finalColorTexture, lightmapTexture);
+            renderSnow(finalColorTexture, lightmapTexture);
         } finally {
-            lightmap.turnOffLightLayer();
             closePendingDraws();
             restoreCapability(GL11.GL_DEPTH_TEST, depthTest);
             restoreCapability(GL11.GL_BLEND, blend);
@@ -191,20 +303,31 @@ public final class RemixWeatherRenderer {
                     blendSourceAlpha,
                     blendDestinationAlpha);
             GL20.glBlendEquationSeparate(blendEquationRgb, blendEquationAlpha);
-            modelViewStack.popMatrix();
-            RenderSystem.applyModelViewMatrix();
-            RenderSystem.setProjectionMatrix(savedProjection, VertexSorting.ORTHOGRAPHIC_Z);
-            RenderSystem.setShaderColor(
-                    shaderColor[0], shaderColor[1], shaderColor[2], shaderColor[3]);
+            if (previousProgram != 0) {
+                GL20.glUseProgram(previousProgram);
+            }
+            GL30.glBindVertexArray(previousVertexArray);
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, previousArrayBuffer);
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, previousElementBuffer);
+            GL13.glActiveTexture(GL13.GL_TEXTURE2);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture2);
+            GL13.glActiveTexture(GL13.GL_TEXTURE1);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture1);
+            GL13.glActiveTexture(GL13.GL_TEXTURE0);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture0);
+            GL13.glActiveTexture(previousActiveTexture);
+            if (mainFramebuffer != 0) {
+                GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
+            }
         }
     }
 
-    private void renderRain(int finalColorTexture) {
+    private void renderRain(int finalColorTexture, int lightmapTexture) {
+        compileShaders();
         if (rainShader == null && hasRainDraw()) {
             throw new IllegalStateException("Rain refraction shader was not loaded");
         }
-        RenderSystem.setShaderTexture(1, finalColorTexture);
-        renderDraws(true, rainShader);
+        renderDraws(true, rainShader, finalColorTexture, lightmapTexture);
     }
 
     private boolean hasRainDraw() {
@@ -216,27 +339,154 @@ public final class RemixWeatherRenderer {
         return false;
     }
 
-    private void renderSnow() {
-        renderDraws(false, GameRenderer.getParticleShader());
+    private void renderSnow(int finalColorTexture, int lightmapTexture) {
+        compileShaders();
+        renderDraws(false, snowShader, finalColorTexture, lightmapTexture);
     }
 
-    private void renderDraws(boolean rain, GlProgram shader) {
+    private void renderDraws(boolean rain, GlShaderProgram shader, int finalColorTexture, int lightmapTexture) {
         if (shader == null) {
             return;
         }
-        RenderSystem.setShader(() -> shader);
+        GL30.glBindVertexArray(vertexArray);
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vertexBuffer);
+        GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+        shader.bind();
+        shader.setModelView(modelView);
+        shader.setProjection(projection);
+        shader.setColorModulator(1.0f, 1.0f, 1.0f, 1.0f);
+        shader.setSampler("Sampler0", 0);
+        if (shader.hasSampler("Sampler1")) {
+            shader.setSampler("Sampler1", 1);
+        }
+        if (shader.hasSampler("Sampler2")) {
+            shader.setSampler("Sampler2", 2);
+        }
         for (int i = 0; i < draws.size(); i++) {
             DeferredDraw draw = draws.get(i);
             if (draw == null || draw.rain() != rain) {
                 continue;
             }
-            RenderSystem.setShaderTexture(0, draw.texture());
+            GL13.glActiveTexture(GL13.GL_TEXTURE0);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, bindTextureId(draw.texture()));
+            GL13.glActiveTexture(GL13.GL_TEXTURE1);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, finalColorTexture);
+            GL13.glActiveTexture(GL13.GL_TEXTURE2);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, lightmapTexture);
+            GL13.glActiveTexture(GL13.GL_TEXTURE0);
             try {
-                BufferUploader.drawWithShader(draw.buffer());
+                drawMesh(draw.buffer());
             } finally {
                 draws.set(i, null);
             }
         }
+    }
+
+    private static int bindTextureId(Identifier texture) {
+        GpuTextureView view = Minecraft.getInstance().getTextureManager().getTexture(texture).getTextureView();
+        if (view instanceof GlTextureView glView) {
+            return glView.glId();
+        }
+        throw new IllegalStateException("Weather renderer requires the OpenGL backend");
+    }
+
+    private int resolveLightmapTexture() {
+        GpuTextureView view = Minecraft.getInstance().gameRenderer.levelLightmap();
+        if (view instanceof GlTextureView glView) {
+            return glView.glId();
+        }
+        throw new IllegalStateException("Weather renderer requires the OpenGL backend");
+    }
+
+    private int bindMainRenderTarget() {
+        Minecraft client = Minecraft.getInstance();
+        RenderTarget mainTarget = client.gameRenderer.mainRenderTarget();
+        GpuTextureView colorView = mainTarget.getColorTextureView();
+        if (!(colorView instanceof GlTextureView glColor)) {
+            return 0;
+        }
+        GpuTextureView depthView = mainTarget.getDepthTextureView();
+        int colorId = glColor.glId();
+        int depthId = depthView instanceof GlTextureView glDepth ? glDepth.glId() : 0;
+        if (mainFramebuffer == 0
+                || colorId != mainFramebufferColor
+                || depthId != mainFramebufferDepth
+                || mainTarget.width != mainFramebufferWidth
+                || mainTarget.height != mainFramebufferHeight) {
+            if (mainFramebuffer != 0) {
+                GL30.glDeleteFramebuffers(mainFramebuffer);
+                mainFramebuffer = 0;
+            }
+            int framebuffer = GL30.glGenFramebuffers();
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebuffer);
+            GL30.glFramebufferTexture2D(
+                    GL30.GL_FRAMEBUFFER,
+                    GL30.GL_COLOR_ATTACHMENT0,
+                    GL11.GL_TEXTURE_2D,
+                    colorId,
+                    0);
+            if (depthId != 0) {
+                GL30.glFramebufferTexture2D(
+                        GL30.GL_FRAMEBUFFER,
+                        GL30.GL_DEPTH_ATTACHMENT,
+                        GL11.GL_TEXTURE_2D,
+                        depthId,
+                        0);
+            }
+            if (GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER) != GL30.GL_FRAMEBUFFER_COMPLETE) {
+                GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
+                GL30.glDeleteFramebuffers(framebuffer);
+                return 0;
+            }
+            mainFramebuffer = framebuffer;
+            mainFramebufferColor = colorId;
+            mainFramebufferDepth = depthId;
+            mainFramebufferWidth = mainTarget.width;
+            mainFramebufferHeight = mainTarget.height;
+        }
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, mainFramebuffer);
+        GL11.glViewport(0, 0, mainTarget.width, mainTarget.height);
+        return mainFramebuffer;
+    }
+
+    private void ensureQuadStorage(int quadCount) {
+        if (quadCount > maxQuadCount) {
+            maxQuadCount = quadCount;
+            ByteBuffer newScratch = BufferUtils.createByteBuffer(quadCount * 6 * 2);
+            newScratch.clear();
+            for (int quad = 0; quad < quadCount; quad++) {
+                int base = quad * 4;
+                newScratch.putShort((short) (base + 0));
+                newScratch.putShort((short) (base + 1));
+                newScratch.putShort((short) (base + 2));
+                newScratch.putShort((short) (base + 2));
+                newScratch.putShort((short) (base + 3));
+                newScratch.putShort((short) (base + 0));
+            }
+            newScratch.flip();
+            indexScratch = newScratch;
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+            GL15.glBufferData(GL15.GL_ELEMENT_ARRAY_BUFFER, indexScratch, GL15.GL_STATIC_DRAW);
+        }
+    }
+
+    private void drawMesh(MeshData mesh) {
+        MeshData.DrawState state = mesh.drawState();
+        int vertexCount = state.vertexCount();
+        if (vertexCount <= 0) {
+            return;
+        }
+        int vertexSize = state.format().getVertexSize();
+        int vertexBytes = vertexCount * vertexSize;
+        ByteBuffer vertices = mesh.vertexBuffer();
+        if (vertices.remaining() < vertexBytes) {
+            throw new IllegalStateException("Weather mesh is smaller than its draw state");
+        }
+        ByteBuffer upload = vertices.slice(0, vertexBytes);
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vertexBuffer);
+        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, upload, GL15.GL_STREAM_DRAW);
+        int quadCount = vertexCount / 4;
+        GL11.glDrawElements(GL11.GL_TRIANGLES, quadCount * 6, GL11.GL_UNSIGNED_SHORT, 0);
     }
 
     private static void restoreCapability(int capability, boolean enabled) {
@@ -288,9 +538,169 @@ public final class RemixWeatherRenderer {
             depthSeeder.destroy();
             depthSeeder = null;
         }
+        if (vertexArray != 0) {
+            GL30.glDeleteVertexArrays(vertexArray);
+            vertexArray = 0;
+        }
+        if (vertexBuffer != 0) {
+            GL15.glDeleteBuffers(vertexBuffer);
+            vertexBuffer = 0;
+        }
+        if (indexBuffer != 0) {
+            GL15.glDeleteBuffers(indexBuffer);
+            indexBuffer = 0;
+        }
+        maxQuadCount = 0;
+        indexScratch = null;
+        if (mainFramebuffer != 0) {
+            GL30.glDeleteFramebuffers(mainFramebuffer);
+            mainFramebuffer = 0;
+        }
+    }
+
+    private void ensureGlObjects() {
+        if (vertexArray == 0) {
+            vertexArray = GL30.glGenVertexArrays();
+            vertexBuffer = GL15.glGenBuffers();
+            indexBuffer = GL15.glGenBuffers();
+            GL30.glBindVertexArray(vertexArray);
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vertexBuffer);
+            GL20.glEnableVertexAttribArray(0);
+            GL20.glVertexAttribPointer(0, 3, GL11.GL_FLOAT, false, 28, 0);
+            GL20.glEnableVertexAttribArray(1);
+            GL20.glVertexAttribPointer(1, 2, GL11.GL_FLOAT, false, 28, 12);
+            GL20.glEnableVertexAttribArray(2);
+            GL20.glVertexAttribPointer(2, 4, GL11.GL_UNSIGNED_BYTE, true, 28, 20);
+            GL20.glEnableVertexAttribArray(3);
+            GL30.glVertexAttribIPointer(3, 2, GL11.GL_SHORT, 28, 24L);
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+            GL30.glBindVertexArray(0);
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
+        }
     }
 
     private record DeferredDraw(MeshData buffer, Identifier texture, boolean rain) {
+    }
+
+    /**
+     * A minimal GL program for the weather passes: compiled from GLSL text,
+     * with attribute locations bound by name and a small set of uniforms that
+     * the weather shaders share. The renderpearl pipeline compiler is not used
+     * because these passes run outside Minecraft's render passes, directly
+     * against the composited Remix image.
+     */
+    private static final class GlShaderProgram implements AutoCloseable {
+        private final int program;
+        private final int modelViewUniform;
+        private final int projectionUniform;
+        private final int colorModulatorUniform;
+        private final int sampler0Uniform;
+        private final int sampler1Uniform;
+        private final int sampler2Uniform;
+
+        private GlShaderProgram(int program) {
+            this.program = program;
+            modelViewUniform = GL20.glGetUniformLocation(program, "ModelViewMat");
+            projectionUniform = GL20.glGetUniformLocation(program, "ProjMat");
+            colorModulatorUniform = GL20.glGetUniformLocation(program, "ColorModulator");
+            sampler0Uniform = GL20.glGetUniformLocation(program, "Sampler0");
+            sampler1Uniform = GL20.glGetUniformLocation(program, "Sampler1");
+            sampler2Uniform = GL20.glGetUniformLocation(program, "Sampler2");
+        }
+
+        static GlShaderProgram link(String vertexSource, String fragmentSource) {
+            int vertexShader = compileShader(GL20.GL_VERTEX_SHADER, vertexSource);
+            int fragmentShader = 0;
+            int linkedProgram = 0;
+            try {
+                fragmentShader = compileShader(GL20.GL_FRAGMENT_SHADER, fragmentSource);
+                linkedProgram = GL20.glCreateProgram();
+                GL20.glAttachShader(linkedProgram, vertexShader);
+                GL20.glAttachShader(linkedProgram, fragmentShader);
+                GL20.glBindAttribLocation(linkedProgram, 0, "Position");
+                GL20.glBindAttribLocation(linkedProgram, 1, "UV0");
+                GL20.glBindAttribLocation(linkedProgram, 2, "Color");
+                GL20.glBindAttribLocation(linkedProgram, 3, "UV2");
+                GL20.glLinkProgram(linkedProgram);
+                if (GL20.glGetProgrami(linkedProgram, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
+                    String log = GL20.glGetProgramInfoLog(linkedProgram);
+                    GL20.glDeleteProgram(linkedProgram);
+                    linkedProgram = 0;
+                    throw new IllegalStateException("Failed to link weather shader: " + log);
+                }
+            } finally {
+                GL20.glDeleteShader(vertexShader);
+                if (fragmentShader != 0) {
+                    GL20.glDeleteShader(fragmentShader);
+                }
+            }
+            return new GlShaderProgram(linkedProgram);
+        }
+
+        private static int compileShader(int type, String source) {
+            int shader = GL20.glCreateShader(type);
+            GL20.glShaderSource(shader, source);
+            GL20.glCompileShader(shader);
+            if (GL20.glGetShaderi(shader, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
+                String log = GL20.glGetShaderInfoLog(shader);
+                GL20.glDeleteShader(shader);
+                throw new IllegalStateException("Failed to compile weather shader: " + log);
+            }
+            return shader;
+        }
+
+        void bind() {
+            GL20.glUseProgram(program);
+        }
+
+        boolean hasSampler(String name) {
+            return switch (name) {
+                case "Sampler0" -> sampler0Uniform != -1;
+                case "Sampler1" -> sampler1Uniform != -1;
+                case "Sampler2" -> sampler2Uniform != -1;
+                default -> false;
+            };
+        }
+
+        void setSampler(String name, int unit) {
+            int location = switch (name) {
+                case "Sampler0" -> sampler0Uniform;
+                case "Sampler1" -> sampler1Uniform;
+                case "Sampler2" -> sampler2Uniform;
+                default -> -1;
+            };
+            if (location != -1) {
+                GL20.glUniform1i(location, unit);
+            }
+        }
+
+        void setModelView(Matrix4f matrix) {
+            if (modelViewUniform != -1) {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    GL20.glUniformMatrix4fv(modelViewUniform, false, matrix.get(stack.mallocFloat(16)));
+                }
+            }
+        }
+
+        void setProjection(Matrix4f matrix) {
+            if (projectionUniform != -1) {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    GL20.glUniformMatrix4fv(projectionUniform, false, matrix.get(stack.mallocFloat(16)));
+                }
+            }
+        }
+
+        void setColorModulator(float r, float g, float b, float a) {
+            if (colorModulatorUniform != -1) {
+                GL20.glUniform4f(colorModulatorUniform, r, g, b, a);
+            }
+        }
+
+        @Override
+        public void close() {
+            GL20.glDeleteProgram(program);
+        }
     }
 
     private static final class DepthSeeder {
