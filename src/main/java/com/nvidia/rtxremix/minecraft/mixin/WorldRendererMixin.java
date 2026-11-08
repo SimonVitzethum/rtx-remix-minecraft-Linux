@@ -68,23 +68,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *   <li>Vanilla's terrain draw is cancelled in {@code ChunkSectionsToRenderMixin}, the
  *       particle draw in {@code QuadParticleRenderStateMixin}; clouds, weather and sky
  *       have their own mixins in their packages.</li>
- *   <li>Section rebuild requests from the terrain pipeline are served here.</li>
+ *   <li>Section rebuild requests from the terrain pipeline are served here; the dirty-tracking
+ *       rules (water margin, chunk-load re-flag filter) are in {@code LevelExtractorDirtyMixin}.</li>
  * </ul>
  */
 @Mixin(LevelRenderer.class)
 public abstract class WorldRendererMixin
         implements WorldRendererCloudAccess, WorldRendererProfilingAccess,
         WorldRendererStarAccess, WorldRendererTerrainAccess {
-
-    /**
-     * Terrain hooks of the 1.21.1 mixin that have no 26.3 counterpart here yet: the water
-     * occlusion rebuild margin ({@code setBlocksDirty}) and the chunk-load neighbour re-flag
-     * filter ({@code setSectionDirtyWithNeighbors}) lived on {@code WorldRenderer}, and dirty
-     * tracking is now {@code SectionUpdateTracker}'s. TODO(WORLD): port them onto it.
-     * Likewise the per-phase Tracy/JFR labels of vanilla's render and the block-entity chunk
-     * narrowing, which 26.3's extraction already does per section.
-     */
-    private static final boolean rtxremix$TERRAIN_DIRTY_HOOKS_PORTED = false;
 
     @Shadow
     @Nullable
@@ -136,7 +127,7 @@ public abstract class WorldRendererMixin
 
     @Override
     public void rtxremix$closeProfilerPhaseForFabricEvent() {
-        // Vanilla's phase labels are not mirrored on 26.3; see rtxremix$TERRAIN_DIRTY_HOOKS_PORTED.
+        // Vanilla's phase labels are not mirrored on 26.3.
     }
 
     // ---- Entity frame and block-breaking crack ----

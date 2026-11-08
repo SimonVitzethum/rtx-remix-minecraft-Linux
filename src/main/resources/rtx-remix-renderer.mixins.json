@@ -36,6 +36,7 @@
         "ItemModelResolverMixin",
         "ItemStackRenderStateMixin",
         "KeyboardMixin",
+        "LevelExtractorDirtyMixin",
         "LightStorageMixin",
         "MinecraftClientMixin",
         "ModelPartMixin",
