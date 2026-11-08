@@ -54,7 +54,9 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.ItemInHandRenderer;
+import net.minecraft.client.renderer.FirstPersonHandsAndItemsRenderer;
+import net.minecraft.client.renderer.state.level.FirstPersonHandsAndItemsRenderState;
+import net.minecraft.client.renderer.state.level.PlayerRenderState;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
@@ -62,11 +64,9 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.material.FogType;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
-import org.lwjgl.glfw.GLFWNativeWayland;
-import org.lwjgl.glfw.GLFWNativeWin32;
-import org.lwjgl.glfw.GLFWNativeX11;
 import org.lwjgl.opengl.GL;
+import org.lwjgl.sdl.SDLProperties;
+import org.lwjgl.sdl.SDLVideo;
 import org.lwjgl.opengl.GLCapabilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -253,14 +253,14 @@ public class RemixRenderer {
             lastCameraMediumHandle = Long.MIN_VALUE;
 
             Minecraft client = Minecraft.getInstance();
-            long glfwHandle = client.getWindow().handle();
+            long sdlHandle = client.getWindow().handle();
 
             if (IS_LINUX) {
                 // The window handle lookup and size report below call into the bridge.
                 RemixAPI.loadBridge(runtimeDll(FabricLoader.getInstance().getGameDir()).toAbsolutePath().toString());
             }
 
-            windowHandle = getHwndFromGlfw(glfwHandle);
+            windowHandle = getNativeWindowHandle(sdlHandle);
             
             if (windowHandle == 0) {
                 throw new RuntimeException("Failed to get native window handle");
@@ -315,14 +315,14 @@ public class RemixRenderer {
             // RTXREMIX_WINDOW_POS="x,y" moves the window before startup() so the
             // swapchain is created on the monitor that will display it (benchmarks
             // use this to target a specific monitor, e.g. a 4K panel at a negative
-            // desktop coordinate). Must run on the render thread, which owns GLFW.
+            // desktop coordinate). Must run on the render thread, which owns the SDL window.
             String windowPos = System.getenv("RTXREMIX_WINDOW_POS");
             if (windowPos != null && !windowPos.isBlank()) {
                 String[] parts = windowPos.split(",");
                 try {
                     int x = Integer.parseInt(parts[0].trim());
                     int y = Integer.parseInt(parts[1].trim());
-                    org.lwjgl.glfw.GLFW.glfwSetWindowPos(glfwHandle, x, y);
+                    SDLVideo.SDL_SetWindowPosition(sdlHandle, x, y);
                     LOGGER.info("RTXREMIX_WINDOW_POS: moved window to ({}, {})", x, y);
                 } catch (RuntimeException e) {
                     LOGGER.warn("RTXREMIX_WINDOW_POS: could not apply '{}': {}", windowPos, e.getMessage());
@@ -543,16 +543,23 @@ public class RemixRenderer {
     }
     
     /**
-     * Gets the Win32 HWND from a GLFW window handle.
+     * Gets the native window handle Remix presents into from an SDL window: the Win32 HWND, the
+     * wl_surface under Wayland, or the X11 window id under X11 and XWayland, read from the window's
+     * SDL properties.
      */
-    private long getHwndFromGlfw(long glfwHandle) {
-        if (!IS_LINUX) {
-            return GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
+    private long getNativeWindowHandle(long sdlHandle) {
+        int props = SDLVideo.SDL_GetWindowProperties(sdlHandle);
+        if (props == 0) {
+            return 0;
         }
-        if (GLFW.glfwGetPlatform() == GLFW.GLFW_PLATFORM_WAYLAND) {
-            // The runtime presents into the wl_surface of the same connection GLFW uses.
-            long display = GLFWNativeWayland.glfwGetWaylandDisplay();
-            long surface = GLFWNativeWayland.glfwGetWaylandWindow(glfwHandle);
+        if (!IS_LINUX) {
+            return SDLProperties.SDL_GetPointerProperty(props, SDLVideo.SDL_PROP_WINDOW_WIN32_HWND_POINTER, 0L);
+        }
+        String driver = SDLVideo.SDL_GetCurrentVideoDriver();
+        if ("wayland".equals(driver)) {
+            // The runtime presents into the wl_surface of the same connection SDL uses.
+            long display = SDLProperties.SDL_GetPointerProperty(props, SDLVideo.SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, 0L);
+            long surface = SDLProperties.SDL_GetPointerProperty(props, SDLVideo.SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, 0L);
             if (display == 0 || surface == 0) {
                 return 0;
             }
@@ -561,7 +568,7 @@ public class RemixRenderer {
             return surface;
         }
         RemixBridge.linuxSetWaylandDisplay(0);
-        return GLFWNativeX11.glfwGetX11Window(glfwHandle);
+        return SDLProperties.SDL_GetNumberProperty(props, SDLVideo.SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0L);
     }
 
     /** Wayland surfaces cannot be queried for their size, so the runtime is told on every frame. */
@@ -1394,7 +1401,7 @@ public class RemixRenderer {
     
     /**
      * Presents the frame through Remix, which owns the swapchain for as long as the
-     * renderer is initialized: this method replaces the GLFW buffer swap, so returning
+     * renderer is initialized: this method replaces the SDL buffer swap, so returning
      * without calling present leaves the window frozen on the last presented image.
      * A failed GL-to-Remix copy therefore still presents, and a failure is logged once
      * per run rather than once per frame.
@@ -1502,7 +1509,7 @@ public class RemixRenderer {
         // The child window covers the host window, so the default framebuffer's
         // covered pixels are undefined. Minecraft's main framebuffer contains
         // the same completed world, overlays, and HUD without that dependency.
-        interop.copyFromFramebuffer(Minecraft.getInstance().getMainRenderTarget().frameBufferId);
+        interop.copyFromRenderTarget(Minecraft.getInstance().getMainRenderTarget());
 
         // signal that GL is done copying, so VK can read the image and present
         interop.signalDone();
@@ -1677,7 +1684,7 @@ public class RemixRenderer {
     }
 
     /**
-     * Completes native runtime shutdown after Minecraft has destroyed its GLFW window.
+     * Completes native runtime shutdown after Minecraft has destroyed its SDL window.
      */
     public void shutdownNativeRuntime() {
         shutdownRemixApi();
@@ -1789,13 +1796,13 @@ public class RemixRenderer {
     }
 
     public void captureFirstPersonModel(
-            ItemInHandRenderer heldItemRenderer,
-            float tickDelta,
-            PoseStack matrices,
-            LocalPlayer player,
-            int light) {
+            FirstPersonHandsAndItemsRenderer handsRenderer,
+            float partialTicks,
+            PoseStack poseStack,
+            PlayerRenderState playerState,
+            FirstPersonHandsAndItemsRenderState handsState) {
         if (firstPersonPass != null && initialized && RtxRemixMod.isRtxEnabled()) {
-            firstPersonPass.capture(heldItemRenderer, tickDelta, matrices, player, light);
+            firstPersonPass.capture(handsRenderer, partialTicks, poseStack, playerState, handsState);
         }
     }
 }

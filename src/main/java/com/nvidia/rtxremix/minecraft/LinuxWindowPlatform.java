@@ -7,18 +7,18 @@ package com.nvidia.rtxremix.minecraft;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.entrypoint.PreLaunchEntrypoint;
-import org.lwjgl.glfw.GLFW;
+import org.lwjgl.sdl.SDLHints;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Chooses the GLFW window platform on Linux before Minecraft initializes GLFW.
+ * Chooses the SDL video driver on Linux before Minecraft initializes SDL.
  *
  * <p>Remix presents into the game window with its own Vulkan swapchain, so it needs the native handle of whichever
- * platform GLFW runs on: a {@code wl_surface} on Wayland, an X11 window under X11 or XWayland. Setting
- * {@code -Drtxremix.wayland=true} asks GLFW for the Wayland platform, which needs a GLFW build with Wayland support
- * (a system GLFW 3.4 through {@code -Dorg.lwjgl.glfw.libname=/usr/lib/libglfw.so}, or LWJGL's {@code glfw_wayland}).
- * {@code -Drtxremix.wayland=false} forces X11. Without the property GLFW's own choice stands.
+ * driver SDL runs on: a {@code wl_surface} on Wayland, an X11 window under X11 or XWayland. Setting
+ * {@code -Drtxremix.wayland=true} asks SDL for its {@code wayland} video driver, {@code -Drtxremix.wayland=false}
+ * forces {@code x11}. Without the property SDL's own choice (or an {@code SDL_VIDEODRIVER} environment variable)
+ * stands.
  */
 public final class LinuxWindowPlatform implements PreLaunchEntrypoint {
 
@@ -36,7 +36,10 @@ public final class LinuxWindowPlatform implements PreLaunchEntrypoint {
             return;
         }
         boolean wayland = Boolean.parseBoolean(requested);
-        GLFW.glfwInitHint(GLFW.GLFW_PLATFORM, wayland ? GLFW.GLFW_PLATFORM_WAYLAND : GLFW.GLFW_PLATFORM_X11);
-        LOGGER.info("GLFW window platform requested: {}", wayland ? "Wayland" : "X11");
+        if (!SDLHints.SDL_SetHint(SDLHints.SDL_HINT_VIDEO_DRIVER, wayland ? "wayland" : "x11")) {
+            LOGGER.warn("SDL refused the video driver hint");
+            return;
+        }
+        LOGGER.info("SDL video driver requested: {}", wayland ? "wayland" : "x11");
     }
 }

@@ -4,6 +4,8 @@
  */
 package com.nvidia.rtxremix.minecraft.gl;
 
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.nvidia.rtxremix.InteropInfo;
 import com.nvidia.rtxremix.RemixBridge;
 import com.nvidia.rtxremix.TextureFormat;
@@ -55,6 +57,7 @@ public final class GlInterop {
     }
     private static final int[] NO_BUFFERS = new int[0];
 
+    private final GlTargets.Attachment sourceAttachment = new GlTargets.Attachment();
     private final InteropImage colorImage = new InteropImage(true);
     private final InteropImage depthImage = new InteropImage(false);
     private final long dxvkDoneSemaphoreHandle;
@@ -173,7 +176,18 @@ public final class GlInterop {
         glFlush();
     }
 
-    public void copyFromFramebuffer(int sourceFbo) {
+    /** Copies the color attachment of a Minecraft render target into the Remix color image. */
+    public void copyFromRenderTarget(RenderTarget source) {
+        int texture = GlTargets.colorTextureId(source);
+        if (texture == 0) {
+            throw new IllegalStateException("The main render target has no OpenGL color texture");
+        }
+        // Minecraft leaves scissoring enabled for GUI clipping, and a blit honours it.
+        GlStateManager._disableScissorTest();
+        copyFromFramebuffer(sourceAttachment.fboFor(texture));
+    }
+
+    private void copyFromFramebuffer(int sourceFbo) {
         drainStaleGlErrors();
         if (!colorImage.available()) {
             return;
@@ -216,6 +230,7 @@ public final class GlInterop {
     }
 
     public void destroy() {
+        sourceAttachment.destroy();
         colorImage.destroy();
         depthImage.destroy();
         if (vkDoneSemaphore != 0) {
