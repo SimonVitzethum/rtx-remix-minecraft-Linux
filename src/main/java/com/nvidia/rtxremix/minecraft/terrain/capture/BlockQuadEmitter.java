@@ -57,9 +57,9 @@ import java.util.List;
  * <p>Lifecycle per section:
  * <ol>
  *   <li>{@link #beginSection}: reset state, called at HEAD of build()</li>
- *   <li>{@link #processBlock}: opacity/masks/lights, called per block from isOpaqueFullCube redirect</li>
+ *   <li>{@link #processBlock}: opacity/masks/lights, called per block from the RenderSectionRegion.getBlockState redirect</li>
  *   <li>{@link #emitBlock}: block model quads for MODEL blocks, called from the same
- *       isOpaqueFullCube redirect; vanilla's renderBlock never runs because captured
+ *       getBlockState redirect; vanilla's tesselateBlock never runs because captured
  *       blocks are reported invisible</li>
  *   <li>{@link #emitFluid}: fluid quads, called from renderFluid redirect</li>
  *   <li>{@link #finishSection}: build SectionBlockData, called at RETURN</li>
@@ -266,7 +266,7 @@ public final class BlockQuadEmitter {
 
     /**
      * Captures opacity bitmap, boundary face masks, and light-emitting
-     * blocks. Called once per block from the isOpaqueFullCube redirect.
+     * blocks. Called once per block from the getBlockState redirect.
      */
     public void processBlock(BlockState state, BlockGetter world, BlockPos pos, boolean opaque) {
         int lx = SectionPos.sectionRelative(pos.getX());
@@ -313,7 +313,7 @@ public final class BlockQuadEmitter {
 
     /**
      * Emits block model quads for the current block. Called from the
-     * isOpaqueFullCube redirect for blocks vanilla would hand to renderBlock,
+     * getBlockState redirect for blocks vanilla would hand to tesselateBlock,
      * a call the build then skips by reporting the block invisible. Bypasses
      * FRAPI/Indigo and writes directly to the DirectQuadWriter.
      */
