@@ -98,7 +98,7 @@ final class RtxBlockLightsScreen extends OptionsSubScreen {
             if (rebuild) {
                 RtxRemixMod.rebuildLoadedTerrain();
             }
-            this.minecraft.setScreen(new RtxBlockLightsScreen(this.lastScreen, settings, saveSettings));
+            this.minecraft.gui.setScreen(new RtxBlockLightsScreen(this.lastScreen, settings, saveSettings));
         }, Component.translatable(
                         "rtxremix.settings.reset.confirm.title",
                         Component.translatable("rtxremix.settings.blockLights.title")),
@@ -116,6 +116,6 @@ final class RtxBlockLightsScreen extends OptionsSubScreen {
         if (changed) {
             RtxRemixMod.rebuildLoadedTerrain();
         }
-        this.minecraft.setScreen(this.lastScreen);
+        this.minecraft.gui.setScreen(this.lastScreen);
     }
 }
