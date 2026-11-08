@@ -56,6 +56,8 @@ public final class CloudRenderer {
     static final int PALETTE_SIZE = 32;
     static final long PALETTE_SEED = 0x434C_4F55_4450_5546L;
     private static final long MAINTENANCE_INTERVAL_TICKS = 40L;
+    /** Marks the merged distant variant of a vanilla cloud chunk in the chunk maps. */
+    private static final long FLAT_KEY_BIT = 1L << 62;
     private static final double CURVATURE_RADIUS = 8000.0;
     private static final float DEFAULT_VANILLA_EDGE_SMOOTHNESS = 1.5f;
     private static final float VANILLA_BASE_THICKNESS = 4.0f;
@@ -76,6 +78,7 @@ public final class CloudRenderer {
     private final Set<Long> visibleKeys = new HashSet<>();
     private final Map<Long, PaletteEntry> vanillaChunks = new HashMap<>();
     private final Set<Long> emptyVanillaChunks = new HashSet<>();
+    private final Map<Long, int[]> vanillaLod = new HashMap<>();
     private final Set<Long> pendingVanillaChunks = new HashSet<>();
     private final ConcurrentLinkedQueue<PaletteGenerationResult> completedPaletteMeshes =
             new ConcurrentLinkedQueue<>();
@@ -438,8 +441,8 @@ public final class CloudRenderer {
         }
     }
 
-    private void scheduleVanillaChunk(VanillaCloudPlacement.Placement placement) {
-        long textureKey = placement.textureKey();
+    private void scheduleVanillaChunk(VanillaCloudPlacement.Placement placement, boolean flat) {
+        long textureKey = flat ? placement.textureKey() ^ FLAT_KEY_BIT : placement.textureKey();
         if (vanillaChunks.containsKey(textureKey)
                 || emptyVanillaChunks.contains(textureKey)
                 || !pendingVanillaChunks.add(textureKey)) {
@@ -452,7 +455,19 @@ public final class CloudRenderer {
         int textureHeight = vanillaTextureHeight;
         float height = VANILLA_BASE_THICKNESS * cloudSize;
         float edgeSmoothness = vanillaEdgeSmoothness;
-        CompletableFuture.supplyAsync(() -> VanillaCloudMeshGenerator.generate(
+        CompletableFuture.supplyAsync(() -> flat
+                ? VanillaCloudMeshGenerator.generateFlat(
+                        occupancy,
+                        textureWidth,
+                        textureHeight,
+                        placement.textureX(),
+                        placement.textureZ(),
+                        placement.windowWidth(),
+                        placement.windowHeight(),
+                        placement.cellSizeX(),
+                        placement.cellSizeZ(),
+                        height)
+                : VanillaCloudMeshGenerator.generate(
                         occupancy,
                         textureWidth,
                         textureHeight,
@@ -624,6 +639,7 @@ public final class CloudRenderer {
 
         publishVanillaChunks();
         RemixAPI api = renderer.getRemixApi();
+        int lodBase = CloudLod.getDistance();
         VanillaCloudPlacement.forEachVisible(
                 cameraPos.x,
                 cameraPos.z,
@@ -631,12 +647,32 @@ public final class CloudRenderer {
                 vanillaTextureWidth,
                 vanillaTextureHeight,
                 placement -> {
-                    PaletteEntry entry = vanillaChunks.get(placement.textureKey);
-                    if (entry == null) {
-                        if (!emptyVanillaChunks.contains(placement.textureKey)) {
-                            scheduleVanillaChunk(placement.snapshot());
+                    double nearestX = Math.max(placement.x,
+                            Math.min(cameraPos.x, placement.x + placement.worldWidth));
+                    double nearestZ = Math.max(placement.z,
+                            Math.min(cameraPos.z, placement.z + placement.worldDepth));
+                    long stateKey = placement.textureKey * 31L
+                            + placement.repeatX * 1_000_003L + placement.repeatZ;
+                    int[] state = vanillaLod.computeIfAbsent(stateKey, k -> new int[1]);
+                    int level = CloudLod.select(
+                            Math.hypot(nearestX - cameraPos.x, nearestZ - cameraPos.z),
+                            state[0], lodBase, 1);
+                    state[0] = level;
+                    long fullKey = placement.textureKey;
+                    long flatKey = fullKey ^ FLAT_KEY_BIT;
+                    PaletteEntry full = vanillaChunks.get(fullKey);
+                    PaletteEntry flat = vanillaChunks.get(flatKey);
+                    PaletteEntry entry = level == 0
+                            ? (full != null ? full : flat)
+                            : (flat != null ? flat : full);
+                    if (entry == null || (level == 0 ? full == null : flat == null)) {
+                        if (!emptyVanillaChunks.contains(fullKey)
+                                && !emptyVanillaChunks.contains(flatKey)) {
+                            scheduleVanillaChunk(placement.snapshot(), level != 0);
                         }
-                        return;
+                        if (entry == null) {
+                            return;
+                        }
                     }
 
                     float[] matrix = vanillaTransform.matrix;
@@ -883,6 +919,7 @@ public final class CloudRenderer {
         } finally {
             vanillaChunks.clear();
             emptyVanillaChunks.clear();
+            vanillaLod.clear();
             vanillaFailure = null;
         }
     }

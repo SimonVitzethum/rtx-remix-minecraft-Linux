@@ -73,6 +73,10 @@ final class VanillaCloudPlacement {
                                 cameraZ)) {
                             continue;
                         }
+                        cursor.repeatX = repeatX;
+                        cursor.repeatZ = repeatZ;
+                        cursor.worldWidth = (float) worldWidth;
+                        cursor.worldDepth = (float) worldDepth;
                         cursor.textureKey = key(partitionX, partitionZ);
                         cursor.textureX = textureX;
                         cursor.textureZ = textureZ;
@@ -131,6 +135,10 @@ final class VanillaCloudPlacement {
     /** The traversal's reused view of the current placement. */
     static final class Cursor {
         long textureKey;
+        int repeatX;
+        int repeatZ;
+        float worldWidth;
+        float worldDepth;
         int textureX;
         int textureZ;
         int windowWidth;

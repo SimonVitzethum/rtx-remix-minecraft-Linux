@@ -383,4 +383,63 @@ class VanillaCloudMeshGeneratorTest {
 
     private record PositionEdge(Position first, Position second) {
     }
+
+    @Test
+    void flatVariantCoversTheSameFacePlanesWithFarFewerTriangles() {
+        java.util.Random random = new java.util.Random(7);
+        int w = 24;
+        int h = 20;
+        boolean[] occupied = new boolean[w * h];
+        for (int i = 0; i < occupied.length; i++) {
+            occupied[i] = random.nextFloat() < 0.6f;
+        }
+        for (int[] window : new int[][] {{0, 0, 24, 20}, {5, 3, 10, 9}, {20, 15, 8, 8}}) {
+            VanillaCloudMeshGenerator.GeneratedMesh full = VanillaCloudMeshGenerator.generate(
+                    occupied, w, h, window[0], window[1], window[2], window[3],
+                    12.0f, 12.0f, DEFAULT_HEIGHT, DEFAULT_SMOOTHNESS);
+            VanillaCloudMeshGenerator.GeneratedMesh flat = VanillaCloudMeshGenerator.generateFlat(
+                    occupied, w, h, window[0], window[1], window[2], window[3],
+                    12.0f, 12.0f, DEFAULT_HEIGHT);
+            double[] fullAreas = areaByDirection(full);
+            double[] flatAreas = areaByDirection(flat);
+            for (int d = 0; d < 6; d++) {
+                assertEquals(fullAreas[d], flatAreas[d], 1.0e-2 * Math.max(1.0, fullAreas[d]),
+                        "direction " + d + " window " + Arrays.toString(window));
+            }
+            assertTrue(flat.triangleCount() * 4 < full.triangleCount());
+            for (int index : flat.indices()) {
+                assertTrue(index >= 0 && index < flat.vertexCount());
+            }
+        }
+    }
+
+    /** Sums geometric triangle area per axis direction (+x, -x, +y, -y, +z, -z); asserts axis-aligned. */
+    private static double[] areaByDirection(VanillaCloudMeshGenerator.GeneratedMesh mesh) {
+        double[] areas = new double[6];
+        float[] v = mesh.vertices();
+        int[] idx = mesh.indices();
+        for (int t = 0; t < idx.length; t += 3) {
+            double[] a = pos(v, idx[t]);
+            double[] b = pos(v, idx[t + 1]);
+            double[] c = pos(v, idx[t + 2]);
+            double[] e1 = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+            double[] e2 = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+            double[] n = {e1[1] * e2[2] - e1[2] * e2[1],
+                    e1[2] * e2[0] - e1[0] * e2[2],
+                    e1[0] * e2[1] - e1[1] * e2[0]};
+            int axis = 0;
+            for (int i = 1; i < 3; i++) {
+                if (Math.abs(n[i]) > Math.abs(n[axis])) {
+                    axis = i;
+                }
+            }
+            double area = Math.abs(n[axis]) / 2.0;
+            areas[axis * 2 + (n[axis] > 0 ? 0 : 1)] += area;
+        }
+        return areas;
+    }
+
+    private static double[] pos(float[] v, int i) {
+        return new double[] {v[i * 6], v[i * 6 + 1], v[i * 6 + 2]};
+    }
 }

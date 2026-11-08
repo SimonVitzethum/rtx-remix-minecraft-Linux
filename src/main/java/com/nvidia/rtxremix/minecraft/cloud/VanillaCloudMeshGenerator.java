@@ -133,6 +133,176 @@ final class VanillaCloudMeshGenerator {
                 System.nanoTime() - start);
     }
 
+    /**
+     * Distant variant of {@link #generate}: no bevel and no subdivision, with coplanar faces
+     * merged. Tops and bottoms become maximal rectangles over the window's occupied cells and
+     * each exposed side becomes one quad per run of consecutive exposed cells. Covers exactly
+     * the area the full mesh does; only the sub-pixel bevel at distance is dropped.
+     */
+    static GeneratedMesh generateFlat(
+            boolean[] occupied,
+            int textureWidth,
+            int textureHeight,
+            int textureX,
+            int textureZ,
+            int width,
+            int height,
+            float cellSizeX,
+            float cellSizeZ,
+            float cloudHeight) {
+        if (textureWidth <= 0
+                || textureHeight <= 0
+                || occupied.length != textureWidth * textureHeight
+                || width <= 0
+                || height <= 0
+                || cellSizeX <= 0.0f
+                || cellSizeZ <= 0.0f
+                || cloudHeight <= 0.0f) {
+            throw new IllegalArgumentException("Invalid cloud occupancy dimensions");
+        }
+        long start = System.nanoTime();
+        MeshBuilder mesh = new MeshBuilder();
+        boolean[] window = new boolean[width * height];
+        for (int z = 0; z < height; z++) {
+            for (int x = 0; x < width; x++) {
+                window[z * width + x] =
+                        occupied(occupied, textureWidth, textureHeight, textureX + x, textureZ + z);
+            }
+        }
+
+        boolean[] used = new boolean[window.length];
+        for (int z = 0; z < height; z++) {
+            for (int x = 0; x < width; x++) {
+                if (!window[z * width + x] || used[z * width + x]) {
+                    continue;
+                }
+                int runX = 1;
+                while (x + runX < width
+                        && window[z * width + x + runX]
+                        && !used[z * width + x + runX]) {
+                    runX++;
+                }
+                int runZ = 1;
+                boolean grow = true;
+                while (grow && z + runZ < height) {
+                    for (int i = 0; i < runX; i++) {
+                        int index = (z + runZ) * width + x + i;
+                        if (!window[index] || used[index]) {
+                            grow = false;
+                            break;
+                        }
+                    }
+                    if (grow) {
+                        runZ++;
+                    }
+                }
+                for (int dz = 0; dz < runZ; dz++) {
+                    for (int dx = 0; dx < runX; dx++) {
+                        used[(z + dz) * width + x + dx] = true;
+                    }
+                }
+                float x0 = x * cellSizeX;
+                float x1 = (x + runX) * cellSizeX;
+                float z0 = z * cellSizeZ;
+                float z1 = (z + runZ) * cellSizeZ;
+                int top = mesh.vertex(x0, cloudHeight, z0, 0.0f, 1.0f, 0.0f);
+                mesh.vertex(x0, cloudHeight, z1, 0.0f, 1.0f, 0.0f);
+                mesh.vertex(x1, cloudHeight, z1, 0.0f, 1.0f, 0.0f);
+                mesh.vertex(x1, cloudHeight, z0, 0.0f, 1.0f, 0.0f);
+                mesh.quad(top, false);
+                int bottom = mesh.vertex(x0, 0.0f, z1, 0.0f, -1.0f, 0.0f);
+                mesh.vertex(x0, 0.0f, z0, 0.0f, -1.0f, 0.0f);
+                mesh.vertex(x1, 0.0f, z0, 0.0f, -1.0f, 0.0f);
+                mesh.vertex(x1, 0.0f, z1, 0.0f, -1.0f, 0.0f);
+                mesh.quad(bottom, false);
+            }
+        }
+
+        // West and east faces: runs along z inside one column.
+        for (int x = 0; x < width; x++) {
+            for (int side = 0; side < 2; side++) {
+                int neighbour = side == 0 ? -1 : 1;
+                int z = 0;
+                while (z < height) {
+                    if (!exposed(window, occupied, textureWidth, textureHeight,
+                            textureX, textureZ, width, height, x, z, neighbour, 0)) {
+                        z++;
+                        continue;
+                    }
+                    int end = z + 1;
+                    while (end < height && exposed(window, occupied, textureWidth, textureHeight,
+                            textureX, textureZ, width, height, x, end, neighbour, 0)) {
+                        end++;
+                    }
+                    addFlatSide(mesh, (x + side) * cellSizeX, z * cellSizeZ, end * cellSizeZ,
+                            cloudHeight, side == 0 ? -1.0f : 1.0f, 0.0f);
+                    z = end;
+                }
+            }
+        }
+        // North and south faces: runs along x inside one row.
+        for (int z = 0; z < height; z++) {
+            for (int side = 0; side < 2; side++) {
+                int neighbour = side == 0 ? -1 : 1;
+                int x = 0;
+                while (x < width) {
+                    if (!exposed(window, occupied, textureWidth, textureHeight,
+                            textureX, textureZ, width, height, x, z, 0, neighbour)) {
+                        x++;
+                        continue;
+                    }
+                    int end = x + 1;
+                    while (end < width && exposed(window, occupied, textureWidth, textureHeight,
+                            textureX, textureZ, width, height, end, z, 0, neighbour)) {
+                        end++;
+                    }
+                    addFlatSide(mesh, (z + side) * cellSizeZ, x * cellSizeX, end * cellSizeX,
+                            cloudHeight, 0.0f, side == 0 ? -1.0f : 1.0f);
+                    x = end;
+                }
+            }
+        }
+
+        return new GeneratedMesh(
+                mesh.vertices(),
+                mesh.indices(),
+                System.nanoTime() - start);
+    }
+
+    /** True if the window cell is occupied and its neighbour (dx, dz) in the texture is not. */
+    private static boolean exposed(
+            boolean[] window, boolean[] occupied, int textureWidth, int textureHeight,
+            int textureX, int textureZ, int width, int height,
+            int x, int z, int dx, int dz) {
+        return window[z * width + x]
+                && !occupied(occupied, textureWidth, textureHeight,
+                        textureX + x + dx, textureZ + z + dz);
+    }
+
+    /** One side quad. A normal of +-X puts {@code fixed} on x and the run on z; +-Z the reverse. */
+    private static void addFlatSide(
+            MeshBuilder mesh, float fixed, float v0, float v1, float cloudHeight,
+            float nx, float nz) {
+        boolean alongX = nx == 0.0f;
+        // Same winding as addSideFace: -X and +Z run low to high, +X and -Z high to low.
+        boolean lowFirst = nx < 0.0f || nz > 0.0f;
+        float a = lowFirst ? v0 : v1;
+        float b = lowFirst ? v1 : v0;
+        int first = flatSideVertex(mesh, alongX, fixed, a, 0.0f, nx, nz);
+        flatSideVertex(mesh, alongX, fixed, b, 0.0f, nx, nz);
+        flatSideVertex(mesh, alongX, fixed, b, cloudHeight, nx, nz);
+        flatSideVertex(mesh, alongX, fixed, a, cloudHeight, nx, nz);
+        mesh.quad(first, false);
+    }
+
+    private static int flatSideVertex(
+            MeshBuilder mesh, boolean alongX, float fixed, float variable, float y,
+            float nx, float nz) {
+        return alongX
+                ? mesh.vertex(variable, y, fixed, nx, 0.0f, nz)
+                : mesh.vertex(fixed, y, variable, nx, 0.0f, nz);
+    }
+
     private static int supportCoordinates(
             float[] coordinates,
             float cellSize,
