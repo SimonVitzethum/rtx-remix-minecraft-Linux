@@ -267,6 +267,8 @@ public class RtxRemixMod implements ClientModInitializer {
         if (renderer == null || !renderer.isInitialized()) {
             return;
         }
+        com.nvidia.rtxremix.minecraft.input.RemixInputTestScript.tick();
+        syncTextInput();
         RemixInputGate.VisibilityChange change;
         try {
             change = REMIX_INPUT_GATE.followVisibility(REMIX_CONFIG_READER);
@@ -2209,6 +2211,23 @@ public class RtxRemixMod implements ClientModInitializer {
         shutdownRemix();
     }
 
+    /**
+     * SDL only delivers text events while text input is started, which vanilla does for focused
+     * edit boxes alone. The Remix menus take typed characters, so the gate's owner keeps it started
+     * while capture is open (vanilla's own setScreen stops it unconditionally, hence per frame).
+     */
+    private static void syncTextInput() {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null || client.getWindow() == null) {
+            return;
+        }
+        if (REMIX_INPUT_GATE.isCaptureSessionOpen()) {
+            client.textInputManager().startTextInput(REMIX_INPUT_GATE);
+        } else {
+            client.textInputManager().stopTextInput(REMIX_INPUT_GATE);
+        }
+    }
+
     private static void releaseRemixMenuCapture() {
         try {
             REMIX_INPUT_GATE.close((option, value) ->
@@ -2217,6 +2236,7 @@ public class RtxRemixMod implements ClientModInitializer {
             LOGGER.warn("Failed to hide Remix menu while releasing input capture", e);
         } finally {
             KeyMapping.releaseAll();
+            syncTextInput();
         }
     }
 
