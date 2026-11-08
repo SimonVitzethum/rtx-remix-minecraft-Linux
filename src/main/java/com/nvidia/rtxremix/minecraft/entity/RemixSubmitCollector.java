@@ -17,6 +17,7 @@ import net.minecraft.client.renderer.block.MovingBlockRenderState;
 import net.minecraft.client.renderer.block.ModelBlockRenderer;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.client.resources.model.ModelBakery;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
 import net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives;
@@ -58,9 +59,10 @@ import org.jspecify.annotations.Nullable;
  * stack the renderer passed in; {@code ModelPartMixin} and {@code CuboidMixin} then
  * turn its cuboids into rigid parts keyed by identity, as before.
  *
- * <p>Submits that have no Remix counterpart (blob shadows, crumbling overlays, shape
+ * <p>Submits that have no Remix counterpart (blob shadows, shape
  * outlines, gizmos, particle groups) are dropped here: Remix traces real shadows, the
- * block-breaking crack and block outline have their own passes, and particles are
+ * block-breaking crack of a block and block outline have their own passes (a block entity's
+ * crumbling overlay is captured here as a destroy-stage layer), and particles are
  * captured from the live particle engine.
  */
 public final class RemixSubmitCollector implements SubmitNodeCollector {
@@ -70,6 +72,7 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
 
     private final RemixVertexConsumerProvider provider;
     private final QuadInstance quadInstance = new QuadInstance();
+    private final RemixBlockDamagePass.CrackProjector crackProjector = new RemixBlockDamagePass.CrackProjector();
     private final Matrix4f scratchPose = new Matrix4f();
 
     public RemixSubmitCollector(RemixVertexConsumerProvider provider) {
@@ -97,6 +100,19 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
                                            RenderType renderType, int lightCoords, int overlayCoords,
                                            int tintedColor,
                                            ModelFeatureRenderer.CrumblingOverlay crumblingOverlay) {
+        // The block-entity crack: the model is evaluated a second time into the destroy-stage
+        // layer through the same projection the block-breaking crack uses. The pose stack is
+        // the pass's block-local one, so the projected coordinates are block-relative as in
+        // vanilla's camera-pose projection. The layer is a later one of the capture and so
+        // stands one shell off the surface beneath it.
+        List<RenderType> destroyTypes = ModelBakery.DESTROY_TYPES;
+        int progress = crumblingOverlay.progress();
+        if (!renderType.affectsCrumbling() || progress < 0 || progress >= destroyTypes.size()) {
+            return;
+        }
+        VertexConsumer crack = crackProjector.target(provider.getBuffer(destroyTypes.get(progress)));
+        model.setupAnim(state);
+        model.renderToBuffer(poseStack, crack, lightCoords, overlayCoords, tintedColor);
     }
 
     @Override
