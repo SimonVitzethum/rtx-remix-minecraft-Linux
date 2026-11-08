@@ -39,7 +39,13 @@ public abstract class RenderedChunkMixin implements RegionSnapshotRelease {
 
     private final AtomicInteger rtxremix$regions = new AtomicInteger();
 
-    @Inject(method = "<init>", at = @At("HEAD"))
+    // A HEAD injection into a constructor would run before super() and would have to be static, so the pooled-copy
+    // window opens right before the section's palette is copied, which is the only allocation that needs the pool.
+    @Inject(
+            method = "<init>",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/world/level/chunk/PalettedContainer;copy()Lnet/minecraft/world/level/chunk/PalettedContainer;"))
     private void rtxremix$beginPooledCopy(CallbackInfo ci) {
         RenderRegionStoragePool.beginCopying();
     }
