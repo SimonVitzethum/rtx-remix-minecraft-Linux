@@ -720,7 +720,6 @@ public class RemixEntityPass {
                                                  EntityRenderDispatcher dispatcher,
                                                  float tickDelta,
                                                  boolean firstPersonLocalPlayer) {
-        Vec3 entityPos = entity.getPosition(tickDelta);
         float yaw = Mth.lerp(tickDelta, entity.yRotO, entity.getYRot());
 
         // Vanilla's extraction already produced this frame's render state for an entity
@@ -729,6 +728,8 @@ public class RemixEntityPass {
         if (renderState == null) {
             renderState = dispatcher.extractEntity(entity, tickDelta);
         }
+        // The state's position is the interpolated one vanilla would draw at.
+        Vec3 entityPos = new Vec3(renderState.x, renderState.y, renderState.z);
 
         provider.beginEntity();
         EntityRenderContext ctx = EntityRenderContext.get();
