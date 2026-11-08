@@ -42,6 +42,7 @@ public final class RemixInputTestScript {
     private static final Logger LOGGER = LoggerFactory.getLogger("RemixInputTest");
     private static final String PROPERTY = "rtxremix.test.script";
     private static final String ENVIRONMENT = "RTXREMIX_TEST_SCRIPT";
+    private static final String FILE_NAME = "rtxremix-test-script.txt";
 
     private record Step(double time, String[] words) {
     }
@@ -59,6 +60,12 @@ public final class RemixInputTestScript {
     private static void load() {
         loaded = true;
         String path = System.getProperty(PROPERTY, System.getenv(ENVIRONMENT));
+        if (path == null || path.isBlank()) {
+            // Launchers such as Prism do not pass the environment through and rewrite their JVM
+            // arguments, so a file in the game directory is a third way to arm the hook.
+            Path file = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve(FILE_NAME);
+            path = Files.exists(file) ? file.toString() : null;
+        }
         if (path == null || path.isBlank()) {
             return;
         }
