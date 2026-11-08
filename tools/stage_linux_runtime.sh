@@ -49,8 +49,10 @@ cp "$root/tools/linux/precompile.sh" "$out/precompile.sh"
 # Every library finds its siblings through $ORIGIN, so the directory can move anywhere.
 if command -v patchelf >/dev/null; then
     # libNRD.so has no sibling dependencies and patchelf corrupts it (the denoiser then outputs zeros), so it stays untouched.
+    # The NGX snippets (libnvidia-ngx-*) are signed: any byte change (patchelf) makes NGX reject them with
+    # "Signature does not match" and NGX reports FeatureNotFound (0xbad00004), so they stay untouched too.
     for lib in "$out"/*.so*; do
-        case "$(basename "$lib")" in libNRD.so) continue ;; esac
+        case "$(basename "$lib")" in libNRD.so|libnvidia-ngx-*) continue ;; esac
         patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true
     done
 fi
