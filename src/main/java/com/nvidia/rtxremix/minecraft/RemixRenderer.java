@@ -4,6 +4,7 @@
  */
 package com.nvidia.rtxremix.minecraft;
 
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.nvidia.rtxremix.CameraInfo;
 import com.nvidia.rtxremix.CameraInfoParameterizedEXT;
@@ -143,6 +144,12 @@ public class RemixRenderer {
     private boolean submitFrameCalled = false;
     private boolean presentFailureLogged = false;
     private int presentedFrames = 0;
+
+    /** Logs the window, render target, and interop image sizes once per change when enabled. */
+    private static final boolean LOG_INTEROP_SIZES = Boolean.getBoolean("rtxremix.debug.interopSizes");
+    private int lastLoggedWinWidth = -1, lastLoggedWinHeight = -1;
+    private int lastLoggedRtWidth = -1, lastLoggedRtHeight = -1;
+    private long lastLoggedImageHandle = Long.MIN_VALUE, lastLoggedDepthHandle = Long.MIN_VALUE;
 
     // Scene managers
     private ChunkManager chunkManager;
@@ -1456,10 +1463,13 @@ public class RemixRenderer {
                 remixApi.present(presentInfo);
             }
             presentedFrames++;
-            submitFrameCalled = false;
         } catch (Exception e) {
             failed = true;
             logPresentFailureOnce("Error presenting frame", e);
+        } finally {
+            // A frame is exchanged with Remix exactly once: a failed present still consumed the
+            // submit, so the next frame must be allowed to submit again.
+            submitFrameCalled = false;
         }
         if (!failed) {
             presentFailureLogged = false;
@@ -1516,6 +1526,40 @@ public class RemixRenderer {
         return interopGlVk;
     }
 
+    /**
+     * Logs the window, main render target, and interop color/depth sizes once per change, under
+     * {@code -Drtxremix.debug.interopSizes=true}. The sizes only have to agree at the moment of a
+     * copy; this is what decides whether a black frame is a size drift or a content problem.
+     */
+    private void logInteropSizes(InteropInfo info) {
+        if (!LOG_INTEROP_SIZES) {
+            return;
+        }
+        Minecraft client = Minecraft.getInstance();
+        com.mojang.blaze3d.platform.Window window = client.getWindow();
+        RenderTarget target = client.gameRenderer.mainRenderTarget();
+        int winWidth = window != null ? window.getWidth() : 0;
+        int winHeight = window != null ? window.getHeight() : 0;
+        int rtWidth = target != null ? target.width : 0;
+        int rtHeight = target != null ? target.height : 0;
+        if (winWidth == lastLoggedWinWidth && winHeight == lastLoggedWinHeight
+                && rtWidth == lastLoggedRtWidth && rtHeight == lastLoggedRtHeight
+                && info.imageMemory_Handle == lastLoggedImageHandle
+                && info.depthImageMemory_Handle == lastLoggedDepthHandle) {
+            return;
+        }
+        lastLoggedWinWidth = winWidth;
+        lastLoggedWinHeight = winHeight;
+        lastLoggedRtWidth = rtWidth;
+        lastLoggedRtHeight = rtHeight;
+        lastLoggedImageHandle = info.imageMemory_Handle;
+        lastLoggedDepthHandle = info.depthImageMemory_Handle;
+        LOGGER.info("Interop sizes: window={}x{} renderTarget={}x{} color={}x{} depth={}x{} dxvkDoneToWait={} clientDone={}",
+                winWidth, winHeight, rtWidth, rtHeight,
+                info.width, info.height, info.depthWidth, info.depthHeight,
+                info.dxvkDoneSemaphore_ValueToWait, interopGlVk != null ? interopGlVk.getClientDoneSemaphoreValue() : 0);
+    }
+
     private void blitGlToRemix(GlInterop interop) {
         if (!submitFrameCalled) {
             // if there was no submitFrame, then interop image might not be allocated yet
@@ -1525,6 +1569,7 @@ public class RemixRenderer {
 
         // must be called after Submit(), which allocates the image
         InteropInfo interopInfo = remixApi.dxvkGetInteropInfo();
+        logInteropSizes(interopInfo);
         interop.recreateImagesIf(interopInfo);
 
         // Every Submit hands the shared image from Vulkan to GL. The world
