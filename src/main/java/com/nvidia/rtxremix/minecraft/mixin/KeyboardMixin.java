@@ -8,10 +8,11 @@ import com.nvidia.rtxremix.minecraft.RtxRemixMod;
 import com.nvidia.rtxremix.minecraft.input.LinuxOverlayInput;
 import com.nvidia.rtxremix.minecraft.input.RemixInputGate;
 import com.nvidia.rtxremix.minecraft.input.RemixKeyboardAccess;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyboardHandler;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.screens.Screen;
-import org.lwjgl.glfw.GLFW;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -23,7 +24,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * Alt+X without Control toggles the overlay, and while its capture session is open every key
  * and character is withheld from Minecraft. Plain R toggles camera recording once an in-game
  * command has armed it, and = and - scrub time of day while recording. Injecting into
- * {@code Keyboard.onKey} runs this at GLFW key-event time, so the modifier mask is read the
+ * {@code KeyboardHandler.keyPress} runs this at SDL key-event time, so the modifier mask is read the
  * instant the key is pressed. Matched shortcuts cancel the event so vanilla does not also
  * handle it.
  */
@@ -42,14 +43,15 @@ public class KeyboardMixin implements RemixKeyboardAccess {
     private boolean usedDebugKeyAsModifier;
 
     @Inject(method = "keyPress", at = @At("HEAD"), cancellable = true)
-    private void rtxremix$onKey(long window, int key, int scancode, int action, int mods, CallbackInfo ci) {
+    private void rtxremix$onKey(long window, int action, KeyEvent event, CallbackInfo ci) {
         Minecraft client = Minecraft.getInstance();
-        boolean altDown = action == GLFW.GLFW_PRESS
-                && key == GLFW.GLFW_KEY_X
-                && ((mods & GLFW.GLFW_MOD_ALT) != 0 || Screen.hasAltDown());
-        boolean controlDown = action == GLFW.GLFW_PRESS
-                && key == GLFW.GLFW_KEY_X
-                && ((mods & GLFW.GLFW_MOD_CONTROL) != 0 || Screen.hasControlDown());
+        int key = event.key();
+        boolean altDown = action == InputConstants.PRESS
+                && key == InputConstants.KEY_X
+                && event.hasAltDown();
+        boolean controlDown = action == InputConstants.PRESS
+                && key == InputConstants.KEY_X
+                && event.hasControlDown();
         RemixInputGate.KeyDecision decision = RtxRemixMod.getRemixInputGate().onKey(
                 key, action, altDown, controlDown);
 
@@ -66,26 +68,26 @@ public class KeyboardMixin implements RemixKeyboardAccess {
             RtxRemixMod.toggleRemixMenu();
             return;
         }
-        if (client.screen != null
-                || (action != GLFW.GLFW_PRESS && action != GLFW.GLFW_REPEAT)) {
+        if (client.gui.screen() != null
+                || (action != InputConstants.PRESS && action != InputConstants.REPEAT)) {
             return;
         }
 
-        if (action == GLFW.GLFW_PRESS
-                && key == GLFW.GLFW_KEY_R
+        if (action == InputConstants.PRESS
+                && key == InputConstants.KEY_R
                 && RtxRemixMod.shouldHandlePlainPathRecordingShortcut()) {
             ci.cancel();
             RtxRemixMod.togglePathRecording();
-        } else if (RtxRemixMod.handleCameraTimeShortcut(key, action, mods)) {
+        } else if (RtxRemixMod.handleCameraTimeShortcut(key, action, event.modifiers())) {
             ci.cancel();
         }
     }
 
     @Inject(method = "charTyped", at = @At("HEAD"), cancellable = true)
-    private void rtxremix$onChar(long window, int codePoint, int mods, CallbackInfo ci) {
+    private void rtxremix$onChar(long window, CharacterEvent event, CallbackInfo ci) {
         if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
             if (LinuxOverlayInput.ENABLED) {
-                LinuxOverlayInput.character(codePoint);
+                LinuxOverlayInput.character(event.codepoint());
             }
             ci.cancel();
         }

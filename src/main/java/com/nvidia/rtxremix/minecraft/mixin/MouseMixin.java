@@ -7,9 +7,10 @@ package com.nvidia.rtxremix.minecraft.mixin;
 import com.nvidia.rtxremix.minecraft.RtxRemixMod;
 import com.nvidia.rtxremix.minecraft.input.LinuxOverlayInput;
 import com.nvidia.rtxremix.minecraft.input.RemixMouseAccess;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.MouseHandler;
-import org.lwjgl.glfw.GLFW;
+import net.minecraft.client.input.MouseButtonInfo;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -31,27 +32,22 @@ public abstract class MouseMixin implements RemixMouseAccess {
     private Minecraft minecraft;
 
     @Shadow
-    private int activeButton;
+    private MouseButtonInfo activeButton;
 
     @Shadow
-    private int clickDepth;
-
-    @Shadow
-    private void onButton(long window, int button, int action, int mods) { }
+    public abstract void onButton(long window, MouseButtonInfo button, int action);
 
     private boolean rtxremix$releasingActiveButton;
 
     @Override
     public void rtxremix$releaseActiveButton() {
-        if (activeButton == -1) {
+        if (activeButton == null) {
             return;
         }
 
-        // Touchscreen mode counts outstanding presses and suppresses intermediate releases.
-        clickDepth = minecraft.options.touchscreen().get() ? 1 : 0;
         rtxremix$releasingActiveButton = true;
         try {
-            onButton(minecraft.getWindow().handle(), activeButton, GLFW.GLFW_RELEASE, 0);
+            onButton(minecraft.getWindow().handle(), activeButton, InputConstants.RELEASE);
         } finally {
             rtxremix$releasingActiveButton = false;
         }
@@ -68,7 +64,7 @@ public abstract class MouseMixin implements RemixMouseAccess {
 
     @Inject(method = "onMove", at = @At("HEAD"), cancellable = true)
     private void rtxremix$blockMovementWhileMenuOpen(
-            long window, double cursorX, double cursorY, CallbackInfo ci) {
+            long window, double cursorX, double cursorY, double xrel, double yrel, CallbackInfo ci) {
         if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
             if (LinuxOverlayInput.ENABLED) {
                 LinuxOverlayInput.cursor(cursorX, cursorY);
@@ -103,13 +99,13 @@ public abstract class MouseMixin implements RemixMouseAccess {
     }
 
     @Inject(method = "onButton", at = @At("HEAD"), cancellable = true)
-    private void rtxremix$blockClickWhileMenuOpen(long window, int button, int action, int mods, CallbackInfo ci) {
+    private void rtxremix$blockClickWhileMenuOpen(long window, MouseButtonInfo button, int action, CallbackInfo ci) {
         boolean syntheticRelease = rtxremix$releasingActiveButton
-                && action == GLFW.GLFW_RELEASE
-                && button == activeButton;
+                && action == InputConstants.RELEASE
+                && button.equals(activeButton);
         if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen() && !syntheticRelease) {
             if (LinuxOverlayInput.ENABLED) {
-                LinuxOverlayInput.mouseButton(button, action);
+                LinuxOverlayInput.mouseButton(button.button(), action);
             }
             ci.cancel();
         }
