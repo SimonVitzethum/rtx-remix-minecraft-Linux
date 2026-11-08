@@ -36,7 +36,7 @@ class RemixRendererCameraFrameTest {
                 new RemixException("camera failed"), new IllegalStateException("camera failed")}) {
             Camera camera = new Camera() {
                 @Override
-                public Vec3 getPosition() {
+                public Vec3 position() {
                     throw error;
                 }
             };
@@ -60,7 +60,7 @@ class RemixRendererCameraFrameTest {
                 }
             };
 
-            assertDoesNotThrow(() -> update.invoke(renderer, camera, Vec3d.ZERO, 0.0f, 0.0f));
+            assertDoesNotThrow(() -> update.invoke(renderer, camera, Vec3.ZERO, 0.0f, 0.0f));
         }
     }
 }

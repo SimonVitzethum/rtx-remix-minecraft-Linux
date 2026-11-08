@@ -89,13 +89,13 @@ class SeededSurfaceScanTest {
             return new SeededSurfaceScan.Sections<>() {
                 @Override
                 public boolean isEmpty(int index) {
-                    return sectionEmpty(Objects.checkIndex(index, world.countVerticalSections()));
+                    return sectionEmpty(Objects.checkIndex(index, world.getSectionsCount()));
                 }
 
                 @Override
                 public Integer state(int index, int localX, int localY, int localZ) {
-                    Objects.checkIndex(index, world.countVerticalSections());
-                    return Column.this.state(localX, ChunkSectionPos.getBlockCoord(world.sectionIndexToCoord(index)) + localY, localZ);
+                    Objects.checkIndex(index, world.getSectionsCount());
+                    return Column.this.state(localX, SectionPos.sectionToBlockCoord(world.getSectionYFromSectionIndex(index)) + localY, localZ);
                 }
             };
         }
@@ -275,8 +275,8 @@ class SeededSurfaceScanTest {
         // the seed is at most vanilla's own start, the bottom of the section above the
         // highest non-empty one, where the walk is vanilla's exactly.
         Column c = flat(-64, 384, 70, SOLID);
-        assertMatchesOracle(c, (x, z) -> c.world.getTopY() + 200);
-        assertMatchesOracle(c, (x, z) -> c.world.getTopY());
+        assertMatchesOracle(c, (x, z) -> (c.world.getMaxY() + 1) + 200);
+        assertMatchesOracle(c, (x, z) -> (c.world.getMaxY() + 1));
     }
 
     @Test

@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
 import net.minecraft.client.model.geom.ModelPart;
-import net.minecraft.client.resources.model.BlockModelRotation;
+import com.mojang.math.Quadrant;
 import net.minecraft.core.Direction;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -67,12 +67,12 @@ class CopperBeaconBlockEntityRendererTest {
         float[] angles = {-360.0f, -180.0f, -45.0f, 0.0f, 90.0f, 360.0f};
         ModelPart yoke = CopperBeaconBlockEntityRenderer
                 .getBodyTexturedModelData()
-                .createModel()
+                .bakeRoot()
                 .getChild("yoke");
         ModelPart head = yoke.getChild("head");
         ModelPart lens = CopperBeaconBlockEntityRenderer
                 .getLensTexturedModelData()
-                .createModel()
+                .bakeRoot()
                 .getChild("lens");
         PoseStack matrices = new PoseStack();
         Vector3f headDirection = new Vector3f();
@@ -84,7 +84,7 @@ class CopperBeaconBlockEntityRendererTest {
                     continue;
                 }
                 matrices.pushPose();
-                matrices.mulPose(
+                matrices.rotate(
                         CopperBeaconBlockEntityRenderer.mountingRotation(mount, forward));
                 for (float yaw : angles) {
                     for (float pitch : angles) {
@@ -150,7 +150,7 @@ class CopperBeaconBlockEntityRendererTest {
     void headIsAChildOfTheYawFork() {
         ModelPart root = CopperBeaconBlockEntityRenderer
                 .getBodyTexturedModelData()
-                .createModel();
+                .bakeRoot();
         assertTrue(root.hasChild("yoke"));
         assertTrue(root.getChild("yoke").hasChild("head"));
         assertFalse(root.hasChild("head"));
@@ -290,8 +290,7 @@ class CopperBeaconBlockEntityRendererTest {
                     readBaseModelDirection(variant.get("model").getAsString());
             directions.put(
                     mount,
-                    BlockModelRotation.by(x, y)
-                            .actualRotation()
+                    Quadrant.fromXYAngles(Quadrant.parseJson(x), Quadrant.parseJson(y))
                             .rotate(unrotatedDirection));
         }
         return directions;

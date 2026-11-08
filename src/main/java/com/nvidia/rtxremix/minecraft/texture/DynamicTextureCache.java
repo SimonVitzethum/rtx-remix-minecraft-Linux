@@ -174,7 +174,7 @@ public final class DynamicTextureCache {
         synchronized (TEXTURE_IDS) {
             for (var entry : TEXTURE_IDS.entrySet()) {
                 if (!(entry.getKey() instanceof DynamicTexture texture)
-                        || texture.getPixels() != null) {
+                        || !texture.getPixels().isClosed()) {
                     liveIds.add(entry.getValue());
                 }
             }
