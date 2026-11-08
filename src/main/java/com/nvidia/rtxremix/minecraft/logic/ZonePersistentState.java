@@ -4,13 +4,18 @@
  */
 package com.nvidia.rtxremix.minecraft.logic;
 
-import net.minecraft.core.HolderLookup;
+import com.mojang.datafixers.util.Pair;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.DataResult;
+import com.mojang.serialization.DynamicOps;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.datafix.DataFixTypes;
 import net.minecraft.world.level.saveddata.SavedData;
+import net.minecraft.world.level.saveddata.SavedDataType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,7 +38,6 @@ import java.util.Objects;
  */
 public final class ZonePersistentState extends SavedData {
     private static final Logger LOGGER = LoggerFactory.getLogger(ZonePersistentState.class);
-    private static final String DATA_ID = "rtx_remix_zones";
     private static final int SCHEMA_VERSION = 1;
 
     private static final String VERSION_KEY = "version";
@@ -44,10 +48,62 @@ public final class ZonePersistentState extends SavedData {
     private static final String SPHERE_SHAPE = "sphere";
     private static final String BOX_SHAPE = "box";
 
-    private static final SavedData.Factory<ZonePersistentState> TYPE =
-            new SavedData.Factory<>(ZonePersistentState::new,
-                    ZonePersistentState::fromNbt,
-                    DataFixTypes.SAVED_DATA_COMMAND_STORAGE);
+    /**
+     * Codec for the world-save format. The saved-data storage in 26.3
+     * serializes through a {@link Codec} instead of the old
+     * {@code save/fromNbt} pair, so the schema check and the per-zone
+     * tolerance live here. The storage is fixed to NBT ({@code NbtOps});
+     * decode and encode therefore work on the raw tag types.
+     */
+    private static final Codec<ZonePersistentState> CODEC = new Codec<ZonePersistentState>() {
+        @Override
+        public <T> DataResult<T> encode(ZonePersistentState state, DynamicOps<T> ops, T prefix) {
+            CompoundTag nbt = new CompoundTag();
+            nbt.putInt(VERSION_KEY, SCHEMA_VERSION);
+            ListTag zones = new ListTag();
+            for (ZoneDefinition zone : state.snapshot()) {
+                zones.add(writeZone(zone));
+            }
+            nbt.put(ZONES_KEY, zones);
+            return DataResult.success((T) (Tag) nbt);
+        }
+
+        @Override
+        public <T> DataResult<Pair<ZonePersistentState, T>> decode(DynamicOps<T> ops, T input) {
+            if (!(input instanceof CompoundTag nbt)) {
+                return DataResult.error(() -> "RTX Remix zone state is not a compound tag");
+            }
+            if (!nbt.contains(VERSION_KEY) || nbt.getIntOr(VERSION_KEY, -1) != SCHEMA_VERSION) {
+                int version = nbt.getIntOr(VERSION_KEY, -1);
+                LOGGER.warn("Ignoring RTX Remix zone state schema version {} (expected {})",
+                        version, SCHEMA_VERSION);
+                return DataResult.success(Pair.of(new ZonePersistentState(false), input));
+            }
+            ZonePersistentState state = new ZonePersistentState();
+            if (!nbt.contains(ZONES_KEY)) {
+                return DataResult.success(Pair.of(state, input));
+            }
+            ListTag zones = nbt.getListOrEmpty(ZONES_KEY);
+            for (int i = 0; i < zones.size(); i++) {
+                try {
+                    ZoneDefinition zone = readZone(zones.getCompoundOrEmpty(i));
+                    ZoneDefinition previous = state.zonesByName.put(zone.name(), zone);
+                    if (previous != null) {
+                        LOGGER.warn("Duplicate saved RTX Remix zone '{}'; using the last definition", zone.name());
+                    }
+                } catch (IllegalArgumentException e) {
+                    LOGGER.warn("Ignoring malformed saved RTX Remix zone at index {}: {}", i, e.getMessage());
+                }
+            }
+            return DataResult.success(Pair.of(state, input));
+        }
+    };
+
+    private static final SavedDataType<ZonePersistentState> TYPE = new SavedDataType<>(
+            Identifier.withDefaultNamespace("rtx_remix_zones"),
+            ZonePersistentState::new,
+            CODEC,
+            DataFixTypes.SAVED_DATA_COMMAND_STORAGE);
 
     private final Map<String, ZoneDefinition> zonesByName = new HashMap<>();
     private final boolean writable;
@@ -70,7 +126,7 @@ public final class ZonePersistentState extends SavedData {
      * object it does not need.</p>
      */
     public static ZonePersistentState getOrCreate(MinecraftServer server) {
-        return server.overworld().getDataStorage().computeIfAbsent(TYPE, DATA_ID);
+        return server.overworld().getDataStorage().computeIfAbsent(TYPE);
     }
 
     /**
@@ -85,7 +141,7 @@ public final class ZonePersistentState extends SavedData {
      * depends on that behavior staying as it is.</p>
      */
     public static ZonePersistentState getIfPresent(MinecraftServer server) {
-        return server.overworld().getDataStorage().get(TYPE, DATA_ID);
+        return server.overworld().getDataStorage().get(TYPE);
     }
 
     /** Immutable, name-sorted copy safe to publish to the client/render registry. */
@@ -116,48 +172,6 @@ public final class ZonePersistentState extends SavedData {
         }
         setDirty();
         return true;
-    }
-
-    @Override
-    public CompoundTag save(CompoundTag nbt, HolderLookup.Provider registries) {
-        nbt.putInt(VERSION_KEY, SCHEMA_VERSION);
-        ListTag zones = new ListTag();
-        for (ZoneDefinition zone : snapshot()) {
-            zones.add(writeZone(zone));
-        }
-        nbt.put(ZONES_KEY, zones);
-        return nbt;
-    }
-
-    static ZonePersistentState fromNbt(CompoundTag nbt, HolderLookup.Provider registries) {
-        if (!nbt.contains(VERSION_KEY, Tag.TAG_INT)) {
-            LOGGER.warn("Ignoring RTX Remix zone state without a schema version");
-            return new ZonePersistentState(false);
-        }
-        int version = nbt.getInt(VERSION_KEY);
-        if (version != SCHEMA_VERSION) {
-            LOGGER.warn("Ignoring RTX Remix zone state schema version {} (expected {})",
-                    version, SCHEMA_VERSION);
-            return new ZonePersistentState(false);
-        }
-        ZonePersistentState state = new ZonePersistentState();
-        if (!nbt.contains(ZONES_KEY, Tag.TAG_LIST)) {
-            return state;
-        }
-
-        ListTag zones = nbt.getList(ZONES_KEY, Tag.TAG_COMPOUND);
-        for (int i = 0; i < zones.size(); i++) {
-            try {
-                ZoneDefinition zone = readZone(zones.getCompound(i));
-                ZoneDefinition previous = state.zonesByName.put(zone.name(), zone);
-                if (previous != null) {
-                    LOGGER.warn("Duplicate saved RTX Remix zone '{}'; using the last definition", zone.name());
-                }
-            } catch (IllegalArgumentException e) {
-                LOGGER.warn("Ignoring malformed saved RTX Remix zone at index {}: {}", i, e.getMessage());
-            }
-        }
-        return state;
     }
 
     private void requireWritable() {
@@ -215,16 +229,10 @@ public final class ZonePersistentState extends SavedData {
     }
 
     private static String requireString(CompoundTag nbt, String key) {
-        if (!nbt.contains(key, Tag.TAG_STRING)) {
-            throw new IllegalArgumentException("missing string '" + key + "'");
-        }
-        return nbt.getString(key);
+        return nbt.getString(key).orElseThrow(() -> new IllegalArgumentException("missing string '" + key + "'"));
     }
 
     private static double requireDouble(CompoundTag nbt, String key) {
-        if (!nbt.contains(key, Tag.TAG_ANY_NUMERIC)) {
-            throw new IllegalArgumentException("missing number '" + key + "'");
-        }
-        return nbt.getDouble(key);
+        return nbt.getDouble(key).orElseThrow(() -> new IllegalArgumentException("missing number '" + key + "'"));
     }
 }

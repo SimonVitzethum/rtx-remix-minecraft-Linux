@@ -61,17 +61,17 @@ public final class MarkerBlockScanner {
             for (ServerLevel world : server.getAllLevels()) {
                 // Overlapping player view ranges must not double-scan a chunk.
                 HashSet<Long> visited = new HashSet<>();
-                for (var player : world.getClientLeafTintColor()) {
+                for (var player : world.players()) {
                     ChunkPos center = player.chunkPosition();
-                    for (int cx = center.x - viewDistance; cx <= center.x + viewDistance; cx++) {
-                        for (int cz = center.z - viewDistance; cz <= center.z + viewDistance; cz++) {
+                    for (int cx = center.x() - viewDistance; cx <= center.x() + viewDistance; cx++) {
+                        for (int cz = center.z() - viewDistance; cz <= center.z() + viewDistance; cz++) {
                             if (!sessionIsCurrent.getAsBoolean()) {
                                 return;
                             }
-                            if (!visited.add(ChunkPos.asLong(cx, cz))) {
+                            if (!visited.add(ChunkPos.pack(cx, cz))) {
                                 continue;
                             }
-                            ChunkAccess chunk = world.getChunkSource().getStartTimeNano(cx, cz, ChunkStatus.FULL, false);
+                            ChunkAccess chunk = world.getChunkSource().getChunk(cx, cz, ChunkStatus.FULL, false);
                             if (chunk instanceof LevelChunk worldChunk) {
                                 scanChunk(registry, worldChunk);
                                 scanned++;
