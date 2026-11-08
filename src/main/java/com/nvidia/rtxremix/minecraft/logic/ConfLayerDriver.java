@@ -723,7 +723,7 @@ public final class ConfLayerDriver {
         // Time layers follow the shared Overworld clock only; other dimensions
         // contribute no time-of-day strength.
         TimeLayerStrengths time = Level.OVERWORLD.equals(world.dimension())
-                ? timeLayerStrengths(world.getDayTime())
+                ? timeLayerStrengths(world.getOverworldClockTime())
                 : TimeLayerStrengths.ZERO;
         setTarget(LogicChannels.TIME_DAWN, time.dawn());
         setTarget(LogicChannels.TIME_DAY, time.day());
