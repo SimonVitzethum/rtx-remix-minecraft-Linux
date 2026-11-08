@@ -8,7 +8,6 @@ import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.particle.ParticleGroup;
 import net.minecraft.client.particle.ParticleRenderType;
 import net.minecraft.client.particle.ParticleResources;
-import net.minecraft.resources.Identifier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
@@ -21,13 +20,4 @@ public interface ParticleManagerAccessor {
 
     @Accessor("resourceManager")
     ParticleResources getParticleResources();
-
-    /**
-     * Sprite sets keyed by particle type id. The value class is package
-     * private in vanilla, so callers read it through the public
-     * {@code SpriteSet} interface it implements.
-     */
-    default Map<Identifier, ?> getSpriteAwareFactories() {
-        return ((ParticleResourcesAccessor) getParticleResources()).getSpriteSets();
-    }
 }

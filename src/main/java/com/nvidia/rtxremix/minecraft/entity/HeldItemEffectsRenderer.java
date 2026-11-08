@@ -25,6 +25,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.nvidia.rtxremix.minecraft.RtxRemixMod;
 import com.nvidia.rtxremix.minecraft.mixin.ParticleManagerAccessor;
+import com.nvidia.rtxremix.minecraft.mixin.ParticleResourcesAccessor;
 import org.joml.Matrix4f;
 import org.joml.Quaternionfc;
 import org.joml.Vector3f;
@@ -143,8 +144,9 @@ public final class HeldItemEffectsRenderer {
     }
 
     private static SpriteSet spriteProvider(Minecraft client, ParticleType<?> particle) {
-        Object provider = ((ParticleManagerAccessor) client.particleEngine)
-                .getSpriteAwareFactories()
+        // The sprite set map's value class is package private, so it is read through the public SpriteSet interface.
+        Object provider = ((ParticleResourcesAccessor) ((ParticleManagerAccessor) client.particleEngine).getParticleResources())
+                .getSpriteSets()
                 .get(BuiltInRegistries.PARTICLE_TYPE.getKey(particle));
         return provider instanceof SpriteSet spriteProvider ? spriteProvider : null;
     }
