@@ -40,6 +40,7 @@ import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.lighting.LevelLightEngine;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
@@ -199,23 +200,27 @@ public abstract class WorldRendererMixin
         List<SectionRenderDispatcher.RenderSection> loadedSections = new ArrayList<>();
         for (LongIterator it = sections.iterator(); it.hasNext();) {
             long node = it.nextLong();
-            SectionRenderDispatcher.RenderSection section = viewArea.getRenderSection(node);
+            SectionRenderDispatcher.RenderSection section = viewArea.getRenderSectionAt(
+                    new BlockPos(SectionPos.sectionToBlockCoord(SectionPos.x(node)),
+                            SectionPos.sectionToBlockCoord(SectionPos.y(node)),
+                            SectionPos.sectionToBlockCoord(SectionPos.z(node))));
             if (section == null) {
                 continue;
             }
             int cx = SectionPos.x(node);
             int sy = SectionPos.y(node);
             int cz = SectionPos.z(node);
-            LevelChunk worldChunk = level.getChunkSource().getChunk(cx, cz, false);
-            if (worldChunk != null && !worldChunk.isSectionEmpty(sy)
-                    && lightingProvider.lightOnInSection(SectionPos.of(cx, sy, cz))) {
+            LevelChunk worldChunk = level.getChunkSource().getChunk(cx, cz, ChunkStatus.FULL, false);
+            if (worldChunk != null
+                    && !worldChunk.getSection(worldChunk.getSectionIndexFromSectionY(sy)).hasOnlyAir()
+                    && lightingProvider.lightOnInColumn(SectionPos.asLong(cx, 0, cz))) {
                 loadedSections.add(section);
             }
         }
 
         // The compile queue is FIFO. Queue nearby sections first so visible holes close
         // promptly while the Remix scene repopulates.
-        Camera camera = Minecraft.getInstance().gameRenderer.getMainCamera();
+        Camera camera = Minecraft.getInstance().gameRenderer.mainCamera();
         Vec3 cameraPos = camera.position();
         loadedSections.sort(Comparator.comparingDouble(section -> {
             BlockPos origin = section.getRenderOrigin();

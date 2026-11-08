@@ -9,9 +9,8 @@ import com.nvidia.rtxremix.minecraft.particle.ParticleTint;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.SpriteSet;
 import net.minecraft.client.renderer.LightTexture;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.block.model.BlockStateModel;
 import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
@@ -35,8 +34,8 @@ import org.joml.Vector3fc;
  * Draws the lit effects of a hand-held item into the Remix capture: its
  * {@link HeldItemFlame} and the {@link HeldItemSmoke} above it.
  *
- * <p>Runs from the item renderer once the item's block-space pose is on the
- * matrix stack, so one hook serves the first-person view model, the local
+ * <p>Runs from the capture collector's item submit, where the item's block-space pose
+ * is on the matrix stack, so one hook serves the first-person view model, the local
  * player's hidden shadow model, other players and any mob or armor stand with a
  * torch in hand. The quads go through the same capture provider as the item,
  * on an emissive layer over the particle atlas, and the submitter gives that
@@ -54,7 +53,7 @@ import org.joml.Vector3fc;
 public final class HeldItemEffectsRenderer {
 
     private static final RenderType EFFECT_LAYER =
-            RenderType.entityTranslucentEmissive(TextureAtlas.LOCATION_PARTICLES);
+            RenderTypes.entityTranslucentEmissive(TextureAtlas.LOCATION_PARTICLES);
     private static final float TICKS_PER_SECOND = 20.0f;
     private static final int OPAQUE = 255;
     private static final int WHITE = 255;
@@ -79,12 +78,10 @@ public final class HeldItemEffectsRenderer {
      *
      * @param matrices  the item renderer's stack, with the item's block-space
      *                  pose on top; left as found
-     * @param model     the item's baked model, whose display transform for
-     *                  {@code mode} is part of that pose
+     * @param provider  the capture's buffer source
      */
     public static void render(ItemStack stack, ItemDisplayContext mode,
-                              PoseStack matrices, MultiBufferSource consumers,
-                              BlockStateModel model) {
+                              PoseStack matrices, RemixVertexConsumerProvider provider) {
         EntityRenderContext context = EntityRenderContext.get();
         if (!context.isRemixPass() || !HeldItemFlame.isHandMode(mode)) return;
         SimpleParticleType flameParticle = HeldItemFlame.particleFor(stack);
@@ -101,7 +98,7 @@ public final class HeldItemEffectsRenderer {
         SpriteSet smokeSprites = spriteProvider(client, ParticleTypes.SMOKE);
         if (flameSprites == null || smokeSprites == null) return;
 
-        Quaternionfc facing = client.gameRenderer.getMainCamera().rotation();
+        Quaternionfc facing = client.gameRenderer.mainCamera().rotation();
         Quaternionfc frame = HeldItemFlame.riseFrame(mode, facing);
         double ticks = client.level.getGameTime() + client.getTimer().getGameTimeDeltaPartialTick(false);
         float phase = mode.ordinal();
@@ -112,9 +109,11 @@ public final class HeldItemEffectsRenderer {
         Matrix4f itemPose = matrices.last().pose();
         // A hand draws its item scaled down (item/generated: 0.68 in first person,
         // 0.55 in third). The flame and smoke are world-sized, so the poses divide
-        // that scale back out.
-        float displayScale = model.getTransforms().getTransform(mode).scale.x;
-        VertexConsumer buffer = consumers.getBuffer(EFFECT_LAYER);
+        // that scale back out. 26.3 applies the display transform before the item is
+        // submitted, so the scale is read off the pose rather than from a model.
+        float displayScale = (float) Math.sqrt(itemPose.m00() * itemPose.m00()
+                + itemPose.m01() * itemPose.m01() + itemPose.m02() * itemPose.m02());
+        VertexConsumer buffer = provider.getBuffer(EFFECT_LAYER);
 
         matrices.pushPose();
         PoseStack.Pose entry = matrices.last();

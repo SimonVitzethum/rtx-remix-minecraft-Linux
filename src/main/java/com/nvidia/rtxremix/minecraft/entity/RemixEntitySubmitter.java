@@ -856,7 +856,7 @@ public class RemixEntitySubmitter {
         RenderLayerUtils.SurfaceMode layerMode = RenderLayerUtils.surfaceMode(renderLayer);
         RenderLayerUtils.SurfaceMode surfaceMode = playerSkinSurfaceMode(layerMode,
                 result.owner() instanceof Player
-                        && renderLayer == RenderType.entityTranslucent(texId));
+                        && renderLayer == net.minecraft.client.renderer.rendertype.RenderTypes.entityTranslucent(texId));
 
         RemixCapturingConsumer consumer = layer.consumer();
         // Guard on parts, not vertices: a cuboid part carries no captured

@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * Thread-local context tracking whether a Remix capture is open and which rigid
@@ -51,6 +52,10 @@ public final class EntityRenderContext {
     /** Entity whose hand-held item is being rendered, or null outside a held-item render. */
     private LivingEntity heldItemHolder;
     private int blockItemLayer = NO_BLOCK_ITEM;
+    /** Stack of the item being submitted, or null outside an item submit. */
+    private ItemStack itemStack;
+    /** Whether the held-item effects were already emitted for the current item submit. */
+    private boolean heldEffectsEmitted;
 
     /** The viewer's eye in the capture's space, valid while {@link #eyeKnown}. */
     private final Vector3f eye = new Vector3f();
@@ -206,6 +211,23 @@ public final class EntityRenderContext {
 
     public void clearActiveHand() {
         activeHand = null;
+    }
+
+    /** The stack of the item being submitted, see {@code ItemStackRenderStateMixin}. */
+    public ItemStack getItemStack() {
+        return itemStack;
+    }
+
+    public void setItemStack(ItemStack itemStack) {
+        this.itemStack = itemStack;
+        this.heldEffectsEmitted = false;
+    }
+
+    /** Claims the right to emit the held-item effects once per item submit. */
+    public boolean claimHeldEffects() {
+        if (heldEffectsEmitted) return false;
+        heldEffectsEmitted = true;
+        return true;
     }
 
     /**

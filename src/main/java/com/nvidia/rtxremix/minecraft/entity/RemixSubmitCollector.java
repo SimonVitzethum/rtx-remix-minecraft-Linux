@@ -36,7 +36,8 @@ import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemDisplayContext;
-import net.minecraft.world.level.ChunkSectionLayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -152,6 +153,13 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
         PoseStack.Pose pose = poseStack.last();
         quadInstance.setLightCoords(lightCoords);
         quadInstance.setOverlayCoords(overlayCoords);
+        EntityRenderContext context = EntityRenderContext.get();
+        ItemStack stack = context.getItemStack();
+        if (stack != null && context.claimHeldEffects()) {
+            // The item's lit element goes in once its pose is on the stack, so first
+            // person, the hidden shadow model and every holder share one hook.
+            HeldItemEffectsRenderer.render(stack, displayContext, poseStack, provider);
+        }
         for (BakedQuad quad : quads.all()) {
             BakedQuad.MaterialInfo material = quad.materialInfo();
             // The enchantment glint is a screen-space shimmer over the surface that Remix
