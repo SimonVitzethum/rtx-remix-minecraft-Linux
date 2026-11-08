@@ -5,7 +5,7 @@
 package com.nvidia.rtxremix.minecraft.block;
 
 import com.nvidia.rtxremix.minecraft.RtxRemixCommonMod;
-import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerType;
+import net.fabricmc.fabric.api.menu.v1.ExtendedMenuType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -17,7 +17,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
-import net.minecraft.world.item.DyeItem;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.ItemStack;
 
 /** Server-authoritative inventory and settings channel for one Copper Beacon. */
@@ -30,7 +30,7 @@ public final class CopperBeaconScreenHandler extends AbstractContainerMenu {
     public static final int PLAYER_INVENTORY_Y = 153;
 
     public static final MenuType<CopperBeaconScreenHandler> TYPE =
-            new ExtendedScreenHandlerType<>(
+            new ExtendedMenuType<>(
                     CopperBeaconScreenHandler::new,
                     CopperBeaconScreenData.PACKET_CODEC);
 
@@ -79,7 +79,7 @@ public final class CopperBeaconScreenHandler extends AbstractContainerMenu {
         addSlot(new Slot(dyeInventory, DYE_SLOT, DYE_SLOT_X, DYE_SLOT_Y) {
             @Override
             public boolean mayPlace(ItemStack stack) {
-                return stack.getItem() instanceof DyeItem;
+                return stack.get(DataComponents.DYE) != null;
             }
 
             @Override
@@ -181,7 +181,7 @@ public final class CopperBeaconScreenHandler extends AbstractContainerMenu {
             if (!moveItemStackTo(stack, PLAYER_START, HOTBAR_END, true)) {
                 return ItemStack.EMPTY;
             }
-        } else if (stack.getItem() instanceof DyeItem) {
+        } else if (stack.get(DataComponents.DYE) != null) {
             if (!moveItemStackTo(stack, DYE_SLOT, DYE_SLOT + 1, false)) {
                 return ItemStack.EMPTY;
             }

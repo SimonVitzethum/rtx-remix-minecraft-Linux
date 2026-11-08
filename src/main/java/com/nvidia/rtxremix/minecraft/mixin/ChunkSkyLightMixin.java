@@ -30,8 +30,7 @@ public abstract class ChunkSkyLightMixin implements SkyLightSurfaceAccess {
     }
 
     @Shadow
-    private static boolean isEdgeOccluded(BlockGetter blockView, BlockPos upperPos, BlockState upperState,
-                                           BlockPos lowerPos, BlockState lowerState) {
+    private static boolean isEdgeOccluded(BlockState upperState, BlockState lowerState) {
         throw new AssertionError();
     }
 
@@ -45,7 +44,7 @@ public abstract class ChunkSkyLightMixin implements SkyLightSurfaceAccess {
         SeededSurfaceScan.refreshSurfaceY(chunk, chunk.getHighestFilledSectionIndex(), worldSurface::getFirstAvailable,
                 Blocks.AIR.defaultBlockState(), new ChunkSections(chunk),
                 (upperPos, upperState, lowerPos, lowerState) ->
-                        isEdgeOccluded(chunk, upperPos, upperState, lowerPos, lowerState),
+                        isEdgeOccluded(upperState, lowerState),
                 (localX, localZ, surfaceY) -> set(index(localX, localZ), surfaceY));
     }
 }

@@ -32,7 +32,7 @@ public class NativeImageBackedTextureMixin {
 
     @Shadow
     @Nullable
-    protected NativeImage pixels;
+    private NativeImage pixels;
 
     @Inject(method = "upload", at = @At("HEAD"))
     private void rtxremix$onUpload(CallbackInfo ci) {
