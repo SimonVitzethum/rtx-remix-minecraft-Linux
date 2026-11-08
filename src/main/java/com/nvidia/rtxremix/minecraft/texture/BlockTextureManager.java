@@ -27,6 +27,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -174,7 +176,7 @@ public class BlockTextureManager {
             u0 = s.getU0(); v0 = s.getV0(); u1 = s.getU1(); v1 = s.getV1();
             pixX = s.getX(); pixY = s.getY();
             SpriteContents contents = s.contents();
-            pixW = contents.getStartTimeNano(); pixH = contents.getStartTimeTicks();
+            pixW = contents.width(); pixH = contents.height();
             transparentPixels = scanTransparency(contents, pixW, pixH);
             hasTransparency = transparentPixels != null && !transparentPixels.isEmpty();
         }
@@ -210,13 +212,13 @@ public class BlockTextureManager {
         private static BitSet scanTransparency(SpriteContents contents, int w, int h) {
             NativeImage img = ((SpriteContentsAccessor) contents).getImage();
             if (img == null) return null;
+            int[] pixels = img.getPixelsABGR();
             BitSet transparent = null;
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                    if (((img.getPixelABGR(x, y) >> 24) & 0xFF) < 255) {
-                        if (transparent == null) transparent = new BitSet(w * h);
-                        transparent.set(y * w + x);
-                    }
+            for (int i = 0; i < w * h; i++)
+                if (((pixels[i] >> 24) & 0xFF) < 255) {
+                    if (transparent == null) transparent = new BitSet(w * h);
+                    transparent.set(i);
+                }
             return transparent;
         }
 
@@ -359,8 +361,8 @@ public class BlockTextureManager {
 
         for (var e : map.entrySet()) {
             SpriteContents contents = e.getValue().contents();
-            SpriteContents.AnimatedTexture animation = ((SpriteContentsAccessor) contents).getAnimation();
-            if (animation == null) continue;
+            AnimatedSpriteFrames frames = readAnimationFrames(contents);
+            if (frames == null) continue;
 
             NativeImage nI = labPBRVariants.loadVariant(e.getKey(), "_n");
             NativeImage sI = labPBRVariants.loadVariant(e.getKey(), "_s");
@@ -379,16 +381,10 @@ public class BlockTextureManager {
                 int sH             = (sI != null) ? sI.getHeight()                       : 0;
                 boolean hasPerPixelEmissive = sI != null && LabPBRConverter.hasEmissiveData(sI);
                 boolean hasSss = sI != null && LabPBRConverter.hasSSSData(sI);
-                List<SpriteContents.FrameInfo> frames = animation.frames;
-                int[] frameIndices = new int[frames.size()];
-                int[] frameTimes = new int[frames.size()];
-                for (int i = 0; i < frames.size(); i++) {
-                    SpriteContents.FrameInfo frame = frames.get(i);
-                    frameIndices[i] = frame.index;
-                    frameTimes[i] = frame.time;
-                }
+                int[] frameIndices = frames.indices;
+                int[] frameTimes = frames.times;
                 int variantW = (sI != null) ? sW : aoW;
-                int frameColumns = Math.max(1, variantW / Math.max(1, contents.getStartTimeNano()));
+                int frameColumns = Math.max(1, variantW / Math.max(1, contents.width()));
                 result.put(e.getKey().toString(),
                     new AnimatedSpriteLabPBR(aoTable, aoW, aoH,
                                              sAlphaTable, sRoughnessTable, sMetallicTable, sSssTable,
@@ -401,6 +397,53 @@ public class BlockTextureManager {
         }
         LOGGER.info("Animated LabPBR cache: {} sprites", result.size());
         return result;
+    }
+
+    /** Read-only snapshot of an animated sprite's frame list (index into the sheet, duration). */
+    private static final class AnimatedSpriteFrames {
+        final int[] indices;
+        final int[] times;
+
+        AnimatedSpriteFrames(int[] indices, int[] times) {
+            this.indices = indices;
+            this.times = times;
+        }
+    }
+
+    /**
+     * Reads the animation frames of a {@link SpriteContents} via reflection:
+     * 26.3 keeps {@code AnimatedTexture} and {@code FrameInfo} as private nested
+     * types, so the sprite accessor interface cannot expose them.
+     * Runs only at atlas init, never per frame. Returns null when the sprite
+     * has no animation (or the field shape changes between versions), matching
+     * the old {@code animation == null} skip.
+     */
+    private static AnimatedSpriteFrames readAnimationFrames(SpriteContents contents) {
+        try {
+            Field animationField = SpriteContents.class.getDeclaredField("animatedTexture");
+            animationField.setAccessible(true);
+            Object animation = animationField.get(contents);
+            if (animation == null) return null;
+            Field framesField = animation.getClass().getDeclaredField("frames");
+            framesField.setAccessible(true);
+            List<?> frames = (List<?>) framesField.get(animation);
+            int n = frames.size();
+            int[] indices = new int[n];
+            int[] times = new int[n];
+            for (int i = 0; i < n; i++) {
+                Object frame = frames.get(i);
+                Method indexMethod = frame.getClass().getDeclaredMethod("index");
+                Method timeMethod = frame.getClass().getDeclaredMethod("time");
+                indexMethod.setAccessible(true);
+                timeMethod.setAccessible(true);
+                indices[i] = (Integer) indexMethod.invoke(frame);
+                times[i] = (Integer) timeMethod.invoke(frame);
+            }
+            return new AnimatedSpriteFrames(indices, times);
+        } catch (ReflectiveOperationException | ClassCastException e) {
+            LOGGER.warn("Cannot read animated sprite frames for {}: {}", contents.name(), e.toString());
+            return null;
+        }
     }
 
     // ====================================================================
@@ -960,7 +1003,7 @@ public class BlockTextureManager {
             for (BlockState state : block.getStateDefinition().getPossibleStates())
                 maxLum = Math.max(maxLum, state.getLightEmission());
             if (maxLum > 0) {
-                Identifier id = BuiltInRegistries.BLOCK.getStartTimeTicks(block);
+                Identifier id = BuiltInRegistries.BLOCK.getKey(block);
                 map.merge(id.getNamespace() + ":block/" + id.getPath(), maxLum, Math::max);
             }
         }
@@ -1032,10 +1075,11 @@ public class BlockTextureManager {
             NativeImage img = ((SpriteContentsAccessor) sprite.contents()).getImage();
             if (img == null) continue;
             int sx = sprite.getX(), sy = sprite.getY();
-            int sw = sprite.contents().getStartTimeNano(), sh = sprite.contents().getStartTimeTicks();
+            int sw = sprite.contents().width(), sh = sprite.contents().height();
+            int[] pixels = img.getPixelsABGR();
             for (int y = 0; y < sh; y++)
                 for (int x = 0; x < sw; x++) {
-                    int abgr = img.getPixelABGR(x, y);
+                    int abgr = pixels[y * sw + x];
                     int idx = ((sy + y) * w + (sx + x)) * 4;
                     buf[idx]     = (byte) (abgr & 0xFF);
                     buf[idx + 1] = (byte) ((abgr >> 8) & 0xFF);
@@ -1230,7 +1274,7 @@ public class BlockTextureManager {
      * 3. Warm white fallback
      */
     public float[] getLightColorForBlock(Block block) {
-        Identifier id = BuiltInRegistries.BLOCK.getStartTimeTicks(block);
+        Identifier id = BuiltInRegistries.BLOCK.getKey(block);
         String path = id.getPath();
 
         float[] known = KNOWN_LIGHT_COLORS.get(path);

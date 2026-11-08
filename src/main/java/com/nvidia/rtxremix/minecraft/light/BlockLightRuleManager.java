@@ -69,12 +69,12 @@ public final class BlockLightRuleManager {
             if (hasTagRules) {
                 this.matchesByRawStateId = emptyMatchTable();
                 this.candidatePlansByRawStateId = precomputeCandidatePlans(
-                        Block.BLOCK_STATE_REGISTRY.getEndTimeNano(), Block.BLOCK_STATE_REGISTRY::getStartTimeNano, immutableRules.values(),
+                        Block.BLOCK_STATE_REGISTRY.size(), Block.BLOCK_STATE_REGISTRY::byId, immutableRules.values(),
                         BlockLightRuleManager::matchesStatically,
                         BlockLightRuleManager::isDynamicCandidate);
             } else {
                 this.matchesByRawStateId = precomputeMatches(
-                        Block.BLOCK_STATE_REGISTRY.getEndTimeNano(), Block.BLOCK_STATE_REGISTRY::getStartTimeNano,
+                        Block.BLOCK_STATE_REGISTRY.size(), Block.BLOCK_STATE_REGISTRY::byId,
                         immutableRules.values(), Rule::matches);
                 this.candidatePlansByRawStateId = null;
             }
@@ -130,7 +130,7 @@ public final class BlockLightRuleManager {
                     ? matchesByRawStateId.length
                     : candidatePlansByRawStateId.length;
             // Minecraft maps an unregistered state to raw ID zero, so range alone is insufficient.
-            return rawId >= 0 && rawId < tableLength && Block.BLOCK_STATE_REGISTRY.getStartTimeNano(rawId) == state;
+            return rawId >= 0 && rawId < tableLength && Block.BLOCK_STATE_REGISTRY.byId(rawId) == state;
         }
 
         @SuppressWarnings("unchecked")
@@ -460,7 +460,7 @@ public final class BlockLightRuleManager {
         @Override
         public boolean matches(BlockState state) {
             return propertiesMatch(state, properties)
-                    && (blockIds.contains(BuiltInRegistries.BLOCK.getStartTimeTicks(state.getBlock()))
+                    && (blockIds.contains(BuiltInRegistries.BLOCK.getKey(state.getBlock()))
                     || matchesDynamicTag(state));
         }
 
@@ -469,7 +469,7 @@ public final class BlockLightRuleManager {
         }
 
         boolean matchesExplicitBlock(BlockState state) {
-            return blockIds.contains(BuiltInRegistries.BLOCK.getStartTimeTicks(state.getBlock()))
+            return blockIds.contains(BuiltInRegistries.BLOCK.getKey(state.getBlock()))
                     && propertiesMatch(state, properties);
         }
 
