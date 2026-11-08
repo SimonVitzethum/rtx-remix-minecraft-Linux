@@ -32,7 +32,19 @@
 namespace dxvk {
 
   static std::string getBaseDir() {
-    const std::string localAppData = env::getEnvVar("LOCALAPPDATA");
+    std::string localAppData = env::getEnvVar("LOCALAPPDATA");
+#ifdef REMIX_LINUX_NATIVE
+    // Linux keeps per-user data under the XDG data directory.
+    if (localAppData.empty()) {
+      localAppData = env::getEnvVar("XDG_DATA_HOME");
+    }
+    if (localAppData.empty()) {
+      const std::string home = env::getEnvVar("HOME");
+      if (!home.empty()) {
+        localAppData = (std::filesystem::path(home) / ".local" / "share").string();
+      }
+    }
+#endif
     if (localAppData.empty()) {
       Logger::warn("[LocalData] LOCALAPPDATA environment variable not set.");
       return {};
