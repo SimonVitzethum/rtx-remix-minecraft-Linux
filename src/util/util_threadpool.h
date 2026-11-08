@@ -470,6 +470,6 @@ namespace dxvk {
     //  1. Non-circular queue incurs allocation overhead thats unacceptable
     //  2. Use of mutex, and CVs, incur overhead thats unacceptable
     std::vector<QueuePtr> m_workerTasks;
-    std::atomic_uint32_t m_numTasks;
+    std::atomic_uint32_t m_numTasks = 0;
   };
 } //dxvk

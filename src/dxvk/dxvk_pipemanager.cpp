@@ -144,6 +144,14 @@ namespace dxvk {
   }
 
 // NV-DXVK start
+#ifdef REMIX_LINUX_NATIVE
+  void DxvkPipelineManager::savePipelineCache() const {
+    if (m_cache != nullptr) {
+      m_cache->save();
+    }
+  }
+#endif
+
   uint32_t DxvkPipelineManager::remixShaderCompilationCount() const {
     return m_stateCache != nullptr ? m_stateCache->remixShaderCompilationCount() : 0;
   }

@@ -2228,7 +2228,7 @@ namespace dxvk {
         m_interop.submitted = false;
       }
 
-      // Debug aid: REMIX_DUMP_INTEROP=<dir> writes every 30th rendered frame as a PPM.
+      // Debug aid: REMIX_DUMP_INTEROP=1 logs pixel statistics of every 30th rendered frame.
       static const char* dumpDir = std::getenv("REMIX_DUMP_INTEROP");
       static uint64_t dumpCounter = 0;
       if (dumpDir && (dumpCounter++ % 30) == 0) {
@@ -2249,16 +2249,18 @@ namespace dxvk {
         m_parent->SynchronizeCsThread();
         m_device->waitForIdle();
 
-        const std::string path = str::format(dumpDir, "/interop_", dumpCounter - 1, ".ppm");
-        if (FILE* file = std::fopen(path.c_str(), "wb")) {
-          std::fprintf(file, "P6\n%u %u\n255\n", extent.width, extent.height);
-          const uint8_t* pixels = static_cast<const uint8_t*>(dumpBuffer->mapPtr(0));
-          for (size_t i = 0; i < size_t(extent.width) * extent.height; ++i) {
-            std::fwrite(pixels + i * 4, 1, 3, file);
+        // Logs the brightest pixel per image third instead of writing a file.
+        const uint8_t* pixels = static_cast<const uint8_t*>(dumpBuffer->mapPtr(0));
+        uint32_t brightest[3] = { 0, 0, 0 };
+        for (uint32_t y = 0; y < extent.height; ++y) {
+          for (uint32_t x = 0; x < extent.width; ++x) {
+            const uint8_t* px = pixels + (size_t(y) * extent.width + x) * 4;
+            const uint32_t band = std::min(2u, y * 3 / extent.height);
+            brightest[band] = std::max<uint32_t>(brightest[band], uint32_t(px[0]) + px[1] + px[2]);
           }
-          std::fclose(file);
-          Logger::info(str::format("Wrote ", path));
         }
+        Logger::info(str::format("interop stats frame ", dumpCounter - 1, ": brightest rgb sum top/mid/bottom=",
+          brightest[0], "/", brightest[1], "/", brightest[2]));
       }
       return D3D_OK;
     } catch (const DxvkError& e) {

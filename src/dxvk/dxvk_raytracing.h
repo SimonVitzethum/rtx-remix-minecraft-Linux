@@ -132,7 +132,7 @@ namespace dxvk {
     void releaseTmpResources();
 
     mutable dxvk::mutex               m_mutex;
-    std::atomic_bool                  m_isCompiled;
+    std::atomic_bool                  m_isCompiled = false;
 
     Rc<vk::DeviceFn>                  m_vkd;
     DxvkPipelineManager*              m_pipeMgr;

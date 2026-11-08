@@ -32,6 +32,13 @@ namespace dxvk {
     VkPipelineCache handle() const {
       return m_handle;
     }
+
+#ifdef REMIX_LINUX_NATIVE
+    /**
+     * \brief Writes the cache to disk
+     */
+    void save() const;
+#endif
     
   private:
     

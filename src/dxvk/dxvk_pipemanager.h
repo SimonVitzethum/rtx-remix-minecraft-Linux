@@ -143,6 +143,9 @@ namespace dxvk {
 
 // NV-DXVK start
     uint32_t remixShaderCompilationCount() const;
+#ifdef REMIX_LINUX_NATIVE
+    void savePipelineCache() const;
+#endif
 // NV-DXVK end
 
     /**

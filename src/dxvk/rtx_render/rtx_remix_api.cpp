@@ -2116,6 +2116,11 @@ namespace {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
       }
 
+#ifdef REMIX_LINUX_NATIVE
+      // The device is leaked at exit, so its destructors never run. Persist the pipeline cache here instead.
+      device->getCommon()->pipelineManager().savePipelineCache();
+#endif
+
       // Registries hold GPU resources that must not outlive the device.
       {
         auto& registry = sceneInstances();
@@ -2193,7 +2198,7 @@ namespace {
       }
 
       // reset swapchain if window has changed
-      if (presentParams.BackBufferWidth != windowWidth && //
+      if (presentParams.BackBufferWidth != windowWidth || //
           presentParams.BackBufferHeight != windowHeight) {
         presentParams.BackBufferWidth = windowWidth;
         presentParams.BackBufferHeight = windowHeight;
