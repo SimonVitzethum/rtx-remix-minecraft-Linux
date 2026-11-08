@@ -14,3 +14,16 @@ accessible class net/minecraft/world/level/lighting/SkyLightSectionStorage$SkyDa
 accessible field net/minecraft/world/level/lighting/SkyLightSectionStorage$SkyDataLayerStorageMap topSections Lit/unimi/dsi/fastutil/longs/Long2IntOpenHashMap;
 accessible field net/minecraft/world/level/lighting/SkyLightSectionStorage$SkyDataLayerStorageMap currentLowestY I
 accessible class net/minecraft/world/level/lighting/BlockLightSectionStorage$BlockDataLayerStorageMap
+
+# SpriteContents animation data for flipbook texture extraction and the atlas animation hook
+# (SpriteContentsAccessor, SpriteAtlasTextureMixin)
+accessible class net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture
+accessible class net/minecraft/client/renderer/texture/SpriteContents$FrameInfo
+accessible class net/minecraft/client/renderer/texture/SpriteContents$AnimationState
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture frames Ljava/util/List;
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture frameRowSize I
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture interpolateFrames Z
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState frame I
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState subFrame I
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState animationInfo Lnet/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture;
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState isDirty Z

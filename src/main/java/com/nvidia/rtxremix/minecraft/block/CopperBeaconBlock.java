@@ -4,7 +4,6 @@
  */
 package com.nvidia.rtxremix.minecraft.block;
 
-import com.mojang.serialization.MapCodec;
 import com.nvidia.rtxremix.minecraft.light.LightEntry;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -58,9 +57,7 @@ public class CopperBeaconBlock extends SpotLightBlock implements EntityBlock, Si
     public static final LightEntry.ColorOverride BEAM_COLOR =
             LightEntry.ColorOverride.of(1.0f, 0.88f, 0.70f);
 
-    public static final MapCodec<CopperBeaconBlock> CODEC = simpleCodec(CopperBeaconBlock::new);
-
-    public static final CopperBeaconBlock INSTANCE = new CopperBeaconBlock(beaconSettings());
+    public static final CopperBeaconBlock INSTANCE = new CopperBeaconBlock(beaconSettings(ID));
 
     public CopperBeaconBlock(BlockBehaviour.Properties settings) {
         super(settings, BEAM_COLOR);
@@ -68,11 +65,6 @@ public class CopperBeaconBlock extends SpotLightBlock implements EntityBlock, Si
                 .setValue(MOUNT, Direction.UP)
                 .setValue(POWERED, false)
                 .setValue(WATERLOGGED, false));
-    }
-
-    @Override
-    protected MapCodec<? extends DirectionalBlock> codec() {
-        return CODEC;
     }
 
     @Override
