@@ -11,6 +11,7 @@ import com.nvidia.rtxremix.minecraft.asset.RemixMesh;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshSurface;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.terrain.capture.SectionMeshData;
+import com.nvidia.rtxremix.minecraft.terrain.lod.TerrainQuadMerger;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
 
@@ -45,6 +46,8 @@ public final class BlockMeshBuilder {
     private static volatile int[] canonicalIndexCache = new int[0];
     private static volatile int canonicalIndexCacheFilled;
     private final long maxPageBytes;
+    /** Tile merged-quad texcoords past the sprite bounds (needs runtime wrapping); default stretches the sprite. */
+    private static final boolean TILE_LOD_UV = Boolean.getBoolean("rtxremix.terrain.lodTileUv");
 
     /** One independently installable native mesh page and its render category. */
     public record MeshPage(int category, RemixMesh mesh) {
@@ -79,7 +82,20 @@ public final class BlockMeshBuilder {
                                       List<TerrainState.SectionSnapshot> sections,
                                       int categoryMask,
                                       BlockTextureManager tex) {
-        return buildColumnMesh(chunkX, chunkZ, sections, categoryMask,
+        return buildColumnMesh(chunkX, chunkZ, sections, categoryMask, 0, tex);
+    }
+
+    /**
+     * As above; {@code lod > 0} merges coplanar block faces of the opaque category (the distant
+     * terrain LOD, see {@link TerrainQuadMerger}).
+     */
+    public MeshPage[] buildColumnMesh(int chunkX,
+                                      int chunkZ,
+                                      List<TerrainState.SectionSnapshot> sections,
+                                      int categoryMask,
+                                      int lod,
+                                      BlockTextureManager tex) {
+        return buildColumnMesh(chunkX, chunkZ, sections, categoryMask, lod,
                 key -> resolveMaterial(key, tex));
     }
 
@@ -87,6 +103,15 @@ public final class BlockMeshBuilder {
                                int chunkZ,
                                List<TerrainState.SectionSnapshot> sections,
                                int categoryMask,
+                               Function<String, RemixMaterial> materialResolver) {
+        return buildColumnMesh(chunkX, chunkZ, sections, categoryMask, 0, materialResolver);
+    }
+
+    MeshPage[] buildColumnMesh(int chunkX,
+                               int chunkZ,
+                               List<TerrainState.SectionSnapshot> sections,
+                               int categoryMask,
+                               int lod,
                                Function<String, RemixMaterial> materialResolver) {
         Objects.requireNonNull(sections, "sections");
         Objects.requireNonNull(materialResolver, "materialResolver");
@@ -146,7 +171,11 @@ public final class BlockMeshBuilder {
                     if (mat == null) continue;
 
                     requireCanonicalQuadIndices(bucket);
-                    appendCanonicalPages(bucket, mat, accumulator);
+                    if (lod > 0 && c == ChunkManager.CAT_SOLID && bucket.count > 0) {
+                        appendMergedPages(bucket, mat, accumulator);
+                    } else {
+                        appendCanonicalPages(bucket, mat, accumulator);
+                    }
                 }
                 accumulator.flush();
                 accumulator = null;
@@ -284,6 +313,56 @@ public final class BlockMeshBuilder {
                     bucket, material, firstQuad, quadCount);
             accumulator.add(surface, (long) quadCount * BYTES_PER_CANONICAL_QUAD);
             firstQuad += quadCount;
+        }
+    }
+
+    /** LOD path: greedy-merges the bucket's block faces, then pages the result like the canonical path. */
+    private void appendMergedPages(SurfaceBucket bucket,
+                                   RemixMaterial material,
+                                   PageAccumulator accumulator) {
+        int totalQuads = bucket.totalVerts / VERTS_PER_QUAD;
+        ByteBuffer merged = DirectBufferPool.acquire(Math.multiplyExact(totalQuads, VERTS_PER_QUAD * STRIDE));
+        try {
+            List<TerrainQuadMerger.Source> sources = new ArrayList<>(bucket.count);
+            for (int s = 0; s < bucket.count; s++) {
+                SurfaceRef ref = bucket.surfaces[s];
+                sources.add(new TerrainQuadMerger.Source(ref.surface().vertexBuffer(),
+                        ref.surface().vertexCount(), ref.xOff(), ref.yOff(), ref.zOff()));
+            }
+            TerrainQuadMerger.Merged result = TerrainQuadMerger.merge(sources, merged, TILE_LOD_UV);
+            int maxQuadsPerSurface = (int) Math.max(1L,
+                    Math.min(Integer.MAX_VALUE, maxPageBytes / BYTES_PER_CANONICAL_QUAD));
+            for (int firstQuad = 0; firstQuad < result.quads(); ) {
+                int quadCount = Math.min(maxQuadsPerSurface, result.quads() - firstQuad);
+                int totalVerts = quadCount * VERTS_PER_QUAD;
+                int totalIdx = quadCount * INDICES_PER_QUAD;
+                ByteBuffer vm = DirectBufferPool.acquire(totalVerts * STRIDE);
+                ByteBuffer im = null;
+                boolean transferred = false;
+                try {
+                    im = DirectBufferPool.acquire(totalIdx * Integer.BYTES);
+                    ByteBuffer src = merged.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+                    src.position(firstQuad * VERTS_PER_QUAD * STRIDE)
+                            .limit((firstQuad + quadCount) * VERTS_PER_QUAD * STRIDE);
+                    vm.position(0);
+                    vm.put(src);
+                    putCanonicalQuadIndices(im, totalVerts);
+                    RemixMeshSurface surface = new RemixMeshSurface(material)
+                            .setVertexData(vm, totalVerts)
+                            .setIndexData(im, totalIdx)
+                            .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS);
+                    transferred = true;
+                    accumulator.add(surface, (long) quadCount * BYTES_PER_CANONICAL_QUAD);
+                } finally {
+                    if (!transferred) {
+                        DirectBufferPool.release(vm);
+                        DirectBufferPool.release(im);
+                    }
+                }
+                firstQuad += quadCount;
+            }
+        } finally {
+            DirectBufferPool.release(merged);
         }
     }
 

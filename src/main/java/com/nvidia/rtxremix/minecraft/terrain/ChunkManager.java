@@ -24,6 +24,7 @@ import com.nvidia.rtxremix.minecraft.asset.RemixLightStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixLight;
 import com.nvidia.rtxremix.minecraft.asset.RemixInstanceStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixInstance;
+import com.nvidia.rtxremix.minecraft.terrain.lod.TerrainLod;
 import com.nvidia.rtxremix.minecraft.RemixRenderer;
 import com.nvidia.rtxremix.minecraft.ClientViewDistance;
 import com.nvidia.rtxremix.Float3D;
@@ -364,6 +365,9 @@ public class ChunkManager {
             Integer.getInteger("rtxremix.chunk.maxSectionRemovalValidationsPerFrame", 64));
     private final ArrayList<SectionLeftRenderSetQueue.SectionCoord> deferredSectionRemovals =
             new ArrayList<>(MAX_SECTION_REMOVAL_VALIDATIONS_PER_FRAME);
+    /** Columns re-meshed per frame when a terrain LOD ring boundary moves across them. */
+    private static final int MAX_LOD_REBUILDS_PER_FRAME = Math.max(1,
+            Integer.getInteger("rtxremix.terrain.maxLodRebuildsPerFrame", 2));
     private static final long MAINTENANCE_TIME_BUDGET_NS = Math.max(250_000L,
             Long.getLong("rtxremix.chunk.maintenanceBudgetNs", 1_000_000L));
 
@@ -375,6 +379,10 @@ public class ChunkManager {
         final int[] categoryFingerprints = new int[CAT_COUNT];
         int generation;
         int dirtyMask;
+        /** Terrain LOD of the published solid pages (0 full detail). */
+        int lod;
+        /** The next build must apply the desired LOD even if the solid fingerprint is unchanged. */
+        boolean forceLod;
         boolean buildInFlight;
         boolean hasPublishedState;
         boolean urgentBuild;
@@ -395,6 +403,7 @@ public class ChunkManager {
         private final int generation;
         private final int categoryMask;
         private final int[] categoryFingerprints;
+        private final int lod;
         private final int epoch;
         private volatile BlockMeshBuilder.MeshPage[] pages;
         private volatile long accountedBytes;
@@ -403,7 +412,13 @@ public class ChunkManager {
 
         MeshBuildResult(ColumnRenderState owner, int generation, int categoryMask,
                         int[] categoryFingerprints, int epoch, long estimatedBytes) {
+            this(owner, generation, categoryMask, categoryFingerprints, 0, epoch, estimatedBytes);
+        }
+
+        MeshBuildResult(ColumnRenderState owner, int generation, int categoryMask,
+                        int[] categoryFingerprints, int lod, int epoch, long estimatedBytes) {
             this.owner = owner;
+            this.lod = lod;
             this.generation = generation;
             this.categoryMask = categoryMask;
             this.categoryFingerprints = categoryFingerprints;
@@ -414,6 +429,7 @@ public class ChunkManager {
         ColumnRenderState owner() { return owner; }
         int generation() { return generation; }
         int categoryMask() { return categoryMask; }
+        int lod() { return lod; }
         int[] categoryFingerprints() { return categoryFingerprints; }
         int epoch() { return epoch; }
         BlockMeshBuilder.MeshPage[] pages() { return pages; }
@@ -441,11 +457,17 @@ public class ChunkManager {
         final RemixInstance instance;
         final int category;
         final int categoryFlags;
+        final long nativeBytes;
 
         InstalledMeshPage(RemixInstance instance, int category, int categoryFlags) {
+            this(instance, category, categoryFlags, 0L);
+        }
+
+        InstalledMeshPage(RemixInstance instance, int category, int categoryFlags, long nativeBytes) {
             this.instance = instance;
             this.category = category;
             this.categoryFlags = categoryFlags;
+            this.nativeBytes = nativeBytes;
         }
     }
 
@@ -473,12 +495,15 @@ public class ChunkManager {
             cntSurfaceScansSeeded, cntReadyMeshes, cntMeshRetireQueue,
             cntMeshRetireMB, cntLightOpsPending, cntLightTasks,
             cntKnownSections, cntColumns, cntPublishedColumns, cntGeometryColumns,
-            cntMissingColumns, cntMissingSections, cntRetainedPages,
+            cntMissingColumns, cntMissingSections, cntRetainedPages, cntRetainedTriangles,
             cntPagesInstalled, cntInstallBytes, cntInstancesAdded, cntInstancesRemoved,
             cntMeshesDestroyed;
     private int cntFloodIncrementalUs;
     private int perfBfs = -1;
     private volatile TerrainDiagnostics lastTerrainDiagnostics = TerrainDiagnostics.EMPTY;
+    /** Canonical quad: four 64-byte vertices plus six 4-byte indices. */
+    private static final long BYTES_PER_QUAD = 4 * 64 + 6 * 4;
+    private volatile long lastRetainedTriangles;
 
     // Chunk-unload callbacks can arrive in a border-sized burst. Ingest all
     // keys immediately, then perform the destructive column work gradually.
@@ -662,6 +687,7 @@ public class ChunkManager {
                 cntMissingColumns = timer.registerCounter("Chunk.MissingColumns");
                 cntMissingSections = timer.registerCounter("Chunk.MissingSections");
                 cntRetainedPages = timer.registerCounter("Chunk.RetainedPages");
+                cntRetainedTriangles = timer.registerCounter("Chunk.RetainedTriangles");
                 cntCaptureQueue = timer.registerCounter("Chunk.CaptureQueue");
                 cntCaptureQueueMB = timer.registerCounter("Chunk.CaptureQueueMB");
                 cntCaptureBackpressure = timer.registerCounter("Chunk.CaptureBlocked");
@@ -765,6 +791,7 @@ public class ChunkManager {
                 timer.count(cntMissingColumns, diag.columnsMissingGeometry());
                 timer.count(cntMissingSections, diag.missingGeometrySections());
                 timer.count(cntRetainedPages, diag.retainedPages());
+                timer.count(cntRetainedTriangles, (int) Math.min(Integer.MAX_VALUE, lastRetainedTriangles));
 
                 retirementQueue.drainFrame();
 
@@ -1245,9 +1272,25 @@ public class ChunkManager {
         return state;
     }
 
+    /** Desired terrain LOD of a column, with hysteresis around the configured distance. */
+    private int desiredLod(ColumnRenderState state, int playerCx, int playerCz) {
+        return TerrainLod.select(Math.sqrt(columnDistanceSq(state, playerCx, playerCz)),
+                state.lod, TerrainLod.getDistance());
+    }
+
     private void submitDirtyBuilds(BlockTextureManager textures, int playerCx, int playerCz) {
         dirtyBuildScratch.clear();
+        int lodRebuildBudget = MAX_LOD_REBUILDS_PER_FRAME;
         for (ColumnRenderState state : renderColumns.values()) {
+            if (lodRebuildBudget > 0 && state.hasPublishedState && !state.buildInFlight
+                    && state.dirtyMask == 0 && pendingResults.get() < MAX_PENDING / 2
+                    && desiredLod(state, playerCx, playerCz) != state.lod) {
+                lodRebuildBudget--;
+                state.forceLod = true;
+                state.dirtyMask = 1 << CAT_SOLID;
+                state.dirtySinceFrame = terrainFrame;
+                state.settleUntilFrame = terrainFrame;
+            }
             boolean streamSettled = terrainFrame >= state.settleUntilFrame;
             boolean maxWaitElapsed = state.dirtySinceFrame != Long.MIN_VALUE
                     && terrainFrame - state.dirtySinceFrame >= COLUMN_STREAM_MAX_WAIT_FRAMES;
@@ -1276,10 +1319,13 @@ public class ChunkManager {
             int[] fingerprints = columnCategoryFingerprints(snapshots);
             int requestedMask = state.dirtyMask;
             int buildMask = requestedMask;
+            int buildLod = (!state.hasPublishedState || state.forceLod)
+                    ? desiredLod(state, playerCx, playerCz) : state.lod;
             if (state.hasPublishedState) {
                 for (int category = 0; category < CAT_COUNT; category++) {
                     int bit = 1 << category;
-                    if ((buildMask & bit) != 0
+                    boolean lodChanged = category == CAT_SOLID && buildLod != state.lod;
+                    if ((buildMask & bit) != 0 && !lodChanged
                             && state.categoryFingerprints[category] == fingerprints[category]) {
                         buildMask &= ~bit;
                     }
@@ -1302,8 +1348,9 @@ public class ChunkManager {
             int generation = state.generation;
             int submittedMask = buildMask;
             MeshBuildResult result = new MeshBuildResult(
-                    state, generation, submittedMask, fingerprints,
+                    state, generation, submittedMask, fingerprints, buildLod,
                     currentEpoch, estimatedBytes);
+            state.forceLod = false;
             // The build reads the section buffers on the mesh thread while the
             // render thread may replace or unload those sections; the build's
             // own reference keeps the buffers out of the pool until it is done.
@@ -1320,7 +1367,7 @@ public class ChunkManager {
                 meshBuildExecutor.execute(() -> {
                     try {
                         result.pages = meshBuilder.buildColumnMesh(
-                                state.cx, state.cz, snapshots, submittedMask, textures);
+                                state.cx, state.cz, snapshots, submittedMask, buildLod, textures);
                         long actualBytes = estimatePageBytes(result.pages);
                         long reservedBytes = result.accountedBytes;
                         result.accountedBytes = actualBytes;
@@ -1473,7 +1520,7 @@ public class ChunkManager {
                     nativeCallStats.instanceAdded();
                 }
                 cursor.installedPages.add(new InstalledMeshPage(
-                        instance, category, categoryFlags));
+                        instance, category, categoryFlags, mesh.estimatedNativeBytes()));
             } catch (RuntimeException | Error e) {
                 LOGGER.error("Native terrain install failed for category {}", category, e);
                 cursor.failed = true;
@@ -1561,6 +1608,9 @@ public class ChunkManager {
                 owner.categoryFingerprints[category] = result.categoryFingerprints()[category];
             }
         }
+        if ((categoryMask & (1 << CAT_SOLID)) != 0) {
+            owner.lod = result.lod();
+        }
         owner.hasPublishedState = true;
         owner.buildInFlight = false;
         pendingMeshBytes.addAndGet(-result.accountedBytes());
@@ -1580,6 +1630,9 @@ public class ChunkManager {
         ColumnRenderState owner = result.owner();
         if (result.epoch() != epoch || renderColumns.get(owner.key) != owner) return;
         owner.buildInFlight = false;
+        if (result.lod() != owner.lod && (result.categoryMask() & (1 << CAT_SOLID)) != 0) {
+            owner.forceLod = true;
+        }
         if (urgent) {
             markBuildRetry(owner, result.categoryMask());
             return;
@@ -1741,8 +1794,14 @@ public class ChunkManager {
         int withGeometry = 0;
         int missing = 0;
         int missingSections = 0;
+        long pageBytes = 0;
         for (TerrainState.ChunkColumn column : terrain.columns()) {
             ColumnRenderState state = renderColumns.get(packChunkKey(column.cx, column.cz));
+            if (state != null) {
+                for (int i = 0; i < state.activePages.size(); i++) {
+                    pageBytes += state.activePages.get(i).nativeBytes;
+                }
+            }
             if (state != null && state.hasPublishedState) {
                 published++;
                 if (state.hasGeometry()) withGeometry++;
@@ -1751,6 +1810,7 @@ public class ChunkManager {
                 missingSections += column.sectionCount();
             }
         }
+        lastRetainedTriangles = pageBytes / BYTES_PER_QUAD * 2;
         lastTerrainDiagnostics = new TerrainDiagnostics(
                 terrain.columnCount(), published, withGeometry, missing,
                 missingSections, retainedPageCount, terrain.sectionCount(),

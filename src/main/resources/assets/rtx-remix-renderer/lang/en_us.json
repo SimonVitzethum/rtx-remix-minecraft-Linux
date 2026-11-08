@@ -76,6 +76,8 @@
   "rtxremix.setting.dist.light.tip": "Chunks beyond which block lights are culled. Auto follows Minecraft's render distance.",
   "rtxremix.setting.dist.cloudLod": "Cloud LOD Distance",
   "rtxremix.setting.dist.cloudLod.tip": "Blocks beyond which procedural clouds use coarser meshes (a second ring starts at 2.2 times this). 0 keeps full detail everywhere.",
+  "rtxremix.setting.dist.terrainLod": "Terrain LOD Distance",
+  "rtxremix.setting.dist.terrainLod.tip": "Chunks beyond which opaque terrain faces are merged into larger quads (fewer triangles; far block textures are stretched). 0 keeps full detail everywhere.",
   "rtxremix.setting.dist.entity": "Entity Cull Distance",
   "rtxremix.setting.dist.entity.tip": "Chunks beyond which entities are not submitted. Auto uses Minecraft's view distance.",
   "rtxremix.setting.light.reach": "Light Reach",

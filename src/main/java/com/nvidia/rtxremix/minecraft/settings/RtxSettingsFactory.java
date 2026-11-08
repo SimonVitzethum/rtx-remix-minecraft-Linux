@@ -102,6 +102,13 @@ public final class RtxSettingsFactory {
                 com.nvidia.rtxremix.minecraft.cloud.CloudLod::getDistance,
                 com.nvidia.rtxremix.minecraft.cloud.CloudLod::setDistance));
 
+        list.add(RtxSetting.ofInt("dist.terrainLod", SettingGroup.RENDER_DISTANCE,
+                "rtxremix.setting.dist.terrainLod", "rtxremix.setting.dist.terrainLod.tip",
+                0, com.nvidia.rtxremix.minecraft.terrain.lod.TerrainLod.MAX_DISTANCE_CHUNKS,
+                com.nvidia.rtxremix.minecraft.terrain.lod.TerrainLod.getDistance(),
+                com.nvidia.rtxremix.minecraft.terrain.lod.TerrainLod::getDistance,
+                com.nvidia.rtxremix.minecraft.terrain.lod.TerrainLod::setDistance));
+
         // --- Framerate ---
         list.add(unfocusedFramerate());
 
