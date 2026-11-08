@@ -5,6 +5,7 @@
 package com.nvidia.rtxremix.minecraft.mixin;
 
 import com.nvidia.rtxremix.minecraft.RtxRemixMod;
+import com.nvidia.rtxremix.minecraft.input.LinuxOverlayInput;
 import com.nvidia.rtxremix.minecraft.input.RemixInputGate;
 import com.nvidia.rtxremix.minecraft.input.RemixKeyboardAccess;
 import net.minecraft.client.Keyboard;
@@ -52,6 +53,10 @@ public class KeyboardMixin implements RemixKeyboardAccess {
         RemixInputGate.KeyDecision decision = RtxRemixMod.getRemixInputGate().onKey(
                 key, action, altDown, controlDown);
 
+        if (LinuxOverlayInput.ENABLED && RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
+            LinuxOverlayInput.key(key, action);
+        }
+
         if (decision == RemixInputGate.KeyDecision.BLOCK) {
             ci.cancel();
             return;
@@ -79,6 +84,9 @@ public class KeyboardMixin implements RemixKeyboardAccess {
     @Inject(method = "onChar", at = @At("HEAD"), cancellable = true)
     private void rtxremix$onChar(long window, int codePoint, int mods, CallbackInfo ci) {
         if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
+            if (LinuxOverlayInput.ENABLED) {
+                LinuxOverlayInput.character(codePoint);
+            }
             ci.cancel();
         }
     }

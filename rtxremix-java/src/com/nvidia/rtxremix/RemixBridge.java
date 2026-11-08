@@ -284,6 +284,9 @@ public final class RemixBridge {
     /** Linux only: reports the size of the window in pixels, required on Wayland where it cannot be queried. */
     public static native void linuxSetWindowSize(int width, int height);
 
+    /** Linux only: forwards overlay input. Kinds: 0 mouse move, 1 mouse button, 2 wheel, 3 key, 4 char, 5 focus. */
+    public static native void linuxInput(int kind, int a, float x, float y);
+
     public static native long d3d9CreateDevice(long pD3D9Ex, long hwnd,
                                                int width, int height);
 

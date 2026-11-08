@@ -2419,6 +2419,27 @@ Java_com_nvidia_rtxremix_RemixBridge_linuxSetWindowSize(JNIEnv*, jclass, jint wi
     static auto fn = (void (*)(uint32_t, uint32_t)) dlsym(g_remixDll, "remixapi_linux_SetWindowSize");
     if (fn) fn((uint32_t) width, (uint32_t) height);
 }
+
+// Forwards overlay input to the runtime. kind: 0 mouse move, 1 mouse button, 2 wheel, 3 key, 4 char, 5 focus.
+JNIEXPORT void JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_linuxInput(JNIEnv*, jclass, jint kind, jint a, jfloat x, jfloat y)
+{
+    if (!g_remixDll) return;
+    static auto move = (void (*)(float, float)) dlsym(g_remixDll, "remixapi_linux_InputMouseMove");
+    static auto button = (void (*)(int, int)) dlsym(g_remixDll, "remixapi_linux_InputMouseButton");
+    static auto wheel = (void (*)(float, float)) dlsym(g_remixDll, "remixapi_linux_InputMouseWheel");
+    static auto key = (void (*)(int, int)) dlsym(g_remixDll, "remixapi_linux_InputKey");
+    static auto chr = (void (*)(uint32_t)) dlsym(g_remixDll, "remixapi_linux_InputChar");
+    static auto focus = (void (*)(int)) dlsym(g_remixDll, "remixapi_linux_InputFocus");
+    switch (kind) {
+    case 0: if (move) move(x, y); break;
+    case 1: if (button) button(a, (int) x); break;
+    case 2: if (wheel) wheel(x, y); break;
+    case 3: if (key) key(a, (int) x); break;
+    case 4: if (chr) chr((uint32_t) a); break;
+    case 5: if (focus) focus(a); break;
+    }
+}
 #endif
 
 } // extern "C"

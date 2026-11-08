@@ -5,6 +5,7 @@
 package com.nvidia.rtxremix.minecraft.mixin;
 
 import com.nvidia.rtxremix.minecraft.RtxRemixMod;
+import com.nvidia.rtxremix.minecraft.input.LinuxOverlayInput;
 import com.nvidia.rtxremix.minecraft.input.RemixMouseAccess;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.Mouse;
@@ -69,6 +70,9 @@ public abstract class MouseMixin implements RemixMouseAccess {
     private void rtxremix$blockMovementWhileMenuOpen(
             long window, double cursorX, double cursorY, CallbackInfo ci) {
         if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
+            if (LinuxOverlayInput.ENABLED) {
+                LinuxOverlayInput.cursor(cursorX, cursorY);
+            }
             x = cursorX;
             y = cursorY;
             hasResolutionChanged = false;
@@ -104,6 +108,9 @@ public abstract class MouseMixin implements RemixMouseAccess {
                 && action == GLFW.GLFW_RELEASE
                 && button == activeButton;
         if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen() && !syntheticRelease) {
+            if (LinuxOverlayInput.ENABLED) {
+                LinuxOverlayInput.mouseButton(button, action);
+            }
             ci.cancel();
         }
     }
@@ -111,6 +118,9 @@ public abstract class MouseMixin implements RemixMouseAccess {
     @Inject(method = "onMouseScroll", at = @At("HEAD"), cancellable = true)
     private void rtxremix$blockScrollWhileMenuOpen(long window, double horizontal, double vertical, CallbackInfo ci) {
         if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
+            if (LinuxOverlayInput.ENABLED) {
+                LinuxOverlayInput.scroll(horizontal, vertical);
+            }
             ci.cancel();
         }
     }
