@@ -348,7 +348,7 @@ public final class BlockQuadEmitter {
         // against the unoffset grid position; see the note there before adding a
         // light rule to a block that offsets.
         if (state.hasOffsetFunction()) {
-            Vec3 modelOffset = state.getOffset(world, pos);
+            Vec3 modelOffset = state.getOffset(pos);
             lx += (float) modelOffset.x;
             ly += (float) modelOffset.y;
             lz += (float) modelOffset.z;
@@ -906,6 +906,101 @@ public final class BlockQuadEmitter {
             waterColorKnownMask |= bit;
         }
         return waterColorCache[cell];
+    }
+
+    // --- Helpers ---
+
+    private boolean shouldDrawBlockSide(BlockAndTintGetter world, BlockState state, Direction side) {
+        int neighborX = mutablePos.getX() + side.getStepX();
+        int neighborY = mutablePos.getY() + side.getStepY();
+        int neighborZ = mutablePos.getZ() + side.getStepZ();
+        BlockState neighbor = getCachedBlockState(world, neighborX, neighborY, neighborZ);
+        long key = ((long) Block.getId(state) << 35)
+                | ((long) Block.getId(neighbor) << 3)
+                | side.ordinal();
+        int slot = (int) ((key * 0x9E3779B97F4A7C15L) >>> (64 - FACE_CULL_CACHE_BITS));
+        if (faceCullKeys[slot] == key && faceCullResults[slot] != FACE_CULL_UNKNOWN) {
+            return faceCullResults[slot] == FACE_CULL_DRAWN;
+        }
+
+        neighborPos.set(neighborX, neighborY, neighborZ);
+        boolean drawn = Block.shouldRenderFace(state, world, mutablePos, side, neighborPos);
+        faceCullKeys[slot] = key;
+        faceCullResults[slot] = drawn ? FACE_CULL_DRAWN : FACE_CULL_HIDDEN;
+        return drawn;
+    }
+
+    private BlockState getCachedBlockState(BlockGetter world, int worldX, int worldY, int worldZ) {
+        int lx = worldX - baseX;
+        int ly = worldY - baseY;
+        int lz = worldZ - baseZ;
+        if ((lx | ly | lz) < 0 || lx >= SECTION_SIZE || ly >= SECTION_SIZE || lz >= SECTION_SIZE) {
+            neighborPos.set(worldX, worldY, worldZ);
+            return world.getBlockState(neighborPos);
+        }
+
+        int idx = localIndex(lx, ly, lz);
+        int word = idx >> 6;
+        long bit = 1L << (idx & 63);
+        if ((blockStateKnown[word] & bit) != 0) {
+            return blockStateCache[idx];
+        }
+
+        neighborPos.set(worldX, worldY, worldZ);
+        BlockState state = world.getBlockState(neighborPos);
+        cacheLocalBlockState(idx, state);
+        return state;
+    }
+
+    private FluidState getCachedFluidState(BlockGetter world, int worldX, int worldY, int worldZ) {
+        int lx = worldX - baseX;
+        int ly = worldY - baseY;
+        int lz = worldZ - baseZ;
+        if ((lx | ly | lz) < 0 || lx >= SECTION_SIZE || ly >= SECTION_SIZE || lz >= SECTION_SIZE) {
+            neighborPos.set(worldX, worldY, worldZ);
+            return world.getFluidState(neighborPos);
+        }
+
+        int idx = localIndex(lx, ly, lz);
+        int word = idx >> 6;
+        long bit = 1L << (idx & 63);
+        if ((fluidStateKnown[word] & bit) != 0) {
+            return fluidStateCache[idx];
+        }
+
+        FluidState fluidState = getCachedBlockState(world, worldX, worldY, worldZ).getFluidState();
+        cacheLocalFluidState(idx, fluidState);
+        return fluidState;
+    }
+
+    private void cacheLocalBlockState(int idx, BlockState state) {
+        blockStateCache[idx] = state;
+        blockStateKnown[idx >> 6] |= 1L << (idx & 63);
+    }
+
+    private void cacheLocalFluidState(int idx, FluidState fluidState) {
+        fluidStateCache[idx] = fluidState;
+        fluidStateKnown[idx >> 6] |= 1L << (idx & 63);
+    }
+
+    private static int localIndex(int lx, int ly, int lz) {
+        return (ly << 8) | (lz << 4) | lx;
+    }
+
+
+    /**
+     * A FRAPI quad's vertex color under its block tint, as Indigo's
+     * {@code ColorHelper.multiplyColor} computes it: each channel multiplied,
+     * rounding down. The tint is treated as opaque, as Indigo's
+     * {@code BlockRenderInfo.blockColor} makes it, so the vertex alpha is kept.
+     * A block without a color provider has the tint -1, which is white and
+     * changes nothing.
+     */
+    static int tintFrapiColor(int vertexColor, int tint) {
+        int red = ((vertexColor >>> 16) & 0xFF) * ((tint >>> 16) & 0xFF) / 0xFF;
+        int green = ((vertexColor >>> 8) & 0xFF) * ((tint >>> 8) & 0xFF) / 0xFF;
+        int blue = (vertexColor & 0xFF) * (tint & 0xFF) / 0xFF;
+        return (vertexColor & 0xFF000000) | (red << 16) | (green << 8) | blue;
     }
 
     /**

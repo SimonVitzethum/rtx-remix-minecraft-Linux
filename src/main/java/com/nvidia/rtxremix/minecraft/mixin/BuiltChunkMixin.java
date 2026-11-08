@@ -8,10 +8,15 @@ import com.nvidia.rtxremix.minecraft.terrain.BuiltChunkNeighbourhoodAccess;
 import com.nvidia.rtxremix.minecraft.terrain.ChunkBuilderBlockEntityAccess;
 import com.nvidia.rtxremix.minecraft.terrain.NeighbourReflagFilter;
 import com.nvidia.rtxremix.minecraft.terrain.SectionLeftRenderSetQueue;
-import com.nvidia.rtxremix.minecraft.terrain.visibility.ChunkSlotMoveLog;
-import net.minecraft.client.renderer.chunk.RenderRegionCache;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.chunk.CompiledSectionMesh;
+import net.minecraft.client.renderer.chunk.RenderSectionRegion;
+import net.minecraft.client.renderer.chunk.SectionMesh;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -20,45 +25,41 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.concurrent.atomic.AtomicReference;
+
 /**
- * Hooks into vanilla's BuiltChunk lifecycle.
+ * Hooks into vanilla's {@code RenderSection} lifecycle.
  *
  * <ul>
- *   <li><b>setOrigin:</b> Resets per-slot block-entity and snapshot state when
- *       vanilla reuses a BuiltChunk for a new section, and logs the move so the
- *       frustum index can re-bucket exactly the slots that moved.
- *   <li><b>createRebuildTask:</b> Records which neighbour columns the region
+ *   <li><b>setSectionNode:</b> Resets per-slot block-entity and snapshot state when
+ *       vanilla reuses a section slot for a new section.
+ *   <li><b>createCompileTask:</b> Records which neighbour columns the region
  *       snapshot contained, so a later chunk-load re-flag from a column the
  *       capture already read can be dropped.
- *   <li><b>method_60908:</b> Tracks whether the section contains block
+ *   <li><b>setSectionMesh:</b> Tracks whether the section contains block
  *       entities and flags empty render data as a removal candidate. The
  *       render thread validates the live world section before removing
  *       Remix terrain because vanilla can publish temporary empty data.
  * </ul>
+ *
+ * <p>26.3: sections no longer own per-layer GL buffers (meshes live in uber buffers keyed by
+ * the mesh), so the 1.21 hook that gave constructed sections an empty buffer map is gone,
+ * and the slot-move log that fed the frustum index is not fed any more.
  */
 @Mixin(SectionRenderDispatcher.RenderSection.class)
 public abstract class BuiltChunkMixin implements ChunkBuilderBlockEntityAccess, BuiltChunkNeighbourhoodAccess {
 
     @Shadow
     @Final
-    public int index;
+    private BlockPos.MutableBlockPos renderOrigin;
 
     @Shadow
     @Final
-    BlockPos.MutableBlockPos renderOrigin;
-
-    @Shadow
-    protected abstract double getDistToPlayerSqr();
-
-    @Shadow
-    protected abstract boolean doesChunkExistAt(BlockPos pos);
-
-    @Shadow
-    public abstract SectionRenderDispatcher.CompiledSection getCompiled();
+    public AtomicReference<SectionMesh> sectionMesh;
 
     /**
-     * Shared by every slot: createRebuildTask runs only on the render thread
-     * (updateChunks, ChunkBuilder.rebuild, the Remix recapture queue), so one
+     * Shared by every slot: createCompileTask runs only on the render thread
+     * (level extraction, the compile-sync path, the Remix recapture queue), so one
      * scratch position serves all of them.
      */
     private static final BlockPos.MutableBlockPos rtxremix$neighbourProbe = new BlockPos.MutableBlockPos();
@@ -83,52 +84,60 @@ public abstract class BuiltChunkMixin implements ChunkBuilderBlockEntityAccess, 
         rtxremix$snapshotMask &= ~bit;
     }
 
-    @Inject(method = "setOrigin(III)V", at = @At("HEAD"))
-    private void rtxremix$onSetOrigin(int x, int y, int z, CallbackInfo ci) {
+    @Inject(method = "setSectionNode(J)V", at = @At("HEAD"))
+    private void rtxremix$onSetSectionNode(long sectionNode, CallbackInfo ci) {
         rtxremix$hasBlockEntities = false;
         rtxremix$snapshotMask = 0;
     }
 
-    @Inject(method = "setOrigin(III)V", at = @At("RETURN"))
-    private void rtxremix$afterSetOrigin(int x, int y, int z, CallbackInfo ci) {
-        ChunkSlotMoveLog.RENDER_THREAD.record(index);
-    }
-
     /**
-     * The probe sees exactly the columns the snapshot holds: ChunkRendererRegionBuilder.build
-     * reads ClientChunkManager.getChunk(x, z, FULL, true), which returns the shared EmptyChunk
-     * precisely when this create=false probe returns null, and nothing interleaves on the
-     * render thread between the two. A null region (empty own section) is recorded too: it
-     * has no geometry that a neighbour could make wrong.
+     * The probe sees exactly the columns the snapshot holds: RenderRegionCache.createRegion
+     * reads {@code level.getChunk(x, z)}, which returns the shared empty chunk precisely when
+     * the client chunk source does not have the column, and nothing interleaves on the render
+     * thread between the two. An empty own section is recorded too: it has no geometry that a
+     * neighbour could make wrong.
      */
-    @Inject(
-            method = "createCompileTask(Lnet/minecraft/client/renderer/chunk/RenderRegionCache;)Lnet/minecraft/client/renderer/chunk/SectionRenderDispatcher$RenderSection$CompileTask;",
-            at = @At("RETURN"))
-    private void rtxremix$recordSnapshotNeighbourhood(
-            RenderRegionCache regionBuilder, CallbackInfoReturnable<?> cir) {
-        // RETURN precedes the synchronous task.run in BuiltChunk.rebuild, so a first build still reads EMPTY here.
-        boolean firstBuild = getCompiled() == SectionRenderDispatcher.CompiledSection.UNCOMPILED;
+    @Inject(method = "createCompileTask", at = @At("RETURN"))
+    private void rtxremix$recordSnapshotNeighbourhood(RenderSectionRegion region, CallbackInfoReturnable<?> cir) {
+        ClientLevel level = Minecraft.getInstance().level;
+        if (level == null) {
+            return;
+        }
+        // RETURN precedes the task's run, so a first build still reads UNCOMPILED here.
+        boolean firstBuild = sectionMesh.get() == CompiledSectionMesh.UNCOMPILED;
+        int originX = renderOrigin.getX();
+        int originZ = renderOrigin.getZ();
         int mask = 0;
         for (int k = 0; k < NeighbourReflagFilter.NEIGHBOUR_COUNT; k++) {
-            rtxremix$neighbourProbe.set(
-                    renderOrigin.getX() + NeighbourReflagFilter.DX[k] * 16,
-                    renderOrigin.getY(),
-                    renderOrigin.getZ() + NeighbourReflagFilter.DZ[k] * 16);
-            if (doesChunkExistAt(rtxremix$neighbourProbe)) {
+            int chunkX = (originX >> 4) + NeighbourReflagFilter.DX[k];
+            int chunkZ = (originZ >> 4) + NeighbourReflagFilter.DZ[k];
+            if (level.getChunkSource().hasChunk(chunkX, chunkZ)) {
                 mask |= NeighbourReflagFilter.bit(k);
             }
         }
         rtxremix$snapshotMask = mask;
-        if (NeighbourReflagFilter.isIncompleteFirstBuild(firstBuild, getDistToPlayerSqr(), mask)) {
+        if (NeighbourReflagFilter.isIncompleteFirstBuild(firstBuild, rtxremix$squaredCameraDistance(), mask)) {
             NeighbourReflagFilter.recordIncompleteFirstBuild();
         }
     }
 
-    @Inject(method = "setCompiled(Lnet/minecraft/client/renderer/chunk/SectionRenderDispatcher$CompiledSection;)V", at = @At("HEAD"))
-    private void rtxremix$onChunkDataSet(SectionRenderDispatcher.CompiledSection chunkData, CallbackInfo ci) {
-        rtxremix$hasBlockEntities = !chunkData.getRenderableBlockEntities().isEmpty();
+    private double rtxremix$squaredCameraDistance() {
+        Entity camera = Minecraft.getInstance().getCameraEntity();
+        if (camera == null) {
+            return 0.0;
+        }
+        Vec3 pos = camera.position();
+        double dx = renderOrigin.getX() + 8.0 - pos.x;
+        double dy = renderOrigin.getY() + 8.0 - pos.y;
+        double dz = renderOrigin.getZ() + 8.0 - pos.z;
+        return dx * dx + dy * dy + dz * dz;
+    }
 
-        if (!chunkData.hasNoRenderableLayers()) {
+    @Inject(method = "setSectionMesh", at = @At("HEAD"))
+    private void rtxremix$onSectionMeshSet(SectionMesh mesh, CallbackInfoReturnable<SectionMesh> cir) {
+        rtxremix$hasBlockEntities = !mesh.getRenderableBlockEntities().isEmpty();
+
+        if (mesh.hasRenderableLayers()) {
             return;
         }
         int x = renderOrigin.getX();

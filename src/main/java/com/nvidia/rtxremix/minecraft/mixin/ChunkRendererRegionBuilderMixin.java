@@ -15,23 +15,20 @@ import org.spongepowered.asm.mixin.Shadow;
 
 /**
  * The builder's reference on its cached snapshots; see {@link RegionBuilderRelease}. The
- * reference itself is taken when a snapshot is created ({@link ClientChunkMixin}).
+ * reference itself is taken when a snapshot is created ({@link RenderedChunkMixin}).
  */
 @Mixin(RenderRegionCache.class)
 public abstract class ChunkRendererRegionBuilderMixin implements RegionBuilderRelease {
 
     @Shadow
     @Final
-    private Long2ObjectMap<Object> chunkInfoCache;
+    private Long2ObjectMap<SectionCopy> sectionCopyCache;
 
     @Override
     public void rtxremix$releaseSnapshots() {
-        for (Object clientChunk : chunkInfoCache.values()) {
-            SectionCopy snapshot = ((ClientChunkSnapshotAccess) clientChunk).rtxremix$snapshotOrNull();
-            if (snapshot != null) {
-                ((RegionSnapshotRelease) snapshot).rtxremix$release();
-            }
+        for (SectionCopy snapshot : sectionCopyCache.values()) {
+            ((RegionSnapshotRelease) snapshot).rtxremix$release();
         }
-        chunkInfoCache.clear();
+        sectionCopyCache.clear();
     }
 }
