@@ -58,6 +58,7 @@
         "PlayerSkinTextureMixin",
         "RebuildTaskMixin",
         "RenderSystemMixin",
+        "GlBackendMixin",
         "RenderedChunkMixin",
         "SectionBuilderMixin",
         "SpriteAtlasAccessor",
@@ -69,7 +70,6 @@
         "ThreadExecutorMixin",
         "TorchBlockAccessor",
         "UnfocusedFramerateMixin",
-        "VertexBufferMixin",
         "WindowMixin",
         "WorldChunkMixin",
         "WorldRendererMixin"

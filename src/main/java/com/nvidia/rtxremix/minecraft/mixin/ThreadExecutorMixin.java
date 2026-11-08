@@ -21,7 +21,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(BlockableEventLoop.class)
 public abstract class ThreadExecutorMixin {
     @Shadow
-    public abstract String canBeHitByProjectile();
+    public abstract String name();
 
     @Shadow
     public abstract int getPendingTasksCount();
@@ -35,7 +35,7 @@ public abstract class ThreadExecutorMixin {
         if (!ProfileScope.isClientTaskDrainActive()) {
             return;
         }
-        ProfileScope.beginThreadExecutorTask(canBeHitByProjectile(), getPendingTasksCount(), task);
+        ProfileScope.beginThreadExecutorTask(name(), getPendingTasksCount(), task);
     }
 
     @Inject(method = "doRunTask", at = @At("RETURN"))

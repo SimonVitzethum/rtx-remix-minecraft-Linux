@@ -4,116 +4,77 @@
  */
 package com.nvidia.rtxremix.minecraft.gl;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.BufferUploader;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.Tesselator;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexSorting;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.GameRenderer;
-import org.joml.Matrix4f;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.lwjgl.opengl.GL11.GL_COLOR_BUFFER_BIT;
+import static org.lwjgl.opengl.GL11.GL_NEAREST;
+import static org.lwjgl.opengl.GL45.glBlitNamedFramebuffer;
+
 /**
- * Draws the Remix output texture as a full-screen, fully opaque quad on
- * Minecraft's main framebuffer, after the world and first-person model have
- * been submitted and before the screen overlays and HUD.
+ * Replaces Minecraft's main render target color with the Remix output texture, fully opaque,
+ * after the world and first-person model have been submitted and before the screen overlays and HUD.
  *
- * <p>Render thread only. It goes through {@code RenderSystem} and
- * {@code Tessellator} rather than raw GL so the surrounding vanilla render
- * state stays valid.
+ * <p>Render thread only. The renderpearl OpenGL backend has no immediate-mode shader state to borrow
+ * for a textured quad, and the composite is an opaque copy anyway, so it is one direct-state-access
+ * blit between two framebuffers owned by this class. Neither touches Minecraft's cached bindings.
  */
 public class TextureOverlay {
-    
+
     private static final Logger LOGGER = LoggerFactory.getLogger(TextureOverlay.class);
-    
+
     private final Minecraft client;
-    
+    private final GlTargets.Attachment source = new GlTargets.Attachment();
+    private final GlTargets.Attachment destination = new GlTargets.Attachment();
+
     public TextureOverlay() {
         this.client = Minecraft.getInstance();
         LOGGER.info("TextureOverlay initialized");
     }
-    
+
     /**
-     * Renders a texture as a full-screen overlay.
-     * 
-     * @param textureId The GL texture ID to render as full-screen overlay
+     * Copies a texture over the whole main render target.
+     *
+     * @param textureId The GL texture ID of the Remix color image
      */
     public void render(int textureId) {
-        if (textureId <= 0) {
+        if (textureId <= 0 || client == null || client.getWindow() == null) {
             return;
         }
-        
-        if (client == null || client.getWindow() == null) {
-            return;
-        }
-        
         try {
-            renderTextureOverlay(textureId);
+            blit(textureId);
         } catch (Exception e) {
             LOGGER.error("Error rendering texture overlay", e);
         }
     }
-    
-    private void renderTextureOverlay(int texId) {
-        int width = client.getWindow().getGuiScaledWidth();
-        int height = client.getWindow().getGuiScaledHeight();
 
-        if (client.getMainRenderTarget() != null) {
-            client.getMainRenderTarget().bindWrite(true);
+    private void blit(int texId) {
+        RenderTarget target = client.gameRenderer.mainRenderTarget();
+        int targetTexture = GlTargets.colorTextureId(target);
+        if (targetTexture == 0) {
+            return;
         }
-
-        Matrix4f savedProjection = RenderSystem.getProjectionMatrix();
-
-        // Opaque: the Remix image replaces vanilla's output rather than blending
-        // with it, and it neither tests nor writes depth.
-        RenderSystem.disableDepthTest();
-        RenderSystem.depthMask(false);
-        RenderSystem.disableBlend();
-
-        Matrix4f projMatrix = new Matrix4f().setOrtho(
-            0.0f, (float) width, (float) height, 0.0f, -1000.0f, 1000.0f
-        );
-        RenderSystem.setProjectionMatrix(projMatrix, VertexSorting.ORTHOGRAPHIC_Z);
-
-        RenderSystem.getModelViewStack().pushMatrix();
-        RenderSystem.getModelViewStack().identity();
-        RenderSystem.applyModelViewMatrix();
-
-        RenderSystem.setShader(GameRenderer::getPositionTexShader);
-        RenderSystem.setShaderTexture(0, texId);
-        RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
-
-        // Standard GL UVs, with (0,0) at the top left: the interop blit already
-        // corrects the Vulkan image's orientation.
-        Matrix4f identity = new Matrix4f();
-        BufferBuilder bufferBuilder = Tesselator.getInstance()
-            .begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
-
-        bufferBuilder.addVertex(identity, 0,     0,      0).setUv(0.0f, 0.0f);
-        bufferBuilder.addVertex(identity, 0,     height, 0).setUv(0.0f, 1.0f);
-        bufferBuilder.addVertex(identity, width, height, 0).setUv(1.0f, 1.0f);
-        bufferBuilder.addVertex(identity, width, 0,      0).setUv(1.0f, 0.0f);
-
-        BufferUploader.drawWithShader(bufferBuilder.buildOrThrow());
-
-        RenderSystem.getModelViewStack().popMatrix();
-        RenderSystem.applyModelViewMatrix();
-        RenderSystem.setProjectionMatrix(savedProjection, VertexSorting.ORTHOGRAPHIC_Z);
-
-        RenderSystem.depthMask(true);
-        RenderSystem.enableDepthTest();
-        // Blend is left disabled; the HUD enables it when it needs it.
-        RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
+        int width = target.width;
+        int height = target.height;
+        int read = source.fboFor(texId);
+        int draw = destination.fboFor(targetTexture);
+        // A blit honours the scissor box that GUI clipping leaves enabled.
+        GlStateManager._disableScissorTest();
+        // The Remix image has Vulkan orientation (row 0 at the top), so the copy flips it into
+        // GL's bottom-up framebuffer rows.
+        glBlitNamedFramebuffer(read, draw, 0, 0, width, height, 0, height, width, 0,
+                GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
-    
+
     /**
      * Cleans up resources.
      */
     public void shutdown() {
+        source.destroy();
+        destination.destroy();
         LOGGER.info("TextureOverlay shutdown");
     }
 }
