@@ -52,7 +52,7 @@ public class TextureOverlay {
     }
 
     private void blit(int texId) {
-        RenderTarget target = client.getMainRenderTarget();
+        RenderTarget target = client.gameRenderer.mainRenderTarget();
         int targetTexture = GlTargets.colorTextureId(target);
         if (targetTexture == 0) {
             return;

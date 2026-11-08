@@ -48,7 +48,8 @@ import com.nvidia.rtxremix.minecraft.entity.RemixEntitySubmitter;
 import com.nvidia.rtxremix.minecraft.entity.RemixFirstPersonPass;
 import com.nvidia.rtxremix.minecraft.cloud.CloudRenderer;
 import it.unimi.dsi.fastutil.longs.LongSet;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
+import net.minecraft.client.renderer.state.level.BlockOutlineRenderState;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -635,7 +636,7 @@ public class RemixRenderer {
             Minecraft client = Minecraft.getInstance();
             if (client != null && client.levelRenderer != null) {
                 LongSet built = RtxRemixMod.builtSections(client);
-                client.levelRenderer.allChanged();
+                client.levelExtractor.allChanged();
                 RtxRemixMod.recaptureTerrainForRemix(client, built);
             }
             pendingTerrainRecaptureAfterTextureReload = false;
@@ -861,8 +862,8 @@ public class RemixRenderer {
             }
             submitPendingParticleFrame();
 
-            Camera camera = client.gameRenderer.getMainCamera();
-            float tickDelta = client.getTimer().getGameTimeDeltaPartialTick(true);
+            Camera camera = client.gameRenderer.mainCamera();
+            float tickDelta = client.getDeltaTracker().getGameTimeDeltaPartialTick(true);
             particleFuture = startParticleRenderTask(tickDelta, ProfileScope.currentFrameIndex());
             
             perfTimer.begin(perfCamera);
@@ -872,7 +873,7 @@ public class RemixRenderer {
                 perfTimer.end(perfCamera);
             }
             
-            Vec3 cameraPos = camera.getPosition();
+            Vec3 cameraPos = camera.position();
 
             perfTimer.begin(perfLights);
             try (ProfileScope lightsScope = ProfileScope.begin("Lights")) {
@@ -1266,7 +1267,7 @@ public class RemixRenderer {
      */
     private void updateCamera(Camera camera, float tickDelta) {
         try {
-            Vec3 pos = camera.getPosition();
+            Vec3 pos = camera.position();
             float pitch = camera.xRot();
             float yaw = camera.yRot();
     
@@ -1286,7 +1287,7 @@ public class RemixRenderer {
             float upZ = rightX * forwardY - rightY * forwardX;
     
             Minecraft client = Minecraft.getInstance();
-            float worldFov = (float) client.gameRenderer.getFov(camera, tickDelta, true);
+            float worldFov = camera.getFov();
             int width = client.getWindow().getWidth();
             int height = client.getWindow().getHeight();
             float aspect = (float) width / (float) height;
@@ -1509,7 +1510,7 @@ public class RemixRenderer {
         // The child window covers the host window, so the default framebuffer's
         // covered pixels are undefined. Minecraft's main framebuffer contains
         // the same completed world, overlays, and HUD without that dependency.
-        interop.copyFromRenderTarget(Minecraft.getInstance().getMainRenderTarget());
+        interop.copyFromRenderTarget(Minecraft.getInstance().gameRenderer.mainRenderTarget());
 
         // signal that GL is done copying, so VK can read the image and present
         interop.signalDone();
@@ -1556,8 +1557,8 @@ public class RemixRenderer {
      * the same frame.
      */
     public void captureBlockOutline(
-            WorldRenderContext context,
-            WorldRenderContext.BlockOutlineContext outline) {
+            LevelRenderContext context,
+            BlockOutlineRenderState outline) {
         if (blockOutlinePass != null) {
             blockOutlinePass.captureBlockOutline(context, outline);
         }
