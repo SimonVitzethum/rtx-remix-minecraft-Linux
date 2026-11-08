@@ -1,3 +1,4 @@
+#include <chrono>
 /*
 * Copyright (c) 2021-2023, NVIDIA CORPORATION. All rights reserved.
 *
@@ -2168,7 +2169,12 @@ namespace dxvk {
       EnsureInteropSemaphores();
       EnsureInteropImage(extent.width, extent.height);
 
+      static const bool profileSubmit = std::getenv("REMIX_PROFILE_SUBMIT") != nullptr;
+      using ProfClock = std::chrono::steady_clock;
+      static double profEnd = 0, profSync = 0, profGpu = 0; static uint32_t profN = 0;
+      const auto profT0 = ProfClock::now();
       m_parent->m_rtx.EndFrame(backBuffer);
+      const auto profT1 = ProfClock::now();
 
       // The depth image follows the render resolution of the previous frame, which the synchronized CS thread has settled.
       {
@@ -2219,6 +2225,20 @@ namespace dxvk {
       }
       if (flags & kSubmitForceWaitDeviceIdle) {
         m_device->waitForIdle();
+      }
+      if (profileSubmit) {
+        // Debug aid: REMIX_PROFILE_SUBMIT=1 waits for the GPU on the CPU and logs the averaged phase times every 120 frames.
+        const auto profT2 = ProfClock::now();
+        m_interop.dxvkDone->wait(signalValue);
+        const auto profT3 = ProfClock::now();
+        profEnd += std::chrono::duration<double, std::milli>(profT1 - profT0).count();
+        profSync += std::chrono::duration<double, std::milli>(profT2 - profT1).count();
+        profGpu += std::chrono::duration<double, std::milli>(profT3 - profT2).count();
+        if (++profN == 120) {
+          Logger::info(str::format("[SubmitProfile] per frame ms: EndFrame(CPU scene+record)=", profEnd / 120,
+            " flush+cs sync=", profSync / 120, " gpu wait after submit=", profGpu / 120));
+          profEnd = profSync = profGpu = 0; profN = 0;
+        }
       }
 
       m_interop.submitted = true;
