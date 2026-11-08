@@ -48,7 +48,11 @@ cp "$root/tools/linux/precompile.sh" "$out/precompile.sh"
 
 # Every library finds its siblings through $ORIGIN, so the directory can move anywhere.
 if command -v patchelf >/dev/null; then
-    for lib in "$out"/*.so*; do patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true; done
+    # libNRD.so has no sibling dependencies and patchelf corrupts it (the denoiser then outputs zeros), so it stays untouched.
+    for lib in "$out"/*.so*; do
+        case "$(basename "$lib")" in libNRD.so) continue ;; esac
+        patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true
+    done
 fi
 
 echo "staged $(ls "$out" | wc -l) entries in $out"
