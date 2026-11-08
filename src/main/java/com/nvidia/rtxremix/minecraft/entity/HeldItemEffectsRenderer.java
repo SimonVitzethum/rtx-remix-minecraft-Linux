@@ -8,7 +8,7 @@ import com.nvidia.rtxremix.minecraft.light.HeldLightState;
 import com.nvidia.rtxremix.minecraft.particle.ParticleTint;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.SpriteSet;
-import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -100,7 +100,7 @@ public final class HeldItemEffectsRenderer {
 
         Quaternionfc facing = client.gameRenderer.mainCamera().rotation();
         Quaternionfc frame = HeldItemFlame.riseFrame(mode, facing);
-        double ticks = client.level.getGameTime() + client.getTimer().getGameTimeDeltaPartialTick(false);
+        double ticks = client.level.getGameTime() + client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
         float phase = mode.ordinal();
         float cameraOffset = HeldItemFlame.cameraOffset(mode);
         // Null when the capture does not know where the eye is; the poses then stay at depth 1.
@@ -172,7 +172,7 @@ public final class HeldItemEffectsRenderer {
                 .setColor(grey, grey, grey, alpha)
                 .setUv(u, v)
                 .setOverlay(OverlayTexture.NO_OVERLAY)
-                .setLight(LightTexture.FULL_BRIGHT)
+                .setLight(LightCoordsUtil.FULL_BRIGHT)
                 .setNormal(entry, 0.0f, 0.0f, 1.0f);
     }
 }
