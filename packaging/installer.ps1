@@ -169,10 +169,11 @@ $ErrorActionPreference = 'Continue'
 
 # --- Constants (kept in sync with build.gradle / rtxremix-java) ---
 $script:APP_VERSION          = '0.1.1'
-$script:PRISM_INSTANCE_NAME  = 'NVIDIA RTX Remix for Minecraft'
+$script:PRISM_INSTANCE_NAME  = 'RTX Remix 26.3 (Fabric)'
 # Legacy instance names kept for backward detection only; prior installs
 # used shorter / differently-worded names. Ordered newest-to-oldest.
 $script:PRISM_INSTANCE_LEGACY_NAMES = @(
+    'NVIDIA RTX Remix for Minecraft',
     'NVIDIA RTX Remix',
     'RTX Remix 1.21.1 (Fabric)'
 )
@@ -182,10 +183,10 @@ $script:PRISM_PORTABLE_DIR   = Join-Path $env:LOCALAPPDATA 'RtxRemixMinecraft\Pr
 # it once the instance is in that Prism, and Get-LauncherState reads it, so
 # later runs detect that Prism too.
 $script:PRISM_DATA_DIR_RECORD = Join-Path $env:LOCALAPPDATA 'RtxRemixMinecraft\prism-data-dir.txt'
-$script:MANAGED_JDK_DIR      = Join-Path $env:LOCALAPPDATA 'RtxRemixMinecraft\jdk-21'
-$script:FABRIC_API_VERSION   = '0.116.10+1.21.1'
-$script:FABRIC_LOADER_VER    = '0.16.5'
-$script:MC_VERSION           = '1.21.1'
+$script:MANAGED_JDK_DIR      = Join-Path $env:LOCALAPPDATA 'RtxRemixMinecraft\jdk-25'
+$script:FABRIC_API_VERSION   = '0.165.2+26.3'
+$script:FABRIC_LOADER_VER    = '0.19.5'
+$script:MC_VERSION           = '26.3'
 $script:FABRIC_INSTALLER_VER = '1.0.1'
 # Fabric installer 1.0.x writes launcher_profiles.json using an MC-only
 # profile key, but the underlying `versions/` directory name (and the
@@ -257,6 +258,10 @@ $script:PRISM_KNOWN_HASHES = @{
 #   (Get-FileHash -Algorithm SHA256 <file>).Hash.ToLower()
 # and paste below. Update when bumping the VER constants above.
 $script:FABRIC_INSTALLER_SHA256 = ''
+# TODO(26.3): pin the SHA-256 of the Fabric API jar for 0.165.2+26.3
+# (net/fabricmc/fabric-api/fabric-api/0.165.2+26.3/fabric-api-0.165.2+26.3.jar)
+# here. Unknown at port time, so left empty; the installer falls back to the
+# Maven .sha256 sidecar and fails closed if that is unavailable.
 $script:FABRIC_API_SHA256       = ''
 
 # Minimum Prism Launcher version we'll install as a fresh portable. Prism
@@ -328,9 +333,9 @@ $script:LEGACY_RESOURCE_PACK_PATH = 'resourcepacks\RtxRemix-LabPBR'
 # installed under the same name. Only files matching this pattern are the
 # installer's to replace or remove. build.gradle's materialsArchive names it.
 $script:ART_PACK_PATTERN = '^RTX-Remix-Materials-\d+\.\d+\.\d+\.zip$'
-# Minecraft 1.21.1's data version. A new options.txt carries it so the game
+# Minecraft 26.3's data version. A new options.txt carries it so the game
 # reads the file as current rather than running every options upgrade on it.
-$script:MC_DATA_VERSION = 3955
+$script:MC_DATA_VERSION = 5023
 # The RTX Remix Showcase World ships as
 # saves\RTX-Remix-Showcase-World-<version>.zip beside the installer, and the
 # zip's one top-level folder is the save, which keeps its name in saves\ and
@@ -528,7 +533,7 @@ function Test-PathLengthBudget {
       characters unless long-path-aware mode is opted into (manifest +
       registry), which we don't assume. The worst-case path we build is
       the instance mods jar:
-        $PrismDataDir\instances\RTX Remix 1.21.1 (Fabric)\.minecraft\mods\rtx-remix-renderer-0.1.0-{ts}-{hash}.jar
+        $PrismDataDir\instances\RTX Remix 26.3 (Fabric)\.minecraft\mods\rtx-remix-renderer-0.1.0-{ts}-{hash}.jar
       which adds ~122 fixed chars on top of $PrismDataDir. If the user's
       data dir starts out long (deep personal path, substituted drive
       letter, OneDrive redirect, etc.) we could bust 260 and see opaque
@@ -774,21 +779,21 @@ function Test-JavaArchMatchesHost {
     return $machine -eq (Get-ExpectedMachineForHost)
 }
 
-function Resolve-Java21ForArm {
-    # ARM64: need Java 21 AND native ARM64. Force managed Adoptium aarch64
+function Resolve-Java25ForArm {
+    # ARM64: need Java 25 AND native ARM64. Force managed Adoptium aarch64
     # because Mojang publishes no ARM64 Windows JRE and x64 Java under WoA
     # emulation breaks JNI.
     $onPath = Get-Command java -ErrorAction SilentlyContinue
-    if ($onPath -and (Get-JavaMajor $onPath.Source) -eq 21 -and (Test-JavaArchMatchesHost $onPath.Source)) {
-        Write-Info "Java 21 (ARM64 native) found on PATH: $($onPath.Source)"
+    if ($onPath -and (Get-JavaMajor $onPath.Source) -eq 25 -and (Test-JavaArchMatchesHost $onPath.Source)) {
+        Write-Info "Java 25 (ARM64 native) found on PATH: $($onPath.Source)"
         return $onPath.Source
     }
     $managed = Join-Path $script:MANAGED_JDK_DIR 'bin\java.exe'
-    if ((Test-Path -LiteralPath $managed) -and (Get-JavaMajor $managed) -eq 21 -and (Test-JavaArchMatchesHost $managed)) {
-        Write-Info "Using managed ARM64 JDK 21 at $($script:MANAGED_JDK_DIR)"
+    if ((Test-Path -LiteralPath $managed) -and (Get-JavaMajor $managed) -eq 25 -and (Test-JavaArchMatchesHost $managed)) {
+        Write-Info "Using managed ARM64 JDK 25 at $($script:MANAGED_JDK_DIR)"
         return $managed
     }
-    Install-ManagedJdk21
+    Install-ManagedJdk25
     return (Join-Path $script:MANAGED_JDK_DIR 'bin\java.exe')
 }
 
@@ -823,21 +828,21 @@ function Resolve-JavaForFabricInstaller {
         }
     }
     Write-Trace 'No existing Java found; falling back to Adoptium download'
-    Install-ManagedJdk21
+    Install-ManagedJdk25
     return (Join-Path $script:MANAGED_JDK_DIR 'bin\java.exe')
 }
 
-function Install-ManagedJdk21 {
+function Install-ManagedJdk25 {
     # Adoptium v3 binary endpoint redirects; we pre-fetch the assets list
     # to get the SHA-256 for supply-chain verification.
     $jdkArch   = if (Test-HostIsArm64) { 'aarch64' } else { 'x64' }
-    $assetUrl  = "https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=$jdkArch&image_type=jdk&os=windows&vendor=eclipse"
-    $binaryUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/$jdkArch/jdk/hotspot/normal/eclipse"
-    $zip       = New-SessionTempPath 'adoptium-jdk-21.zip'
-    $staging   = New-SessionTempPath 'adoptium-jdk-21-extract'
+    $assetUrl  = "https://api.adoptium.net/v3/assets/latest/25/hotspot?architecture=$jdkArch&image_type=jdk&os=windows&vendor=eclipse"
+    $binaryUrl = "https://api.adoptium.net/v3/binary/latest/25/ga/windows/$jdkArch/jdk/hotspot/normal/eclipse"
+    $zip       = New-SessionTempPath 'adoptium-jdk-25.zip'
+    $staging   = New-SessionTempPath 'adoptium-jdk-25-extract'
 
-    Write-Warn 'Java 21 not found on this system.'
-    Write-Info "Auto-installing Adoptium Temurin JDK 21 ($jdkArch, ~200 MB) to $($script:MANAGED_JDK_DIR)"
+    Write-Warn 'Java 25 not found on this system.'
+    Write-Info "Auto-installing Adoptium Temurin JDK 25 ($jdkArch, ~200 MB) to $($script:MANAGED_JDK_DIR)"
     Write-Info 'No admin rights needed; this is a user-level install only used by the installer and the mod launcher.'
 
     # Adoptium's asset metadata endpoint gives us a pinned SHA-256 tied to
@@ -878,7 +883,7 @@ function Install-ManagedJdk21 {
     try {
         Expand-Archive -LiteralPath $zip -DestinationPath $staging -Force -ErrorAction Stop
     } catch {
-        throw "Failed to extract JDK 21 archive: $($_.Exception.Message)"
+        throw "Failed to extract JDK 25 archive: $($_.Exception.Message)"
     }
     $nested = Get-ChildItem -LiteralPath $staging -Directory | Select-Object -First 1
     if (-not $nested) { throw 'Extracted JDK archive had no top-level directory: unexpected format.' }
@@ -888,8 +893,8 @@ function Install-ManagedJdk21 {
     Move-Item -LiteralPath $nested.FullName -Destination $script:MANAGED_JDK_DIR
 
     $major = Get-JavaMajor (Join-Path $script:MANAGED_JDK_DIR 'bin\java.exe')
-    if ($major -ne 21) { throw "JDK 21 install completed but java -version reports major=$major (not 21)." }
-    Write-Info "JDK 21 ready at $($script:MANAGED_JDK_DIR)"
+    if ($major -ne 25) { throw "JDK 25 install completed but java -version reports major=$major (not 25)." }
+    Write-Info "JDK 25 ready at $($script:MANAGED_JDK_DIR)"
 }
 
 # --- Launcher detection ---
@@ -1939,7 +1944,7 @@ function Initialize-PrismInstance {
     @(
         'InstanceType=OneSix'
         "name=$($script:PRISM_INSTANCE_NAME)"
-        'JavaVersion=21'
+        'JavaVersion=25'
     ) -join "`r`n" | Out-File -LiteralPath $cfg -Encoding ascii -NoNewline
     $pack = @{
         components = @(
@@ -2511,12 +2516,12 @@ function Write-MsLauncherJvmArgs {
 function Confirm-JvmArgsOverwrite {
     param([string]$Label, [string]$Current, [string]$Recommended, [string[]]$Note)
     Write-Host ''
-    Write-Host "  $($script:ICON_WARN) $($script:C_YELLOW)$Label$($script:C_RESET) has custom JVM args that differ from the Minecraft 1.21.1 launcher defaults."
+    Write-Host "  $($script:ICON_WARN) $($script:C_YELLOW)$Label$($script:C_RESET) has custom JVM args that differ from the Minecraft 26.3 launcher defaults."
     Write-Host ''
     Write-Host "     $($script:C_BOLD)Current:$($script:C_RESET)     $($script:C_DIM)$Current$($script:C_RESET)"
     Write-Host "     $($script:C_BOLD)Recommended:$($script:C_RESET) $($script:C_DIM)$Recommended$($script:C_RESET)"
     Write-Host ''
-    Write-Host '  Minecraft 1.21.1 launcher defaults use G1GC and a 2 GB heap. Custom'
+    Write-Host '  Minecraft 26.3 launcher defaults use G1GC and a 2 GB heap. Custom'
     Write-Host '  args may include profiling flags, test toggles, or more memory.'
     foreach ($line in $Note) { if ($line) { Write-Host "  $line" } }
     return (Confirm-YesNo -Prompt 'Overwrite current JVM args with launcher defaults?' -DefaultNo)
@@ -2542,7 +2547,7 @@ function Initialize-Prism {
     if ($State.PrismNamed -and (Test-Path -LiteralPath (Join-Path $instanceDir 'instance.cfg'))) {
         Write-FileAtomic -Path $script:PRISM_DATA_DIR_RECORD -Content $State.PrismDataDir
     }
-    Write-Info 'Configuring Minecraft 1.21.1 launcher JVM defaults...'
+    Write-Info 'Configuring Minecraft 26.3 launcher JVM defaults...'
     Sync-JvmArgs -For Prism -PrismCfg (Join-Path $instanceDir 'instance.cfg') -Unattended:$Unattended
     Set-PrismJavaPin -InstanceCfg (Join-Path $instanceDir 'instance.cfg')
     return $instanceDir
@@ -2600,7 +2605,7 @@ function Initialize-MicrosoftLauncher {
         }
     }
     Set-MsLauncherProfileName
-    Write-Info 'Configuring Minecraft 1.21.1 launcher JVM defaults on the Fabric profile...'
+    Write-Info 'Configuring Minecraft 26.3 launcher JVM defaults on the Fabric profile...'
     Sync-JvmArgs -For Microsoft -Unattended:$Unattended
 }
 
@@ -2630,7 +2635,7 @@ function Set-MsLauncherProfileName {
     $profileObj = $json.profiles.$key
     $currentName = if ($profileObj.PSObject.Properties['name']) { $profileObj.name } else { '' }
     $defaults = @(
-        $key                                              # Fabric installer default (e.g. 'fabric-loader-1.21.1')
+        $key                                              # Fabric installer default (e.g. 'fabric-loader-26.3')
         ''                                                # empty name
         'fabric-loader'                                   # legacy Fabric installer default
         "fabric-loader-$($script:FABRIC_LOADER_VER)-$($script:MC_VERSION)"  # older loader-included key
@@ -3297,7 +3302,7 @@ function Invoke-InstallOrUpgrade {
         #   x64 + Microsoft -> probe + fallback for fabric-installer.jar
         $installerJava = $null
         if (Test-HostIsArm64) {
-            $installerJava = Resolve-Java21ForArm
+            $installerJava = Resolve-Java25ForArm
         } elseif ($launcher -eq 'Microsoft') {
             $installerJava = Resolve-JavaForFabricInstaller
         }
@@ -3606,7 +3611,7 @@ function Invoke-Uninstall {
             [pscustomobject]@{ Label = 'Leave everything else alone'; Hint = 'just removed mod files'; Value = 'none' }
         )
         if ($hasManagedJdk) {
-            $jdkHint = "Adoptium JDK 21 at $($script:MANAGED_JDK_DIR)"
+            $jdkHint = "Adoptium JDK 25 at $($script:MANAGED_JDK_DIR)"
             if (Test-HostIsArm64) {
                 # On ARM64 this JDK IS what Prism uses to launch (we pinned it).
                 # Removing it without replacing with another ARM64 JDK will make

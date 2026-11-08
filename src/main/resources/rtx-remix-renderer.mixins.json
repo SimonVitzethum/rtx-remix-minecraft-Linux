@@ -54,6 +54,8 @@
         "RebuildTaskMixin",
         "RenderSystemMixin",
         "GlBackendMixin",
+        "VulkanFeatureSetsMixin",
+        "VulkanGpuSurfaceMixin",
         "RenderedChunkMixin",
         "SectionBuilderMixin",
         "SpriteAtlasAccessor",

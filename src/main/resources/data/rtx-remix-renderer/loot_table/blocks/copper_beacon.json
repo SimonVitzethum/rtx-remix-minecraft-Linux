@@ -4,17 +4,15 @@
     {
       "rolls": 1.0,
       "bonus_rolls": 0.0,
-      "conditions": [
-        {
-          "condition": "minecraft:survives_explosion"
-        }
-      ],
       "entries": [
         {
           "type": "minecraft:item",
           "name": "rtx-remix-renderer:copper_beacon"
         }
-      ]
+      ],
+      "condition": {
+        "type": "minecraft:survives_explosion"
+      }
     }
   ],
   "random_sequence": "rtx-remix-renderer:blocks/copper_beacon"

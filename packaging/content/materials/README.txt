@@ -4,7 +4,7 @@ RTX Remix Materials @VERSION@
 NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG
 OR MICROSOFT.
 
-A 64x texture resource pack for Minecraft Java Edition 1.21.1, created by an
+A 64x texture resource pack for Minecraft Java Edition 26.3, created by an
 art team at NVIDIA for RTX Remix for Minecraft, a Fabric mod that path traces
 the game through NVIDIA RTX Remix. Its normal and specular maps follow the
 LabPBR standard (https://shaderlabs.org/wiki/LabPBR_Material_Standard), so

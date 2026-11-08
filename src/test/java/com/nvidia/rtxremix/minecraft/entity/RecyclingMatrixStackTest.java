@@ -27,7 +27,7 @@ class RecyclingMatrixStackTest {
 
         PoseStack vanilla = new PoseStack();
         vanilla.translate(pivotX / 16.0F, pivotY / 16.0F, pivotZ / 16.0F);
-        vanilla.mulPose(new Quaternionf().rotationZYX(roll, yaw, pitch));
+        vanilla.rotate(new Quaternionf().rotationZYX(roll, yaw, pitch));
         vanilla.scale(xScale, yScale, zScale);
 
         RecyclingMatrixStack recycling = new RecyclingMatrixStack();
@@ -37,9 +37,9 @@ class RecyclingMatrixStackTest {
                 xScale, yScale, zScale);
 
         assertTrue(vanilla.last().pose()
-                .equals(recycling.peek().getPositionMatrix(), 0.0F));
+                .equals(recycling.last().pose(), 0.0F));
         assertTrue(vanilla.last().normal()
-                .equals(recycling.peek().getNormalMatrix(), 0.0F));
+                .equals(recycling.last().normal(), 0.0F));
     }
 
     @Test
@@ -54,9 +54,9 @@ class RecyclingMatrixStackTest {
                 1.0F, 1.0F, 1.0F);
 
         assertTrue(vanilla.last().pose()
-                .equals(recycling.peek().getPositionMatrix(), 0.0F));
+                .equals(recycling.last().pose(), 0.0F));
         assertTrue(vanilla.last().normal()
-                .equals(recycling.peek().getNormalMatrix(), 0.0F));
+                .equals(recycling.last().normal(), 0.0F));
     }
 
 }

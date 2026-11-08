@@ -57,7 +57,7 @@ sample-report/
 .cursor/mcp.json
 
 # Staged runtime junctions or local copies, outside build/ so clean is safe
-/remix-runtime/
+/remix-runtime
 
 # Runtime-generated files
 *.dxvk-cache

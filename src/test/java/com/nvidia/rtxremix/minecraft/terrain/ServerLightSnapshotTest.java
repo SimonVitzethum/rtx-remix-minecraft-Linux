@@ -104,22 +104,22 @@ class ServerLightSnapshotTest {
         live.put(highSection, new DataLayer(new byte[2048]));
         columns.put(column, 7);
         ServerLightSnapshot.Published high = snapshot.publish(live, columns, LongOpenHashSet.of(highSection));
-        SkyLightSectionStorage.SkyDataLayerStorageMap earlier = new SkyLightSectionStorage.SkyDataLayerStorageMap(high.sections(), high.columns(), engine.minSectionY);
+        SkyLightSectionStorage.SkyDataLayerStorageMap earlier = new SkyLightSectionStorage.SkyDataLayerStorageMap(high.sections(), high.columns(), engine.currentLowestY);
 
         long lowerSection = SectionPos.asLong(0, -5, 0);
         live.put(lowerSection, new DataLayer(new byte[2048]));
         // SkyLightStorage.onLoadSection updates both before notifyChanges publishes.
-        engine.minSectionY = -5;
-        columns.defaultReturnValue(engine.minSectionY);
+        engine.currentLowestY = -5;
+        columns.defaultReturnValue(engine.currentLowestY);
         ServerLightSnapshot.Published lower = snapshot.publish(live, columns, LongOpenHashSet.of(lowerSection));
-        SkyLightSectionStorage.SkyDataLayerStorageMap published = new SkyLightSectionStorage.SkyDataLayerStorageMap(lower.sections(), lower.columns(), engine.minSectionY);
+        SkyLightSectionStorage.SkyDataLayerStorageMap published = new SkyLightSectionStorage.SkyDataLayerStorageMap(lower.sections(), lower.columns(), engine.currentLowestY);
         SkyLightSectionStorage.SkyDataLayerStorageMap vanilla = engine.copy();
 
-        assertEquals(vanilla.minSectionY, published.minSectionY);
-        assertEquals(vanilla.columnToTopSection.get(column), published.columnToTopSection.get(column));
-        assertEquals(vanilla.columnToTopSection.get(missing), published.columnToTopSection.get(missing));
-        assertEquals(6, earlier.columnToTopSection.get(missing));
-        assertEquals(6, earlier.columnToTopSection.defaultReturnValue());
+        assertEquals(vanilla.currentLowestY, published.currentLowestY);
+        assertEquals(vanilla.topSections.get(column), published.topSections.get(column));
+        assertEquals(vanilla.topSections.get(missing), published.topSections.get(missing));
+        assertEquals(6, earlier.topSections.get(missing));
+        assertEquals(6, earlier.topSections.defaultReturnValue());
     }
 
     @Test
@@ -182,7 +182,7 @@ class ServerLightSnapshotTest {
         Long2ObjectOpenHashMap<DataLayer> view = published.sections();
         Long2IntOpenHashMap columns = published.columns();
 
-        assertThrows(UnsupportedOperationException.class, () -> view.put(8L, new ChunkNibbleArray(new byte[2048])));
+        assertThrows(UnsupportedOperationException.class, () -> view.put(8L, new DataLayer(new byte[2048])));
         assertThrows(UnsupportedOperationException.class, () -> view.remove(7L));
         assertThrows(UnsupportedOperationException.class, view::clear);
         assertThrows(UnsupportedOperationException.class, view::clone);

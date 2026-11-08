@@ -27,11 +27,10 @@ final class SpriteFixtures {
         SpriteContents contents = new SpriteContents(
                 Identifier.fromNamespaceAndPath("minecraft", "test/" + x + "_" + y),
                 new FrameSize(size, size),
-                new NativeImage(size, size, false),
-                ResourceMetadata.EMPTY);
+                new NativeImage(size, size, false));
         // The constructor is protected; an anonymous subclass reaches it without
         // widening access for the sake of a test.
-        TextureAtlasSprite sprite = new TextureAtlasSprite(ATLAS, contents, atlasSize, atlasSize, x, y) {};
+        TextureAtlasSprite sprite = new TextureAtlasSprite(ATLAS, contents, atlasSize, atlasSize, x, y, 0) {};
         // The rectangle is fixed at construction and no test reads pixels, so the
         // off-heap image is released at once.
         contents.close();
