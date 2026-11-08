@@ -46,8 +46,10 @@ import java.nio.ByteOrder;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.DimensionSpecialEffects;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.attribute.EnvironmentAttributeProbe;
+import net.minecraft.world.attribute.EnvironmentAttributes;
+import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -225,7 +227,7 @@ public class SkyRenderer {
         }
 
         RemixAPI api = renderer.getRemixApi();
-        float[] fixedRadiance = fixedSkyRadiance(world.effects().skyType());
+        float[] fixedRadiance = fixedSkyRadiance(world.dimensionType().skybox());
         if (fixedRadiance == null) {
             renderAtmosphericSky(api, world, cameraPos, tickDelta);
         } else {
@@ -234,13 +236,13 @@ public class SkyRenderer {
     }
 
     /**
-     * Maps a sky type to the constant radiance its dome and ambient rect publish.
+     * Maps a dimension skybox to the constant radiance its dome and ambient rect publish.
      *
-     * @return the constant, or null for a NORMAL sky, whose dome is the time-driven atmosphere
+     * @return the constant, or null for an OVERWORLD skybox, whose dome is the time-driven atmosphere
      */
-    static float[] fixedSkyRadiance(DimensionSpecialEffects.SkyType skyType) {
-        return switch (skyType) {
-            case NORMAL -> null;
+    static float[] fixedSkyRadiance(DimensionType.Skybox skybox) {
+        return switch (skybox) {
+            case OVERWORLD -> null;
             case END -> END_SKY_RADIANCE;
             case NONE -> SKYLESS_SKY_RADIANCE;
         };
@@ -256,7 +258,11 @@ public class SkyRenderer {
         float[] sunDirection;
         WeatherDomeState weather;
         try (ProfileScope ignored = ProfileScope.begin("Sky.Prepare")) {
-            skyAngle = world.getTimeOfDay(tickDelta);
+            EnvironmentAttributeProbe attributeProbe = Minecraft.getInstance()
+                    .gameRenderer.mainCamera().attributeProbe();
+            skyAngle = attributeProbe.getValue(
+                            EnvironmentAttributes.SUN_ANGLE, tickDelta)
+                    * (float) (Math.PI / 180.0);
             ConfLayerDriver confLayers = renderer.getConfLayerDriver();
             ConfLayerDriver.WeatherStrengths weatherStrengths =
                     confLayers != null && confLayers.isActive()
@@ -587,7 +593,10 @@ public class SkyRenderer {
 
         float weatherVisibility = Math.max(
                 minimumCelestialWeatherVisibility, 1.0f - clamp01(weatherOpacity));
-        float starsOpacity = starOpacity(world.getStarBrightness(tickDelta)) * weatherVisibility;
+        EnvironmentAttributeProbe attributeProbe = Minecraft.getInstance()
+                .gameRenderer.mainCamera().attributeProbe();
+        float starsOpacity = starOpacity(attributeProbe.getValue(
+                EnvironmentAttributes.STAR_BRIGHTNESS, tickDelta)) * weatherVisibility;
         if (starsOpacity > 0.0f) {
             updateStarOpacity(starsOpacity);
             updateStarTransform(starTransform, cameraPos, skyAngle);
@@ -607,7 +616,8 @@ public class SkyRenderer {
         }
 
         if (moonOpacity > 0.0f) {
-            int moonPhase = world.getMoonPhase() & 7;
+            int moonPhase = attributeProbe.getValue(
+                    EnvironmentAttributes.MOON_PHASE, tickDelta).index();
             updateCelestialTransform(
                     moonTransform,
                     cameraPos,
@@ -677,15 +687,14 @@ public class SkyRenderer {
             width = image.getWidth();
             height = image.getHeight();
             pixels = new byte[width * height * 4];
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    int abgr = image.getPixelABGR(x, y);
-                    int index = (y * width + x) * 4;
-                    pixels[index] = (byte) (abgr & 0xFF);
-                    pixels[index + 1] = (byte) ((abgr >>> 8) & 0xFF);
-                    pixels[index + 2] = (byte) ((abgr >>> 16) & 0xFF);
-                    pixels[index + 3] = (byte) ((abgr >>> 24) & 0xFF);
-                }
+            int[] abgrPixels = image.getPixelsABGR();
+            for (int texel = 0; texel < abgrPixels.length; texel++) {
+                int abgr = abgrPixels[texel];
+                int index = texel * 4;
+                pixels[index] = (byte) (abgr & 0xFF);
+                pixels[index + 1] = (byte) ((abgr >>> 8) & 0xFF);
+                pixels[index + 2] = (byte) ((abgr >>> 16) & 0xFF);
+                pixels[index + 3] = (byte) ((abgr >>> 24) & 0xFF);
             }
         }
 

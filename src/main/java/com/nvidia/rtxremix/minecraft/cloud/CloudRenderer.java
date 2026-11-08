@@ -34,6 +34,9 @@ import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.ARGB;
+import net.minecraft.world.attribute.EnvironmentAttributeProbe;
+import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -126,8 +129,11 @@ public final class CloudRenderer {
         }
 
         Minecraft client = Minecraft.getInstance();
-        float cloudHeight = world.effects().getCloudHeight();
-        if (client.options.getCloudsType() == CloudStatus.OFF
+        EnvironmentAttributeProbe attributeProbe = client.gameRenderer
+                .mainCamera().attributeProbe();
+        float cloudHeight = attributeProbe.getValue(
+                EnvironmentAttributes.CLOUD_HEIGHT, tickDelta);
+        if (client.options.getCloudStatus() == CloudStatus.OFF
                 || Float.isNaN(cloudHeight)) {
             releaseResources();
             return;
@@ -135,7 +141,9 @@ public final class CloudRenderer {
         if (!shouldSuppressVanillaClouds()) {
             return;
         }
-        updateCloudColor(world.getCloudColor(tickDelta));
+        int packedCloudColor = ARGB.colorFromVector4f(attributeProbe.getValue(
+                EnvironmentAttributes.CLOUD_COLOR, tickDelta));
+        updateCloudColor(cloudColorFromArgb(packedCloudColor));
 
         if (!proceduralClouds) {
             completedPaletteMeshes.clear();
@@ -391,7 +399,7 @@ public final class CloudRenderer {
                 for (int y = 0; y < vanillaTextureHeight; y++) {
                     for (int x = 0; x < vanillaTextureWidth; x++) {
                         vanillaOccupancy[y * vanillaTextureWidth + x] =
-                                ((image.getPixelABGR(x, y) >>> 24) & 0xff) >= 128;
+                                ARGB.alpha(image.getPixel(x, y)) >= 128;
                     }
                 }
             }
@@ -557,6 +565,13 @@ public final class CloudRenderer {
                 .subsurfaceExt(subsurface)
                 .build();
         return MaterialInfo.builder().opaqueExt(opaque).build();
+    }
+
+    private static Vec3 cloudColorFromArgb(int packedColor) {
+        return new Vec3(
+                ARGB.red(packedColor) / 255.0,
+                ARGB.green(packedColor) / 255.0,
+                ARGB.blue(packedColor) / 255.0);
     }
 
     static int packCloudColor(double red, double green, double blue) {
