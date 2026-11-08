@@ -98,6 +98,24 @@ public final class RtxSettingsFactory {
         // --- Framerate ---
         list.add(unfocusedFramerate());
 
+        // --- DLSS upscaling and frame generation (Remix options; hidden when the runtime lacks one) ---
+        RemixAPI dlssRemix = renderer.getRemixApi();
+        remixInt("upscaling.mode", SettingGroup.UPSCALING, "rtxremix.setting.upscaling.mode",
+                "rtx.qualityDLSS", 0, 5, dlssRemix::getConfigVariableResolved, dlssRemix::setConfigVariable)
+                .ifPresent(list::add);
+        remixBool("upscaling.rayReconstruction", SettingGroup.UPSCALING,
+                "rtxremix.setting.upscaling.rayReconstruction", "rtx.enableRayReconstruction",
+                dlssRemix::getConfigVariableResolved, dlssRemix::setConfigVariable)
+                .ifPresent(list::add);
+        remixBool("upscaling.frameGeneration", SettingGroup.UPSCALING,
+                "rtxremix.setting.upscaling.frameGeneration", "rtx.dlfg.enable",
+                dlssRemix::getConfigVariableResolved, dlssRemix::setConfigVariable)
+                .ifPresent(list::add);
+        remixInt("upscaling.frameGenerationFrames", SettingGroup.UPSCALING,
+                "rtxremix.setting.upscaling.frameGenerationFrames", "rtx.dlfg.maxInterpolatedFrames", 1, 5,
+                dlssRemix::getConfigVariableResolved, dlssRemix::setConfigVariable)
+                .ifPresent(list::add);
+
         // --- Sky & time of day ---
         list.add(RtxSetting.ofBool("sky.enabled", SettingGroup.SKY,
                 "rtxremix.setting.sky.enabled", "rtxremix.setting.sky.enabled.tip",
@@ -273,6 +291,26 @@ public final class RtxSettingsFactory {
                 v -> {
                     value[0] = v;
                     configWriter.accept(option, Boolean.toString(v));
+                }));
+    }
+
+    /** Integer counterpart of {@link #remixBool}: a Remix option holding a number in {@code [min, max]}. */
+    static Optional<RtxSetting<Integer>> remixInt(String id, SettingGroup group, String labelKey,
+            String option, int min, int max, Function<String, String> configReader,
+            BiConsumer<String, String> configWriter) {
+        int[] value = new int[1];
+        try {
+            value[0] = Math.max(min, Math.min(max, Integer.parseInt(configReader.apply(option).trim())));
+        } catch (RemixException | NumberFormatException e) {
+            LOGGER.warn("Remix option {} is unavailable in this runtime, so the {} setting is hidden",
+                    option, id, e);
+            return Optional.empty();
+        }
+        return Optional.of(RtxSetting.ofInt(id, group, labelKey, labelKey + ".tip", min, max, value[0],
+                () -> value[0],
+                v -> {
+                    value[0] = v;
+                    configWriter.accept(option, Integer.toString(v));
                 }));
     }
 
