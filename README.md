@@ -1,6 +1,6 @@
 # RTX Remix for Minecraft
 
-Play Minecraft Java Edition 1.21.1 with real-time path tracing on a GeForce RTX
+Play Minecraft Java Edition 26.3 with real-time path tracing on a GeForce RTX
 GPU, powered by NVIDIA RTX Remix.
 
 ## What To Expect
@@ -21,9 +21,8 @@ Three areas have had less attention than the rest:
   conflict with anything that changes rendering or the chunk pipeline.
 - **A full playthrough.** Blocks, mobs, dimensions, and situations the showcase
   never reaches have had less care, and some will look wrong or run slowly.
-- **Other versions.** It targets Minecraft 1.21.1 only, chosen because that is
-  where the modding community is today. Ports to newer versions are something
-  we hope the community takes on.
+- **Other versions.** It targets Minecraft 26.3 only. Ports to other versions
+  are something we hope the community takes on.
 
 We hope the community helps fill it out. If something breaks,
 [report it](docs/PLAYING.md#reporting-a-bug); if you can fix it, see
@@ -53,18 +52,35 @@ The step-by-step version, with launcher advice and troubleshooting, is in
 
 ## Requirements
 
-- Windows 10 or 11, x64 or ARM64.
-- Minecraft Java Edition 1.21.1, on a Microsoft account that owns the game.
+- Windows 10 or 11, x64 or ARM64, or native Linux x64.
+- Minecraft Java Edition 26.3, on a Microsoft account that owns the game.
 - A GeForce RTX 30-series or newer GPU with NVIDIA driver 616.92 or newer.
 - About 5 GB of free disk space while installing; about 3 GB stays in use.
 - An internet connection while the installer runs.
 - 16 GB of system memory is recommended.
 
-Java 21, Fabric, and the RTX Remix runtime are installed for you.
+Java 25, Fabric, and the RTX Remix runtime are installed for you.
 
 Building and running from source has its own
 [prerequisites](docs/GETTING_STARTED.md#prerequisites), including Prism
 Launcher, signed in to a Microsoft account that owns Minecraft: Java Edition.
+
+## Linux
+
+The mod runs natively on Linux x64; no Proton or Wine is needed. Build the mod
+with `-Parch=linux64` and stage the natively built dxvk-remix runtime with
+`tools/stage_linux_runtime.sh`; see
+[Getting Started](docs/GETTING_STARTED.md#linux).
+
+Windowing follows the `LinuxWindowPlatform` JVM flag: `-Drtxremix.wayland=true`
+selects Wayland, `-Drtxremix.wayland=false` selects X11/XWayland. Precompile
+shaders before the game starts with `tools/linux/precompile.sh <game dir>`; in
+Prism Launcher set the pre-launch command to
+`bash "$INST_MC_DIR/remix-sdk/precompile.sh" "$INST_MC_DIR"`.
+
+On Linux, DLSS frame generation, DLSS neural reconstruction, XeSS, NRC, Reflex,
+and Aftermath are unavailable; DLSS super resolution and ray reconstruction,
+TAAU, and NIS work. A 12 GiB Java heap is recommended.
 
 ## Crash Reports And Privacy
 

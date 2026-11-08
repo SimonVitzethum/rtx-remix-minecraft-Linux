@@ -37,6 +37,9 @@ Remix runtime automatically. [Getting Started](docs/GETTING_STARTED.md) covers l
 .\gradlew.bat package -Parch=win64
 ```
 
+Linux builds use `-Parch=linux64` and stage the runtime with
+`tools/stage_linux_runtime.sh`.
+
 `tools\rtx.bat launch` builds the mod, installs it into a checkout-specific
 Prism Launcher instance, and starts Minecraft through Prism. Installed Prism
 reuses its normal account profile; portable Prism keeps its profile under
