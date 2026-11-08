@@ -19,6 +19,8 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <locale.h>
+#include <cstdlib>
 #include <array>
 #include <fstream>
 #include <sstream>
@@ -1265,6 +1267,8 @@ namespace dxvk {
       return false;
 
     // NV-DXVK start: handle invalid inputs
+    // Parse with the "C" locale: the host process may have set a locale with a decimal comma, which would cut "0.01" to 0.
+#ifdef _WIN32
     try {
       result = std::stof(value);
       return true;
@@ -1272,6 +1276,17 @@ namespace dxvk {
     catch (...) {
       return false;
     }
+#else
+    static locale_t cLocale = newlocale(LC_NUMERIC_MASK, "C", static_cast<locale_t>(0));
+    const char* pBegin = value.c_str();
+    char* pEnd = nullptr;
+    const float parsed = strtof_l(pBegin, &pEnd, cLocale);
+    if (pEnd == pBegin) {
+      return false;
+    }
+    result = parsed;
+    return true;
+#endif
     // NV-DXVK end
   }
 
