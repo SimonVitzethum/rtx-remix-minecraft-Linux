@@ -22,7 +22,7 @@ from rtx_tools.benchmark import util
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell runs the installer")
 
 INSTALLER = util.PROJECT_DIR / "packaging" / "installer.ps1"
-INSTANCE_NAME = "NVIDIA RTX Remix for Minecraft"
+INSTANCE_NAME = "RTX Remix 26.3 (Fabric)"
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 # Loads the installer's constants and functions without its entry point and runs one step. The launcher question prints
 # each option as "Option: <label> | <hint>" and answers -Choice. The folder prompt reads its answers from
