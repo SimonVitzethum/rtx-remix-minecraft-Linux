@@ -148,13 +148,7 @@ class RtxOptionFactoryTest {
     }
 
     private static OptionInstance.SliderableValueSet<?> sliderCallbacks(OptionInstance<?> option) {
-        try {
-            Field callbacksField = OptionInstance.class.getDeclaredField("callbacks");
-            callbacksField.setAccessible(true);
-            return (OptionInstance.SliderableValueSet<?>) callbacksField.get(option);
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError("Could not inspect SimpleOption callbacks", e);
-        }
+        return (OptionInstance.SliderableValueSet<?>) option.values();
     }
 
     @ParameterizedTest

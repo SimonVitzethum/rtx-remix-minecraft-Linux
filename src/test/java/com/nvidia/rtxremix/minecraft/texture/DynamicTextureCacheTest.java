@@ -96,7 +96,7 @@ class DynamicTextureCacheTest {
     @Test
     void clearDropsAClosedImageTextureEvenWhileTheManagerKeepsItRegistered() {
         Identifier id = Identifier.fromNamespaceAndPath("minecraft", "dynamic/closed-map");
-        TextureManager manager = allocate(TextureManager.class);
+        TextureManager manager = textureManager();
         DynamicTexture texture = dynamicTexture(new NativeImage(1, 1, true));
         manager.register(id, texture);
         DynamicTextureCache.onRegisterTexture(id, texture, texture.getPixels());
@@ -142,7 +142,7 @@ class DynamicTextureCacheTest {
             }
         }
 
-        assertNull(closed.getPixels());
+        assertTrue(closed.getPixels().isClosed());
         assertNull(DynamicTextureCache.get(closedId));
         assertEquals(DynamicTextureCache.capacity(), live.size());
     }
@@ -211,7 +211,7 @@ class DynamicTextureCacheTest {
     }
 
     private static AbstractTexture newTexture() {
-        return allocate(AbstractTexture.class);
+        return allocate(StubTexture.class);
     }
 
     // The real constructors need a GPU device (RenderSystem), which a JVM test has not; the
@@ -223,6 +223,23 @@ class DynamicTextureCacheTest {
             unsafeField.setAccessible(true);
             Unsafe unsafe = (Unsafe) unsafeField.get(null);
             return (T) unsafe.allocateInstance(type);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static final class StubTexture extends AbstractTexture {}
+
+    private static TextureManager textureManager() {
+        try {
+            TextureManager manager = allocate(TextureManager.class);
+            Field byPath = TextureManager.class.getDeclaredField("byPath");
+            byPath.setAccessible(true);
+            byPath.set(manager, new java.util.HashMap<>());
+            Field tickable = TextureManager.class.getDeclaredField("tickableTextures");
+            tickable.setAccessible(true);
+            tickable.set(manager, new java.util.HashSet<>());
+            return manager;
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }
