@@ -32,7 +32,7 @@ import java.util.concurrent.Executors;
  * by section slot. That replaces what the 1.21 hooks added: the coarse frustum index, the
  * pooled walk buffers and the per-frame propagation slicing are therefore not ported, and
  * neither is the allocation-free replacement for the walk's far-section probe.
- * {@link #ALLOCATION_FREE_WALK_PORTED} records that: the walk is vanilla's, which
+ * {@link #rtxremix$ALLOCATION_FREE_WALK_PORTED} records that: the walk is vanilla's, which
  * allocates two {@code Vector3d} per probe step and one {@code Node} per section. The
  * pure helpers of the old port ({@code FarChunkProbe}, {@code HierarchicalFrustumCuller},
  * {@code TimeSlicedWorkQueue}) stay in {@code terrain/visibility/} for a later port.
@@ -41,7 +41,7 @@ import java.util.concurrent.Executors;
 public abstract class ChunkRenderingDataPreparerMixin {
 
     /** TODO: port the allocation-free walk and the time-sliced propagation onto the 26.3 graph. */
-    private static final boolean ALLOCATION_FREE_WALK_PORTED = false;
+    private static final boolean rtxremix$ALLOCATION_FREE_WALK_PORTED = false;
 
     private static final ExecutorService rtxremix$visibilityExecutor =
             Executors.newSingleThreadExecutor(task -> {

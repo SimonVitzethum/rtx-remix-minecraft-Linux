@@ -21,17 +21,25 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.level.storage.TagValueInput;
+import net.minecraft.world.level.storage.TagValueOutput;
+import net.minecraft.world.level.storage.ValueInput;
 
 class CopperBeaconBlockEntityTest {
 
+    private static ValueInput input(net.minecraft.nbt.CompoundTag tag) {
+        return TagValueInput.create(ProblemReporter.DISCARDING, net.minecraft.core.RegistryAccess.EMPTY, tag);
+    }
+
     @Test
     void anglesAreNormalizedClampedAndPersisted() {
-        CompoundTag nbt = new CompoundTag();
+        TagValueOutput out = TagValueOutput.createWithoutContext(ProblemReporter.DISCARDING);
         CopperBeaconState.writeAngles(
-                nbt,
+                out,
                 CopperBeaconState.normalizeAzimuth(540.0f),
                 CopperBeaconState.clampZenith(120.0f));
-        CopperBeaconState.Angles restored = CopperBeaconState.readAngles(nbt);
+        CopperBeaconState.Angles restored = CopperBeaconState.readAngles(input(out.buildResult()));
 
         assertEquals(-180.0f, restored.azimuth());
         assertEquals(90.0f, restored.zenith());
