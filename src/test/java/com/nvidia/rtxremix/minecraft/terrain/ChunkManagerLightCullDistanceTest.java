@@ -7,7 +7,6 @@ package com.nvidia.rtxremix.minecraft.terrain;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import TerrainState;
 import com.nvidia.rtxremix.minecraft.asset.RemixLight;
 import com.nvidia.rtxremix.minecraft.light.BlockLightKey;
 import java.lang.reflect.Field;

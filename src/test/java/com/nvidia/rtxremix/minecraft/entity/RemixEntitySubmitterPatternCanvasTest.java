@@ -23,7 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import RemixCapturingConsumer;
 
 /**
  * Pins how banner and shield canvases are read off captured parts: which cuboid

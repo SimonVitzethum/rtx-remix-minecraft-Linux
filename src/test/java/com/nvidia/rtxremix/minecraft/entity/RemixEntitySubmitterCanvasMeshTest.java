@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Test;
 import static com.nvidia.rtxremix.minecraft.entity.RemixEntitySubmitter.SHELL_OFFSET;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import RemixCapturingConsumer;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.Direction;
