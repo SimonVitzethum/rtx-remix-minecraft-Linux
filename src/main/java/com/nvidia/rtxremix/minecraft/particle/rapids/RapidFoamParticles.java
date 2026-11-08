@@ -5,7 +5,7 @@
 package com.nvidia.rtxremix.minecraft.particle.rapids;
 
 import com.nvidia.rtxremix.minecraft.RtxRemixCommonMod;
-import net.fabricmc.fabric.api.client.particle.v1.ParticleFactoryRegistry;
+import net.fabricmc.fabric.api.client.particle.v1.ParticleProviderRegistry;
 import net.fabricmc.fabric.api.particle.v1.FabricParticleTypes;
 import net.minecraft.core.Registry;
 import net.minecraft.core.particles.SimpleParticleType;
@@ -23,8 +23,8 @@ public final class RapidFoamParticles {
         Registry.register(BuiltInRegistries.PARTICLE_TYPE, Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rapid_foam"), RAPID_FOAM);
         Registry.register(BuiltInRegistries.PARTICLE_TYPE, Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rapid_foam_dot"), RAPID_FOAM_DOT);
         Registry.register(BuiltInRegistries.PARTICLE_TYPE, Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rapid_mist"), RAPID_MIST);
-        ParticleFactoryRegistry.getInstance().register(RAPID_FOAM, RapidFoamParticle.Factory::new);
-        ParticleFactoryRegistry.getInstance().register(RAPID_FOAM_DOT, RapidFoamDotParticle.Factory::new);
-        ParticleFactoryRegistry.getInstance().register(RAPID_MIST, RapidMistParticle.Factory::new);
+        ParticleProviderRegistry.getInstance().register(RAPID_FOAM, RapidFoamParticle.Factory::new);
+        ParticleProviderRegistry.getInstance().register(RAPID_FOAM_DOT, RapidFoamDotParticle.Factory::new);
+        ParticleProviderRegistry.getInstance().register(RAPID_MIST, RapidMistParticle.Factory::new);
     }
 }

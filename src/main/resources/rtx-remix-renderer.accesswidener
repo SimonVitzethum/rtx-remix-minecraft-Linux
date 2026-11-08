@@ -1,1 +1,8 @@
 accessWidener v2 official
+
+# --- ENTITY area ---
+
+# RenderType material identity for entity capture (RenderLayerUtils)
+accessible field net/minecraft/client/renderer/rendertype/RenderType state Lnet/minecraft/client/renderer/rendertype/RenderSetup;
+accessible field net/minecraft/client/renderer/rendertype/RenderSetup textures Ljava/util/Map;
+accessible class net/minecraft/client/renderer/rendertype/RenderSetup$TextureBinding

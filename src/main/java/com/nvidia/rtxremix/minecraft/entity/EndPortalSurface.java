@@ -190,7 +190,7 @@ final class EndPortalSurface {
             int[] rgb = new int[width * height];
             for (int y = 0; y < height; y++) {
                 for (int x = 0; x < width; x++) {
-                    int abgr = image.getPixelABGR(x, y);
+                    int abgr = net.minecraft.util.ARGB.toABGR(image.getPixel(x, y));
                     rgb[y * width + x] = ((abgr & 0xFF) << 16) | (abgr & 0xFF00) | ((abgr >> 16) & 0xFF);
                 }
             }

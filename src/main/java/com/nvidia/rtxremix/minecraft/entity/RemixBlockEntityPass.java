@@ -6,13 +6,11 @@ package com.nvidia.rtxremix.minecraft.entity;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.nvidia.rtxremix.InstanceCategoryBit;
-import com.nvidia.rtxremix.minecraft.mixin.EntityRenderDispatcherAccessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.IdentityHashMap;
 import java.util.List;
-import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -62,7 +60,7 @@ public final class RemixBlockEntityPass {
      */
     @FunctionalInterface
     public interface BlockEntityRenderCall {
-        void render(PoseStack matrices, MultiBufferSource provider);
+        void render(PoseStack matrices, RemixSubmitCollector collector);
     }
 
     /**
@@ -76,6 +74,7 @@ public final class RemixBlockEntityPass {
 
     private final RecyclingMatrixStack matrices = new RecyclingMatrixStack();
     private final RemixVertexConsumerProvider provider = new RemixVertexConsumerProvider();
+    private final RemixSubmitCollector collector = new RemixSubmitCollector(provider);
     private final IdentityHashMap<BlockEntityType<?>, String> typeKeyCache = new IdentityHashMap<>();
     private final FailureLogThrottle failures = new FailureLogThrottle(LOGGER, "Block entity");
     // One buffer suffices: the submit consumes the bones before the next capture
@@ -91,33 +90,29 @@ public final class RemixBlockEntityPass {
      *
      * <p>Submitting before the next block entity renders is what lets the provider's
      * consumers recycle: a layer's data is consumed before anything can overwrite it.
-     * Blob shadows are suppressed for the duration, as the entity pass does, so a
+     * Blob shadows are dropped by the collector, as in the entity pass, so a
      * spawner's display entity casts only the shadow Remix traces.
      */
     public void capture(BlockEntity be, BlockEntityRenderCall call,
                         EntityRenderDispatcher dispatcher, RemixEntitySubmitter submitter) {
         long captureStart = System.nanoTime();
         EntityRenderContext ctx = EntityRenderContext.get();
-        boolean hadShadows = ((EntityRenderDispatcherAccessor) dispatcher).rtxremix$getRenderShadows();
-        dispatcher.setRenderShadow(false);
         provider.beginEntity();
         provider.setBlockOrigin(be.getBlockPos());
         matrices.pushPose();
         ctx.begin(true);
         List<RemixVertexConsumerProvider.CapturedLayer> layers;
         try {
-            call.render(matrices, provider);
+            call.render(matrices, collector);
             layers = provider.endEntity();
         } catch (Exception e) {
             failures.noteFailure("capturing", "block entity " + typeKey(be), be.getBlockPos(), e);
             return;
         } finally {
-            // All three restore even if the renderer threw mid-traversal: the identity
-            // root returns every pooled entry, the player's shadow setting comes back,
-            // and a capture left open would make the next one look nested. The bone
-            // count stays readable for the snapshot below.
+            // Both restore even if the renderer threw mid-traversal: the identity
+            // root returns every pooled entry, and a capture left open would make the
+            // next one look nested. The bone count stays readable for the snapshot below.
             matrices.reset();
-            dispatcher.setRenderShadow(hadShadows);
             ctx.reset();
         }
         frameCaptureNanos += System.nanoTime() - captureStart;

@@ -4,12 +4,14 @@
  */
 package com.nvidia.rtxremix.minecraft.entity;
 
-import com.mojang.blaze3d.vertex.VertexFormatElement;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.WeakHashMap;
-import net.minecraft.client.renderer.RenderStateShard;
+import net.minecraft.client.renderer.rendertype.RenderSetup;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.resources.Identifier;
 
@@ -19,7 +21,7 @@ import net.minecraft.resources.Identifier;
  * <p>A renderer requests its {@code VertexConsumer} by layer,
  * {@code provider.getBuffer(RenderLayer.getEntityCutout(textureId))}, so the
  * layer is where geometry and material meet and the one place material
- * identity is read. Its {@link RenderStateShard} state, reached through the access
+ * identity is read. Its {@code RenderSetup}, reached through the access
  * widener, gives the texture the layer is submitted under, if any, the
  * {@link SurfaceMode} Remix shades with, and whether the geometry is streamed
  * afresh every frame; its draw mode gives the {@link Topology} and whether an
@@ -88,31 +90,41 @@ final class RenderLayerUtils {
     }
 
     private static Optional<Identifier> capturableTextureUncached(RenderType layer) {
-        if (layer instanceof RenderType.CompositeRenderType multiPhase
-                && multiPhase.state().depthTestState == RenderStateShard.NO_DEPTH_TEST) {
+        // A pipeline without a depth-stencil state draws over the whole scene.
+        if (layer.pipeline().getDepthStencilState() == null) {
             return Optional.empty();
         }
         return extractTexture(layer);
     }
 
     private static Optional<Identifier> extractTexture(RenderType layer) {
-        if (layer instanceof RenderType.CompositeRenderType multiPhase) {
-            RenderType.CompositeState phases = multiPhase.state();
-            // The end portal and gateway programs combine two textures in screen space
-            // and their vertices carry position only; they draw with a baked texture.
-            if (phases.shaderState == RenderStateShard.RENDERTYPE_END_PORTAL_SHADER) {
-                return EndPortalSurface.PORTAL_TEXTURE;
-            }
-            if (phases.shaderState == RenderStateShard.RENDERTYPE_END_GATEWAY_SHADER) {
-                return EndPortalSurface.GATEWAY_TEXTURE;
-            }
-            RenderStateShard.EmptyTextureStateShard textureBase = phases.textureState;
+        String path = pipelinePath(layer);
+        // The end portal and gateway programs combine two textures in screen space
+        // and their vertices carry position only; they draw with a baked texture.
+        if (path.equals("pipeline/end_portal")) {
+            return EndPortalSurface.PORTAL_TEXTURE;
+        }
+        if (path.equals("pipeline/end_gateway")) {
+            return EndPortalSurface.GATEWAY_TEXTURE;
+        }
+        RenderSetup.TextureBinding texture = layer.state.textures.get("Sampler0");
+        return texture == null ? Optional.empty() : Optional.of(texture.location());
+    }
 
-            if (textureBase instanceof RenderStateShard.TextureStateShard texture) {
-                return texture.getEndTimeNano();
+    /** The pipeline's location path, which names the program the layer draws with. */
+    private static String pipelinePath(RenderType layer) {
+        return layer.pipeline().getLocation().getPath();
+    }
+
+    /** Whether any colour target of the layer's pipeline blends with {@code function}. */
+    private static boolean blendsWith(RenderType layer, BlendFunction function) {
+        for (ColorTargetState target : layer.pipeline().getColorTargetStates()) {
+            if (target != null && target.blendFunction().isPresent()
+                    && target.blendFunction().get().equals(function)) {
+                return true;
             }
         }
-        return Optional.empty();
+        return false;
     }
 
     /**
@@ -120,7 +132,8 @@ final class RenderLayerUtils {
      * do not become triangles, such as lines.
      */
     static Optional<Topology> topology(RenderType layer) {
-        return switch (layer.mode()) {
+        PrimitiveTopology mode = layer.primitiveTopology();
+        return switch (mode) {
             case QUADS -> Optional.of(Topology.QUADS);
             case TRIANGLE_STRIP -> Optional.of(Topology.TRIANGLE_STRIP);
             default -> Optional.empty();
@@ -145,7 +158,7 @@ final class RenderLayerUtils {
         // capturableTexture declined must not re-enter capture through here.
         return extractTexture(layer).isEmpty()
                 && topology(layer).filter(t -> t == Topology.TRIANGLE_STRIP).isPresent()
-                && layer.format().getElements().contains(VertexFormatElement.COLOR);
+                && layer.format().contains("Color");
     }
 
     /**
@@ -163,8 +176,7 @@ final class RenderLayerUtils {
     }
 
     private static boolean isStreamedPerFrameUncached(RenderType layer) {
-        boolean beaconBeamProgram = layer instanceof RenderType.CompositeRenderType multiPhase
-                && multiPhase.state().shaderState == RenderStateShard.RENDERTYPE_BEACON_BEAM_SHADER;
+        boolean beaconBeamProgram = pipelinePath(layer).contains("beacon_beam");
         return classifyStreamedPerFrame(topology(layer).orElse(Topology.QUADS), beaconBeamProgram);
     }
 
@@ -183,26 +195,20 @@ final class RenderLayerUtils {
      * behaviour and it is classified as translucent.
      */
     static SurfaceMode surfaceMode(RenderType layer) {
-        if (!(layer instanceof RenderType.CompositeRenderType multiPhase)) {
-            return SurfaceMode.CUTOUT;
-        }
-
-        RenderType.CompositeState phases = multiPhase.state();
+        String path = pipelinePath(layer);
         // The baked end portal tile is opaque everywhere, so an alpha test would
         // only cost a texture read per hit.
-        if (phases.shaderState == RenderStateShard.RENDERTYPE_END_PORTAL_SHADER
-                || phases.shaderState == RenderStateShard.RENDERTYPE_END_GATEWAY_SHADER) {
+        if (path.equals("pipeline/end_portal") || path.equals("pipeline/end_gateway")) {
             return SurfaceMode.OPAQUE;
         }
+        boolean additive = blendsWith(layer, BlendFunction.ADDITIVE);
+        boolean blended = layer.hasBlending();
         return classifySurfaceMode(
-                phases.shaderState == RenderStateShard.RENDERTYPE_EYES_SHADER
-                        || phases.shaderState == RenderStateShard.RENDERTYPE_ENTITY_TRANSLUCENT_EMISSIVE_SHADER,
-                phases.transparencyState == RenderStateShard.ADDITIVE_TRANSPARENCY,
-                phases.transparencyState == RenderStateShard.TRANSLUCENT_TRANSPARENCY
-                        || phases.transparencyState == RenderStateShard.CRUMBLING_TRANSPARENCY,
-                phases.shaderState == RenderStateShard.RENDERTYPE_ENTITY_SOLID_SHADER,
-                phases.shaderState == RenderStateShard.RENDERTYPE_TEXT_SHADER
-                        || phases.shaderState == RenderStateShard.RENDERTYPE_TEXT_INTENSITY_SHADER);
+                path.contains("eyes") || path.contains("entity_translucent_emissive"),
+                additive,
+                blended && !additive,
+                path.startsWith("pipeline/entity_solid"),
+                path.contains("text") && !path.startsWith("pipeline/gui"));
     }
 
     /**

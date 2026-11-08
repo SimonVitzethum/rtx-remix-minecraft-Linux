@@ -856,7 +856,7 @@ public class RemixEntitySubmitter {
         RenderLayerUtils.SurfaceMode layerMode = RenderLayerUtils.surfaceMode(renderLayer);
         RenderLayerUtils.SurfaceMode surfaceMode = playerSkinSurfaceMode(layerMode,
                 result.owner() instanceof Player
-                        && renderLayer == RenderType.entityTranslucent(texId));
+                        && renderLayer == net.minecraft.client.renderer.rendertype.RenderTypes.entityTranslucent(texId));
 
         RemixCapturingConsumer consumer = layer.consumer();
         // Guard on parts, not vertices: a cuboid part carries no captured
@@ -1222,7 +1222,7 @@ public class RemixEntitySubmitter {
         CopperBeaconBlockEntity beacon = placedBeaconLens(result.owner(), sprite);
         boolean emissiveBeaconLens = beacon != null
                 && CopperBeaconBlockEntityRenderer.LENS_SPRITE_ID.equals(
-                        sprite.contents().getEndTimeNano());
+                        sprite.contents().name());
         RemixMesh mesh = emissiveBeaconLens
                 ? acquireBeaconLensMesh(
                         beacon, vertexCount, texId, shellLayer, sides, sprite)
@@ -1249,9 +1249,9 @@ public class RemixEntitySubmitter {
         return owner instanceof CopperBeaconBlockEntity beacon
                         && sprite != null
                         && (CopperBeaconBlockEntityRenderer.LENS_SPRITE_ID.equals(
-                                        sprite.contents().getEndTimeNano())
+                                        sprite.contents().name())
                                 || CopperBeaconBlockEntityRenderer.UNLIT_LENS_SPRITE_ID.equals(
-                                        sprite.contents().getEndTimeNano()))
+                                        sprite.contents().name()))
                 ? beacon
                 : null;
     }
@@ -2374,8 +2374,8 @@ public class RemixEntitySubmitter {
                 TextureAtlasSprite sprite = entry.getValue();
                 int x = sprite.getX();
                 int y = sprite.getY();
-                int spriteW = sprite.contents().getStartTimeNano();
-                int spriteH = sprite.contents().getStartTimeTicks();
+                int spriteW = sprite.contents().width();
+                int spriteH = sprite.contents().height();
                 NativeImage nImg = loadVariant(rm, spriteId, "_n");
                 NativeImage sImg = loadVariant(rm, spriteId, "_s");
                 NativeImage sssImg = loadVariant(rm, spriteId, "_sss");
@@ -2767,7 +2767,7 @@ public class RemixEntitySubmitter {
         byte[] out = new byte[w * h * 4];
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++) {
-                int abgr = image.getPixelABGR(x, y);
+                int abgr = net.minecraft.util.ARGB.toABGR(image.getPixel(x, y));
                 int idx = (y * w + x) * 4;
                 out[idx]     = (byte) (abgr & 0xFF);
                 out[idx + 1] = (byte) ((abgr >> 8) & 0xFF);

@@ -14,7 +14,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import com.mojang.blaze3d.vertex.QuadInstance;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.resources.model.ModelBakery;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
@@ -24,7 +27,7 @@ import net.minecraft.world.phys.Vec3;
  * Captures the block-breaking crack where vanilla draws it and submits it through the
  * entity submitter as a decal over the terrain.
  *
- * <p>{@code WorldRendererMixin} wraps vanilla's {@code BlockRenderManager.renderDamage}
+ * <p>{@code WorldRendererMixin} wraps vanilla's {@code submitBreakingBlockModel}
  * call and routes it to {@code RemixRenderer.renderBlockDamageInPlace}, which calls
  * {@link #capture}. The block model is rendered on this pass's identity
  * {@link RecyclingMatrixStack} rather than vanilla's camera-relative one, so the captured
@@ -61,6 +64,29 @@ public final class RemixBlockDamagePass {
     @FunctionalInterface
     public interface BlockDamageRenderCall {
         void render(PoseStack matrices, VertexConsumer consumer);
+    }
+
+    /**
+     * Writes a broken block's model quads into {@code consumer}, offset as the block model
+     * is offset in the world. The crack projector then maps the crack texture onto them.
+     */
+    public static void putParts(List<BlockStateModelPart> parts, Vec3 offset, PoseStack matrices,
+                                VertexConsumer consumer) {
+        QuadInstance instance = new QuadInstance();
+        matrices.pushPose();
+        matrices.translate(offset);
+        PoseStack.Pose pose = matrices.last();
+        for (BlockStateModelPart part : parts) {
+            for (Direction direction : Direction.values()) {
+                for (BakedQuad quad : part.getQuads(direction)) {
+                    consumer.putBakedQuad(pose, quad, instance);
+                }
+            }
+            for (BakedQuad quad : part.getQuads(null)) {
+                consumer.putBakedQuad(pose, quad, instance);
+            }
+        }
+        matrices.popPose();
     }
 
     private final RecyclingMatrixStack matrices = new RecyclingMatrixStack();
@@ -204,6 +230,22 @@ public final class RemixBlockDamagePass {
         @Override
         public VertexConsumer setColor(int red, int green, int blue, int alpha) {
             target.setColor(0xFFFFFFFF);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setColor(int color) {
+            target.setColor(0xFFFFFFFF);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setUv3(float u, float v) {
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setLineWidth(float width) {
             return this;
         }
 

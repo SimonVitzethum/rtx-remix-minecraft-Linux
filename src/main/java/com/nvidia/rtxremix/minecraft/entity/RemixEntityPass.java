@@ -6,7 +6,6 @@ package com.nvidia.rtxremix.minecraft.entity;
 
 import com.nvidia.rtxremix.minecraft.util.ClosestKHeap;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
-import com.nvidia.rtxremix.minecraft.mixin.EntityRenderDispatcherAccessor;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.nvidia.rtxremix.minecraft.ClientViewDistance;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -23,7 +22,7 @@ import java.util.function.IntPredicate;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
@@ -86,6 +85,7 @@ public class RemixEntityPass {
     private static final int TYPE_LOG_INTERVAL = 300;
 
     private final RemixVertexConsumerProvider provider = new RemixVertexConsumerProvider();
+    private final RemixSubmitCollector collector = new RemixSubmitCollector(provider);
     /**
      * The per-type breakdown costs a HashMap probe per entity per frame and a
      * stream sort plus a dozen String.formats on the render thread every summary,
@@ -259,12 +259,8 @@ public class RemixEntityPass {
             return false;
         }
         long captureStart = System.nanoTime();
-        // Remix traces shadows from the scene lights, so vanilla's blob shadow
-        // quads have no consumer. Suppress them rather than capture and drop them.
-        boolean hadShadows =
-                ((EntityRenderDispatcherAccessor) dispatcher)
-                        .rtxremix$getRenderShadows();
-        dispatcher.setRenderShadow(false);
+        // Remix traces shadows from the scene lights, so vanilla's blob shadow submit
+        // has no consumer: the capture collector drops it.
         EntityCaptureResult result;
         try {
             result = renderOneEntity(entity, dispatcher, tickDelta,
@@ -272,8 +268,6 @@ public class RemixEntityPass {
         } catch (Exception e) {
             LOGGER.error("Error capturing entity {}: {}", entity.getType(), e.getMessage());
             return true;
-        } finally {
-            dispatcher.setRenderShadow(hadShadows);
         }
         long captured = System.nanoTime();
         frameCaptureNanos += captured - captureStart;
@@ -726,18 +720,27 @@ public class RemixEntityPass {
                                                  EntityRenderDispatcher dispatcher,
                                                  float tickDelta,
                                                  boolean firstPersonLocalPlayer) {
-        Vec3 entityPos = entity.getPosition(tickDelta);
         float yaw = Mth.lerp(tickDelta, entity.yRotO, entity.getYRot());
 
-        // Light is discarded by the capture; any value reaches the same result.
-        int light = LightTexture.FULL_BRIGHT;
+        // Vanilla's extraction already produced this frame's render state for an entity
+        // it draws; only the off-frustum sweep has to extract one itself.
+        EntityRenderState renderState = RemixExtractedEntities.take(entity);
+        if (renderState == null) {
+            renderState = dispatcher.extractEntity(entity, tickDelta);
+        }
+        // The state's position is the interpolated one vanilla would draw at.
+        Vec3 entityPos = new Vec3(renderState.x, renderState.y, renderState.z);
 
         provider.beginEntity();
         EntityRenderContext ctx = EntityRenderContext.get();
 
         sharedMatrices.pushPose();
+        ctx.begin(true);
         try {
-            dispatcher.render(entity, 0.0, 0.0, 0.0, yaw, tickDelta, sharedMatrices, provider, light);
+            // Light is discarded by the capture, so the render state's own is left alone.
+            dispatcher.submit(renderState,
+                    Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.cameraRenderState,
+                    0.0, 0.0, 0.0, sharedMatrices, collector);
         } finally {
             // Both reset even if a renderer threw mid-traversal, which skips the
             // dispatcher's RETURN hook: the identity root returns every pooled
@@ -761,7 +764,7 @@ public class RemixEntityPass {
         int boneCount = ctx.getBoneCount();
 
         String typeKey = entityTypeKeyCache.computeIfAbsent(entity.getType(),
-                t -> BuiltInRegistries.ENTITY_TYPE.getStartTimeTicks(t).toString());
+                t -> BuiltInRegistries.ENTITY_TYPE.getKey(t).toString());
 
         return new EntityCaptureResult(
             entity,

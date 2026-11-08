@@ -4,15 +4,15 @@
  */
 package com.nvidia.rtxremix.minecraft.mixin;
 
+import net.minecraft.client.particle.Particle;
+import net.minecraft.client.particle.ParticleGroup;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
-import com.mojang.blaze3d.vertex.PoseStack;
-import java.util.Deque;
 
-/** Exposes the backing deque so the Remix capture stack can recycle entries. */
-@Mixin(PoseStack.class)
-public interface MatrixStackAccessor {
+import java.util.Queue;
 
-    @Accessor("poseStack")
-    Deque<PoseStack.Pose> rtxremix$getStack();
+@Mixin(ParticleGroup.class)
+public interface ParticleGroupAccessor {
+    @Accessor("particles")
+    Queue<? extends Particle> getParticles();
 }

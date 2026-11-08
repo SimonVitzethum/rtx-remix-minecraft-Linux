@@ -49,8 +49,13 @@ public class CuboidMixin {
         VertexConsumer target = vertexConsumer;
         TextureAtlasSprite sprite = null;
         if (target instanceof SpriteCoordinateExpander wrapped) {
-            sprite = wrapped.sprite;
-            target = wrapped.delegate;
+            // Only an atlas sprite's remap is reproduced when the cuboid is rebuilt; any
+            // other mapping is left to vanilla's per-vertex path.
+            if (!(wrapped.mapping() instanceof TextureAtlasSprite mappedSprite)) {
+                return;
+            }
+            sprite = mappedSprite;
+            target = wrapped.delegate();
         }
         if (!(target instanceof RemixCapturingConsumer consumer)) {
             return;
