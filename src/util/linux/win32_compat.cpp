@@ -1,4 +1,11 @@
 // Native Linux implementations of the Win32 API subset declared in include/native/windows/remix_win32.h.
+// Included first: windows_base.h defines `interface`, which the Wayland headers use as a parameter name.
+#include <wayland-client-core.h>
+#include <map>
+#include <mutex>
+#include <algorithm>
+#include <cstring>
+
 #include <windows.h>
 
 #include <dlfcn.h>
@@ -221,6 +228,131 @@ namespace {
 }
 
 void* RemixGetWaylandDisplay() { return g_waylandDisplay.load(); }
+
+// ---- Wayland subsurface ----
+// A wl_surface that already has an OpenGL (EGL) window cannot also be a Vulkan swap chain target, so Remix presents into
+// a child subsurface of the client's surface. It is created on a private event queue so the client's own dispatching
+// is not disturbed. The wayland-client library is loaded at runtime, no link dependency is needed.
+
+namespace {
+  struct WaylandApi {
+    void* lib = nullptr;
+    wl_event_queue* (*display_create_queue)(wl_display*) = nullptr;
+    void* (*proxy_create_wrapper)(void*) = nullptr;
+    void (*proxy_set_queue)(wl_proxy*, wl_event_queue*) = nullptr;
+    void (*proxy_wrapper_destroy)(void*) = nullptr;
+    int (*display_roundtrip_queue)(wl_display*, wl_event_queue*) = nullptr;
+    int (*display_flush)(wl_display*) = nullptr;
+    wl_proxy* (*proxy_marshal_flags)(wl_proxy*, uint32_t, const wl_interface*, uint32_t, uint32_t, ...) = nullptr;
+    int (*proxy_add_listener)(wl_proxy*, void (**)(void), void*) = nullptr;
+    uint32_t (*proxy_get_version)(wl_proxy*) = nullptr;
+    const wl_interface* registry_if = nullptr;
+    const wl_interface* compositor_if = nullptr;
+    const wl_interface* subcompositor_if = nullptr;
+    const wl_interface* surface_if = nullptr;
+    const wl_interface* subsurface_if = nullptr;
+    const wl_interface* region_if = nullptr;
+    bool ok = false;
+  };
+
+  WaylandApi& waylandApi() {
+    static WaylandApi api = [] {
+      WaylandApi a;
+      a.lib = dlopen("libwayland-client.so.0", RTLD_NOW | RTLD_GLOBAL);
+      if (!a.lib) { return a; }
+      auto sym = [&](const char* name) { return dlsym(a.lib, name); };
+      a.display_create_queue = reinterpret_cast<decltype(a.display_create_queue)>(sym("wl_display_create_queue"));
+      a.proxy_create_wrapper = reinterpret_cast<decltype(a.proxy_create_wrapper)>(sym("wl_proxy_create_wrapper"));
+      a.proxy_set_queue = reinterpret_cast<decltype(a.proxy_set_queue)>(sym("wl_proxy_set_queue"));
+      a.proxy_wrapper_destroy = reinterpret_cast<decltype(a.proxy_wrapper_destroy)>(sym("wl_proxy_wrapper_destroy"));
+      a.display_roundtrip_queue = reinterpret_cast<decltype(a.display_roundtrip_queue)>(sym("wl_display_roundtrip_queue"));
+      a.display_flush = reinterpret_cast<decltype(a.display_flush)>(sym("wl_display_flush"));
+      a.proxy_marshal_flags = reinterpret_cast<decltype(a.proxy_marshal_flags)>(sym("wl_proxy_marshal_flags"));
+      a.proxy_add_listener = reinterpret_cast<decltype(a.proxy_add_listener)>(sym("wl_proxy_add_listener"));
+      a.proxy_get_version = reinterpret_cast<decltype(a.proxy_get_version)>(sym("wl_proxy_get_version"));
+      a.registry_if = static_cast<const wl_interface*>(sym("wl_registry_interface"));
+      a.compositor_if = static_cast<const wl_interface*>(sym("wl_compositor_interface"));
+      a.subcompositor_if = static_cast<const wl_interface*>(sym("wl_subcompositor_interface"));
+      a.surface_if = static_cast<const wl_interface*>(sym("wl_surface_interface"));
+      a.subsurface_if = static_cast<const wl_interface*>(sym("wl_subsurface_interface"));
+      a.region_if = static_cast<const wl_interface*>(sym("wl_region_interface"));
+      a.ok = a.display_create_queue && a.proxy_create_wrapper && a.proxy_set_queue && a.proxy_wrapper_destroy
+          && a.display_roundtrip_queue && a.display_flush && a.proxy_marshal_flags && a.proxy_add_listener
+          && a.proxy_get_version && a.registry_if && a.compositor_if && a.subcompositor_if && a.surface_if
+          && a.subsurface_if && a.region_if;
+      return a;
+    }();
+    return api;
+  }
+
+  struct WaylandGlobals {
+    wl_proxy* compositor = nullptr;
+    wl_proxy* subcompositor = nullptr;
+    uint32_t compositorName = 0, compositorVersion = 0;
+    uint32_t subcompositorName = 0, subcompositorVersion = 0;
+  };
+
+  void waylandGlobal(void* data, wl_proxy*, uint32_t name, const char* iface, uint32_t version) {
+    auto* g = static_cast<WaylandGlobals*>(data);
+    if (!strcmp(iface, "wl_compositor")) { g->compositorName = name; g->compositorVersion = std::min(version, 4u); }
+    else if (!strcmp(iface, "wl_subcompositor")) { g->subcompositorName = name; g->subcompositorVersion = 1; }
+  }
+  void waylandGlobalRemove(void*, wl_proxy*, uint32_t) { }
+
+  std::mutex g_waylandChildMutex;
+  std::map<void*, void*> g_waylandChildren;
+}
+
+void* RemixGetWaylandChildSurface(void* parentSurface) {
+  std::lock_guard<std::mutex> lock(g_waylandChildMutex);
+  auto it = g_waylandChildren.find(parentSurface);
+  if (it != g_waylandChildren.end()) { return it->second; }
+
+  void* result = parentSurface;
+  WaylandApi& api = waylandApi();
+  auto* display = static_cast<wl_display*>(g_waylandDisplay.load());
+  if (api.ok && display != nullptr) {
+    wl_event_queue* queue = api.display_create_queue(display);
+    void* wrapper = api.proxy_create_wrapper(display);
+    api.proxy_set_queue(static_cast<wl_proxy*>(wrapper), queue);
+
+    // wl_display.get_registry is request 1.
+    wl_proxy* registry = api.proxy_marshal_flags(static_cast<wl_proxy*>(wrapper), 1, api.registry_if,
+      api.proxy_get_version(static_cast<wl_proxy*>(wrapper)), 0, nullptr);
+    WaylandGlobals globals;
+    static void (*listener[2])(void) = {
+      reinterpret_cast<void (*)(void)>(waylandGlobal), reinterpret_cast<void (*)(void)>(waylandGlobalRemove) };
+    api.proxy_add_listener(registry, listener, &globals);
+    api.display_roundtrip_queue(display, queue);
+
+    auto bind = [&](uint32_t name, const wl_interface* iface, uint32_t version) {
+      // wl_registry.bind is request 0, with (name, interface name, version, new id).
+      return api.proxy_marshal_flags(registry, 0, iface, version, 0, name, iface->name, version, nullptr);
+    };
+    fprintf(stderr, "Remix Wayland globals: compositor=%u subcompositor=%u\n", globals.compositorName, globals.subcompositorName);
+    if (globals.compositorName && globals.subcompositorName) {
+      wl_proxy* compositor = bind(globals.compositorName, api.compositor_if, globals.compositorVersion);
+      wl_proxy* subcompositor = bind(globals.subcompositorName, api.subcompositor_if, globals.subcompositorVersion);
+      // wl_compositor.create_surface is request 0, create_region is request 1.
+      wl_proxy* child = api.proxy_marshal_flags(compositor, 0, api.surface_if, api.proxy_get_version(compositor), 0, nullptr);
+      wl_proxy* emptyRegion = api.proxy_marshal_flags(compositor, 1, api.region_if, api.proxy_get_version(compositor), 0, nullptr);
+      // wl_subcompositor.get_subsurface is request 1, wl_subsurface.set_desync is request 5.
+      wl_proxy* sub = api.proxy_marshal_flags(subcompositor, 1, api.subsurface_if, api.proxy_get_version(subcompositor), 0,
+        nullptr, child, static_cast<wl_proxy*>(parentSurface));
+      api.proxy_marshal_flags(sub, 5, nullptr, api.proxy_get_version(sub), 0);
+      // wl_surface.set_input_region is request 5 and commit is request 6: pointer input stays with the parent.
+      api.proxy_marshal_flags(child, 5, nullptr, api.proxy_get_version(child), 0, emptyRegion);
+      api.proxy_marshal_flags(child, 6, nullptr, api.proxy_get_version(child), 0);
+      api.display_roundtrip_queue(display, queue);
+      result = child;
+    }
+    api.proxy_wrapper_destroy(wrapper);
+  }
+
+  fprintf(stderr, "Remix Wayland subsurface: api=%d display=%p parent=%p result=%p\n", (int) api.ok, (void*) display, parentSurface, result);
+  g_waylandChildren[parentSurface] = result;
+  return result;
+}
 
 extern "C" {
   // Selects Wayland presentation. 'display' is the client's wl_display, the window handle given to Startup must be its wl_surface.

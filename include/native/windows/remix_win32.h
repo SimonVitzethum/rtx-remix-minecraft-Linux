@@ -898,6 +898,8 @@ BOOL IsWindowUnicode(HWND);
 void* RemixGetXcbConnection();
 // The Wayland display the client's window belongs to, set through remixapi_linux_SetWaylandDisplay, or null for X11.
 void* RemixGetWaylandDisplay();
+// The Vulkan presenter draws into a subsurface of the client's wl_surface, since that surface already belongs to an EGL window.
+void* RemixGetWaylandChildSurface(void* parentSurface);
 BOOL IsIconic(HWND);
 BOOL IsWindowVisible(HWND);
 BOOL ShowWindow(HWND, int);

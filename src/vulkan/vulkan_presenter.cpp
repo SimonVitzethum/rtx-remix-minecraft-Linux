@@ -617,12 +617,14 @@ namespace dxvk::vk {
     if (void* waylandDisplay = RemixGetWaylandDisplay()) {
       VkWaylandSurfaceCreateInfoKHR waylandInfo = { VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR };
       waylandInfo.display = static_cast<wl_display*>(waylandDisplay);
-      waylandInfo.surface = reinterpret_cast<wl_surface*>(m_window);
+      waylandInfo.surface = reinterpret_cast<wl_surface*>(RemixGetWaylandChildSurface(m_window));
 
       if (m_vki->vkCreateWaylandSurfaceKHR == nullptr)
         return VK_ERROR_EXTENSION_NOT_PRESENT;
 
       VkResult waylandStatus = m_vki->vkCreateWaylandSurfaceKHR(m_vki->instance(), &waylandInfo, nullptr, &m_surface);
+      Logger::info(str::format("Wayland presenter surface: display=", (void*) waylandInfo.display, " parent=", (void*) m_window,
+        " child=", (void*) waylandInfo.surface, " vkCreateWaylandSurfaceKHR=", static_cast<int>(waylandStatus)));
 
       if (waylandStatus != VK_SUCCESS)
         return waylandStatus;
