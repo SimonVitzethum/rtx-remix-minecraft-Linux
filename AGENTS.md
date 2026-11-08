@@ -156,6 +156,16 @@ thread uploads one mesh per frame, and each visible cloud submits one palette
 mesh with one transform. Choosing the Classic cloud style switches to vanilla
 texture partitions that keep vanilla's cloud period and phase.
 
+**Cloud LOD.** `CloudLod` picks a level per cloud by horizontal distance, with
+8% hysteresis, and the swap is an instance-level mesh change (no crossfade). The
+procedural palette generates each cloud's density once and marches it on the full
+1.5 m lattice and on lattices decimated by 2 and 4 (`CloudMeshGenerator.LOD_STEPS`),
+so the shapes match and a far cloud has about 1/16 of the triangles. Classic clouds
+get a second mesh per texture partition (`VanillaCloudMeshGenerator.generateFlat`,
+key bit `FLAT_KEY_BIT`): no bevel, tops and bottoms merged into maximal rectangles,
+sides merged into runs; it covers exactly the area of the full mesh. The level uses
+the distance to the partition's nearest point.
+
 **Terrain.** Minecraft workers build section meshes, a low-concurrency executor
 merges them into chunk-column assets split into byte-capped pages per category,
 and the render thread publishes them under a frame budget and retires replaced
@@ -175,6 +185,19 @@ client's sky-light surface walk is seeded at the packet's `WORLD_SURFACE`
 height (`SeededSurfaceScan`, `SkyLightSurfaceScanPolicy`). `VanillaSectionBuilds`
 keeps real copies until every build that latched capture off has finished.
 Each policy has a `rtxremix.*` kill switch listed in `docs/TUNING.md`.
+
+**Terrain LOD.** A column farther than `TerrainLod` chunks (1.5 chunk hysteresis)
+is built with `lod = 1`: `BlockMeshBuilder.appendMergedPages` runs
+`TerrainQuadMerger` over each opaque bucket. Only unit block faces that are
+axis-aligned, lattice-aligned, single-colour and whole-sprite are merged (greedy
+maximal rectangles per plane, normal, colour, bounds and corner orientation);
+everything else is copied through, so area, normals and materials are unchanged.
+The runtime has no texcoord-bounds wrapping, so a merged rectangle shows the sprite
+stretched over it (`rtxremix.terrain.lodTileUv` tiles instead, for a runtime that
+wraps). The LOD only affects the solid category, a column remembers the level of its
+published pages (`ColumnRenderState.lod`), partial rebuilds keep it, and a boundary
+crossing re-meshes the solid category through the normal staged install, at most
+`maxLodRebuildsPerFrame` columns per frame. Counters: `Chunk.RetainedTriangles`.
 
 **Allocation.** The collector's concurrent work is what stretches frames at
 high render distance, so the hot vanilla paths that run per section or per
