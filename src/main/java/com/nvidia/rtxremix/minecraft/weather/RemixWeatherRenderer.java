@@ -133,16 +133,30 @@ public final class RemixWeatherRenderer {
     }
 
     private static void compileShaders() {
+        // Missing shader resources are not permanent: they may simply not be loaded yet,
+        // so a null result retries on the next frame. A compile or link failure is
+        // permanent and is treated like the old shader-load failure.
         if (rainShader == null && !rainShaderFailed) {
-            rainShader = compileRainShader();
-            if (rainShader == null) {
+            try {
+                GlShaderProgram linked = compileRainShader();
+                if (linked != null) {
+                    rainShader = linked;
+                }
+            } catch (RuntimeException e) {
                 rainShaderFailed = true;
+                LOGGER.error("Failed to compile rain refraction shader", e);
             }
         }
         if (snowShader == null && !snowShaderFailed) {
-            snowShader = GlShaderProgram.link(SNOW_VERTEX_SHADER, SNOW_FRAGMENT_SHADER);
-            if (snowShader == null) {
+            try {
+                GlShaderProgram linked = GlShaderProgram.link(
+                        SNOW_VERTEX_SHADER, SNOW_FRAGMENT_SHADER);
+                if (linked != null) {
+                    snowShader = linked;
+                }
+            } catch (RuntimeException e) {
                 snowShaderFailed = true;
+                LOGGER.error("Failed to compile snow shader", e);
             }
         }
     }
@@ -165,7 +179,10 @@ public final class RemixWeatherRenderer {
                 builder.append(buffer, 0, read);
             }
             return builder.toString();
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException e) {
+            LOGGER.debug("Shader source {} is not available yet", location);
+            return null;
+        } catch (RuntimeException e) {
             LOGGER.error("Failed to read shader source {}", location, e);
             return null;
         }
@@ -216,6 +233,7 @@ public final class RemixWeatherRenderer {
         }
 
         Minecraft client = Minecraft.getInstance();
+        int mainFramebuffer = bindMainRenderTarget();
         try {
             if (depthSeeder == null) {
                 depthSeeder = new DepthSeeder();
@@ -230,11 +248,14 @@ public final class RemixWeatherRenderer {
         } catch (RuntimeException exception) {
             closePendingDraws();
             throw exception;
+        } finally {
+            if (mainFramebuffer != 0) {
+                GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
+            }
         }
     }
 
     private void renderDeferredDraws(int finalColorTexture) {
-        int mainFramebuffer = bindMainRenderTarget();
         boolean depthTest = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
         boolean blend = GL11.glIsEnabled(GL11.GL_BLEND);
         boolean cull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
@@ -314,9 +335,6 @@ public final class RemixWeatherRenderer {
             GL13.glActiveTexture(GL13.GL_TEXTURE0);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture0);
             GL13.glActiveTexture(previousActiveTexture);
-            if (mainFramebuffer != 0) {
-                GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
-            }
         }
     }
 
