@@ -123,7 +123,8 @@ public abstract class WorldRendererMixin
      * dispatcher mixins hand to the capture as vanilla submits them.
      */
     @Inject(method = "submitFeatures", at = @At("HEAD"))
-    private void rtxremix$beginSubmitPhase(CallbackInfo ci) {
+    private void rtxremix$beginSubmitPhase(
+            LevelRenderState state, SubmitNodeCollector collector, boolean renderOutline, CallbackInfo ci) {
         RtxRemixMod mod = RtxRemixMod.getInstance();
         if (mod != null && mod.getRenderer() != null) {
             mod.getRenderer().beginEntityFrame();
@@ -132,7 +133,8 @@ public abstract class WorldRendererMixin
 
     /** Drops the frame's state-to-owner pairs; every submit that could use them has run. */
     @Inject(method = "submitFeatures", at = @At("RETURN"))
-    private void rtxremix$endSubmitPhase(CallbackInfo ci) {
+    private void rtxremix$endSubmitPhase(
+            LevelRenderState state, SubmitNodeCollector collector, boolean renderOutline, CallbackInfo ci) {
         RemixExtractedEntities.endFrame();
     }
 
