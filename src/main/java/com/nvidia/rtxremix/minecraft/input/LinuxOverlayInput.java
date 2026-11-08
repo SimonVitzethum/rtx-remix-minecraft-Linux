@@ -4,9 +4,9 @@
  */
 package com.nvidia.rtxremix.minecraft.input;
 
+import com.mojang.blaze3d.platform.Window;
 import com.nvidia.rtxremix.RemixBridge;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.util.Window;
+import net.minecraft.client.Minecraft;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -27,9 +27,9 @@ public final class LinuxOverlayInput {
     }
 
     public static void cursor(double x, double y) {
-        Window window = MinecraftClient.getInstance().getWindow();
-        double sx = window.getWidth() > 0 ? (double) window.getFramebufferWidth() / window.getWidth() : 1.0;
-        double sy = window.getHeight() > 0 ? (double) window.getFramebufferHeight() / window.getHeight() : 1.0;
+        Window window = Minecraft.getInstance().getWindow();
+        double sx = window.getScreenWidth() > 0 ? (double) window.getWidth() / window.getScreenWidth() : 1.0;
+        double sy = window.getScreenHeight() > 0 ? (double) window.getHeight() / window.getScreenHeight() : 1.0;
         RemixBridge.linuxInput(MOUSE_MOVE, 0, (float) (x * sx), (float) (y * sy));
     }
 

@@ -120,6 +120,7 @@ base {
 def projectArchiveName = base.archivesName.get()
 
 repositories {
+    mavenLocal()
     mavenCentral()
     maven {
         name = 'Fabric'
@@ -219,7 +220,7 @@ configurations {
 dependencies {
     // Minecraft and Fabric
     minecraft "com.mojang:minecraft:1.21.1"
-    mappings "net.fabricmc:yarn:1.21.1+build.3:v2"
+    mappings "local.mojmap:mojmap:1.21.1:v2"
     modImplementation "net.fabricmc:fabric-loader:${fabricLoaderVersion}"
 
     modImplementation fabricApiCoordinate

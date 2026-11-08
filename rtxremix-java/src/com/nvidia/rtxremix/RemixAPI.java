@@ -111,6 +111,11 @@ public class RemixAPI {
         return redaction.blankedValues();
     }
 
+    /** Loads the JNI bridge that sits beside the runtime, so bridge calls work before startup. Safe to repeat. */
+    public static void loadBridge(String dllPath) {
+        bindBridge(dllPath);
+    }
+
     private static java.io.File bindBridge(String dllPath) {
         java.io.File dllFile = new java.io.File(dllPath);
         if (!dllFile.exists()) {

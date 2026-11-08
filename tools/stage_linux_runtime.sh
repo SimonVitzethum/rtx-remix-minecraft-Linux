@@ -22,7 +22,7 @@ for f in "$runtime" "$nrd" "$usd/lib"; do
     [ -e "$f" ] || { echo "missing: $f" >&2; exit 1; }
 done
 
-rm -rf "$out"
+[ -d "$out" ] && rm -r "$out"
 mkdir -p "$out"
 cp "$runtime" "$out/libremixapi.so"
 strip --strip-unneeded "$out/libremixapi.so" 2>/dev/null || true
@@ -37,8 +37,14 @@ cp -a "$usd"/lib/usd/. "$out/usd/"
 cp -L "$dlss"/libnvidia-ngx-dlss*.so.* "$out/"
 
 # oneTBB is a runtime dependency of OpenUSD.
-tbb="$(ldconfig -p | awk '/libtbb\.so\.12 /{print $NF; exit}')"
+tbb="$(ldconfig -p | awk '/libtbb\.so\.12 /{print $NF; exit}' || true)"
 [ -n "$tbb" ] && cp -L "$tbb" "$out/"
+
+# Standalone shader precompiler and its launcher script, run before the game starts.
+g++ -std=c++17 -O1 -DREMIX_WINAPI_NO_INCLUDE -DREMIX_WINAPI_NO_LIBRARY_LOADER -DREMIXAPI= -DREMIXAPI_CALL= \
+    -D__stdcall= -I"$root/rtxremix-java/native/include" -o "$out/remix-precompile" \
+    "$root/tools/linux/remix_precompile.cpp" -ldl
+cp "$root/tools/linux/precompile.sh" "$out/precompile.sh"
 
 # Every library finds its siblings through $ORIGIN, so the directory can move anywhere.
 if command -v patchelf >/dev/null; then
