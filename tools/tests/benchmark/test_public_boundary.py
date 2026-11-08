@@ -63,7 +63,14 @@ PUBLIC_LEAK_PATTERNS = [
             "packaging/licenses/remix-runtime/ThirdPartyLicenses.txt",
         },
     ),
-    ("author TODO in shipped text", re.compile(rb"\bTODO\b"), set()),
+    (
+        "author TODO in shipped text",
+        re.compile(rb"\bTODO\b"),
+        # installer.ps1 carries deliberate TODO(26.3) markers for pins that cannot
+        # be filled until the 26.3 artifacts are published (e.g. the Fabric API
+        # SHA-256). The markers are port bookkeeping, not author identities.
+        {"packaging/installer.ps1"},
+    ),
     ("unfilled placeholder", re.compile(rb"\[INSERT [A-Z ]+:|OWNER-FILL"), set()),
     ("em dash", re.compile(chr(0x2014).encode("utf-8")), set()),
 ]

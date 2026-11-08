@@ -1,6 +1,6 @@
 # RTX Remix for Minecraft
 
-This archive installs a Fabric mod that renders Minecraft Java Edition 1.21.1
+This archive installs a Fabric mod that renders Minecraft Java Edition 26.3
 through NVIDIA RTX Remix, with the RTX Remix Materials texture pack and the
 RTX Remix Showcase World it was made with. It sets up a launcher, Java,
 Fabric, the mod, and the RTX Remix runtime for you.
@@ -8,7 +8,7 @@ Fabric, the mod, and the RTX Remix runtime for you.
 ## What You Need
 
 - Windows 10 or 11, x64 or ARM64.
-- Minecraft Java Edition 1.21.1, on a Microsoft account that owns the game.
+- Minecraft Java Edition 26.3, on a Microsoft account that owns the game.
 - A GeForce RTX 30-series or newer GPU with NVIDIA driver 616.92 or newer.
 - About 5 GB of free disk space while installing; about 3 GB stays in use.
 - An internet connection while the installer runs.
@@ -25,7 +25,7 @@ Fabric, the mod, and the RTX Remix runtime for you.
 3. **Sign in** to your Microsoft account in Prism Launcher
 
 4. Play
-    * In Prism Launcher, double-click the 'NVIDIA RTX Remix for Minecraft' instance
+    * In Prism Launcher, double-click the 'RTX Remix 26.3 (Fabric)' instance
     * In Minecraft, open 'Singleplayer' and **choose** 'NVIDIA RTX Demo'
     * *Note: if the instance is missing, press F5 to refresh*
     * *Note: on the very first launch, RTX Remix compiles its shaders before showing the world (one time only). See First Launch.*
@@ -58,7 +58,7 @@ one showcase world, built for this project by BlockWorks
 looks and runs best. It ships with known issues, tracked at
 <https://github.com/NVIDIAGameWorks/rtx-remix-minecraft/issues>, and there are
 bugs yet to be found. It has had limited testing alongside other
-mods, it targets Minecraft 1.21.1 only, and blocks, mobs, dimensions, and
+mods, it targets Minecraft 26.3 only, and blocks, mobs, dimensions, and
 situations the showcase never reaches have had less care. When something
 breaks, report it (see below); that is how it gets fixed.
 
@@ -121,8 +121,9 @@ launch.
    the path the installer prints when it finishes. Sign in to your Microsoft
    account if you have not already. In Prism this is Accounts, then Manage
    Accounts, then Add Microsoft.
-7. Start the game. Select the **NVIDIA RTX Remix for Minecraft** instance in
-   Prism, or the profile of the same name in the Microsoft launcher.
+7. Start the game. Select the **RTX Remix 26.3 (Fabric)** instance in
+   Prism, or the **NVIDIA RTX Remix for Minecraft** profile in the Microsoft
+   launcher.
 8. Open Singleplayer and choose **NVIDIA RTX Demo**, the showcase world.
 
 `INSTALLER_REFERENCE.md` covers the rest: the modes, every flag, headless and
@@ -222,9 +223,9 @@ installed for you, listing only the ones that are actually on disk.
 Everything is under the game folder, which is:
 
 - Prism, when the installer downloaded a portable copy:
-  `%LOCALAPPDATA%\RtxRemixMinecraft\PrismLauncher\instances\NVIDIA RTX Remix for Minecraft\.minecraft\`
+  `%LOCALAPPDATA%\RtxRemixMinecraft\PrismLauncher\instances\RTX Remix 26.3 (Fabric)\.minecraft\`
 - Prism, when you already had it: the same
-  `instances\NVIDIA RTX Remix for Minecraft\.minecraft\` path under your own
+  `instances\RTX Remix 26.3 (Fabric)\.minecraft\` path under your own
   Prism data folder, usually `%APPDATA%\PrismLauncher\`, or the folder of a
   portable copy
 - Microsoft launcher: `%APPDATA%\.minecraft\`
@@ -275,7 +276,7 @@ if you are wiping it anyway.
 | The installer does not find your Prism Launcher, such as a portable copy | At the launcher question, choose Use a Prism I already have and enter the folder holding `prismlauncher.exe`. Later runs remember that Prism. A headless run takes `-PrismDataDir` instead |
 | The Prism download fails | Check the firewall and retry. The installer asks GitHub for the newest Prism release, and a shared network address can hit GitHub's anonymous rate limit. If GitHub reports a rate limit, wait before retrying |
 | `Download failed after 3 attempts from` followed by an Adoptium URL and the error details | The Adoptium API at `api.adoptium.net` has to be reachable. Check the firewall and re-run |
-| `Failed to extract JDK 21 archive:` followed by the error details | Check free disk space and the permissions on your temporary folder, then re-run the installer to download and extract a fresh archive |
+| `Failed to extract JDK 25 archive:` followed by the error details | Check free disk space and the permissions on your temporary folder, then re-run the installer to download and extract a fresh archive |
 | The Fabric API download fails | `maven.fabricmc.net` has to be reachable. Check the firewall and re-run |
 | The installer refuses to choose a launcher | Both Prism and the Microsoft launcher are installed and the run was headless. Pass `-Launcher Prism` or `-Launcher Microsoft` |
 | `Install RTX Remix Renderer first` | RTX Remix Renderer was unticked, and the launcher has no RTX Remix game folder for the pack and the world to go into. Run the installer again with the mod ticked |

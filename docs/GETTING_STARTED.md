@@ -3,14 +3,18 @@
 How to build and run the mod from source. If you only want to play, read
 [Playing](PLAYING.md) instead.
 
+The mod targets Minecraft 26.3 (Fabric, Java 25, Fabric API 0.165.x, Loom
+1.17, Gradle 9.5.1 wrapper).
+
 ## Prerequisites
 
-- **Windows 10 or 11**, on x64 or ARM64. The JNI bridge is compiled with MSVC,
-  so there is no Linux or macOS build.
-- **Java 21**, a JDK matching your machine's architecture. Eclipse Adoptium is
+- **Windows 10 or 11**, on x64 or ARM64, or **native Linux x64**. On Windows
+  the JNI bridge is compiled with MSVC; on Linux it is built with g++/clang
+  through `rtxremix-java/native/build_native.sh`. See [Linux](#linux).
+- **Java 25**, a JDK matching your machine's architecture. Eclipse Adoptium is
   a good choice. Set `JAVA_HOME` to that JDK: the native build reads it to find
-  `jni.h`. Prism runs Minecraft 1.21.1 only on Java 21, not a newer version,
-  so the developer tools launch the game on `JAVA_HOME` when it is a JDK 21
+  `jni.h`. Prism runs Minecraft 26.3 only on Java 25, not a newer version,
+  so the developer tools launch the game on `JAVA_HOME` when it is a JDK 25
   and otherwise look for one in Gradle's toolchains and in the Eclipse
   Adoptium, Microsoft, and Java folders under Program Files.
 - **Visual Studio 2022 Build Tools** with the Desktop development with C++
@@ -263,7 +267,7 @@ validation of native integration.
 
 The JAR from `package` is the one players get: it embeds the runtime, gameplay
 conf payload, runtime textures, and baseline PBR textures. To try it in a
-normal installation of Minecraft 1.21.1 that already has Fabric Loader and
+normal installation of Minecraft 26.3 that already has Fabric Loader and
 Fabric API, drop it into the instance's `mods` folder; the mod needs nothing
 else to run. The release's installer also adds the RTX Remix Materials pack
 and the showcase world, migrates old generated baseline packs, and preserves
@@ -291,6 +295,7 @@ The task also requires every `packaging/licenses/` file in the JAR.
 | `package` | Dual-architecture fat JAR. Needs both architectures staged from the same kind of source |
 | `package -Parch=win64` | win64 only, skips the arm64 bridge compile |
 | `package -Parch=arm64` | arm64 only, useful for cross-building for device testing |
+| `package -Parch=linux64` | linux64 only, after staging the Linux runtime with `tools/stage_linux_runtime.sh` |
 
 `releaseArchive` builds the installer bundle. It runs `package` and its
 `verifyPackageJar` check, then stages the verified JAR under
@@ -488,6 +493,64 @@ Before removing a worktree, stop its client, close its Prism, and run
 first. If a directory was already removed manually, `git worktree prune`
 removes its stale registration.
 
+## Linux
+
+The mod builds and runs natively on Linux x64; no Proton or Wine is involved.
+Build the mod with `-Parch=linux64`, which selects the linux64 architecture for
+the JAR and compiles the JNI bridge (`remixbridge.so`) with g++/clang through
+`rtxremix-java/native/build_native.sh`.
+
+The Linux runtime has no published Packman package; it is built natively from
+the sibling dxvk-remix checkout and staged locally. From the mod checkout:
+
+```bash
+tools/stage_linux_runtime.sh ../dxvk-remix ../dxvk-deps
+```
+
+The script stages `remix-runtime/linux64/`: `libremixapi.so` from the dxvk-remix
+checkout's `native-linux` branch, the OpenUSD and NRD libraries from
+`../dxvk-deps`, the DLSS libraries `libnvidia-ngx-dlss*.so`, and the standalone
+shader precompiler with its launcher script. The runtime library is
+`libremixapi.so`; the JNI bridge `remixbridge.so` is
+compiled separately into `build/native/linux64/`.
+
+### Launcher Script
+
+`tools/linux/rtx.sh` automates the Linux workflow: `launch` builds the mod,
+installs it into a Prism instance, and starts Minecraft through Prism;
+`precompile` runs the shader precompiler for the instance; `instance` creates
+the instance; `status` reports what is set up. See the script's header for its
+environment variables.
+
+### Windowing
+
+Minecraft 26.3 uses SDL3. `LinuxWindowPlatform` picks the SDL video driver
+before the game initializes SDL: set `-Drtxremix.wayland=true` for Wayland, or
+`-Drtxremix.wayland=false` for X11/XWayland. Without either property, SDL's
+own choice (or an `SDL_VIDEODRIVER` environment variable) stands.
+
+### Shader Precompile
+
+Before the game starts, compile every Remix shader and pipeline with
+`tools/linux/precompile.sh <game dir>` (or the standalone
+`remix-sdk/remix-precompile`). It writes `remix-sdk/remix-pipeline.cache`
+beside the runtime library, which the game loads. In Prism Launcher, set the
+instance's pre-launch command to:
+
+```bash
+bash "$INST_MC_DIR/remix-sdk/precompile.sh" "$INST_MC_DIR"
+```
+
+### Known Linux Limitations
+
+DLSS frame generation, DLSS neural reconstruction, XeSS, NRC, Reflex, and
+Aftermath are not available on Linux. DLSS super resolution and ray
+reconstruction, TAAU, and NIS work.
+
+### Memory
+
+A 12 GiB Java heap is recommended.
+
 ## When It Does Not Work
 
 | Symptom | Cause |
@@ -498,7 +561,7 @@ removes its stale registration.
 | A launch reports that Prism Launcher is not installed | Install it from [prismlauncher.org](https://prismlauncher.org), or point `prism.executable` in `tools/config.local.json` at its `prismlauncher.exe` |
 | A launch opens Prism and stops with sign-in steps | No Microsoft account that owns Minecraft is signed in to the selected Prism profile, or `prism.account` names another. See [Sign In To Prism](#sign-in-to-prism) |
 | A launch reports that Prism is already running | Close the selected Prism window and launch again |
-| A launch reports that Minecraft 1.21.1 in Prism needs a 64-bit JDK 21 | `JAVA_HOME` names another Java version or architecture, and no JDK 21 for this machine is installed where the tools look. Install one and set `JAVA_HOME` to it |
+| A launch reports that Minecraft 26.3 in Prism needs a 64-bit JDK 25 | `JAVA_HOME` names another Java version or architecture, and no JDK 25 for this machine is installed where the tools look. Install one and set `JAVA_HOME` to it |
 | A JVM option set in `JAVA_TOOL_OPTIONS` has no effect | Prism does not pass it to the game. Use `launch.jvmArgs`; see [JVM Arguments](TUNING.md#jvm-arguments) |
 | `Failed to initialize RTX Remix` with error code 8, and the game renders vanilla | The staged runtime predates the API in `rtxremix-java/native/include/remix_c.h`. Stage one of the runtimes listed in [Get A Runtime](#get-a-runtime) |
 | `UnsatisfiedLinkError` naming `remixbridge` | The bridge did not compile, or it was compiled for the other architecture. Re-run the build and check that `-Parch` matches the staged runtime |

@@ -54,7 +54,7 @@ class RtxOptionFactoryTest {
         for (RtxSetting.Kind kind : RtxSetting.Kind.values()) {
             // GameOptions is only written when a widget's value changes.
             String message = toOption(settingOf(kind))
-                    .createWidget(null).getMessage().getString();
+                    .createButton(null).getMessage().getString();
 
             assertEquals(1, occurrences(message, LABEL_KEY), kind + " shows \"" + message + "\"");
         }
@@ -69,11 +69,11 @@ class RtxOptionFactoryTest {
         assertEquals(
                 "rtxremix.settings.value.procedural",
                 ((TranslatableContents) RtxOptionFactory.booleanValueText(
-                        RtxOptionFactory.PROCEDURAL_CLOUDS_ID, true).getContent()).getKey());
+                        RtxOptionFactory.PROCEDURAL_CLOUDS_ID, true).getContents()).getKey());
         assertEquals(
                 "rtxremix.settings.value.classic",
                 ((TranslatableContents) RtxOptionFactory.booleanValueText(
-                        RtxOptionFactory.PROCEDURAL_CLOUDS_ID, false).getContent()).getKey());
+                        RtxOptionFactory.PROCEDURAL_CLOUDS_ID, false).getContents()).getKey());
     }
 
     @Test
@@ -106,9 +106,9 @@ class RtxOptionFactoryTest {
 
         assertEquals("options.framerateLimit.max",
                 ((TranslatableContents) RtxOptionFactory.intValueText(id, 260)
-                        .getContent()).getKey());
+                        .getContents()).getKey());
         TranslatableContents capped = (TranslatableContents)
-                RtxOptionFactory.intValueText(id, 120).getContent();
+                RtxOptionFactory.intValueText(id, 120).getContents();
         assertEquals("options.framerate", capped.getKey());
         assertEquals(120, capped.getArgs()[0]);
     }
@@ -148,13 +148,7 @@ class RtxOptionFactoryTest {
     }
 
     private static OptionInstance.SliderableValueSet<?> sliderCallbacks(OptionInstance<?> option) {
-        try {
-            Field callbacksField = OptionInstance.class.getDeclaredField("callbacks");
-            callbacksField.setAccessible(true);
-            return (OptionInstance.SliderableValueSet<?>) callbacksField.get(option);
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError("Could not inspect SimpleOption callbacks", e);
-        }
+        return (OptionInstance.SliderableValueSet<?>) option.values();
     }
 
     @ParameterizedTest
@@ -195,7 +189,7 @@ class RtxOptionFactoryTest {
     void zeroRendersAsAutoForBothDistanceSliders() {
         for (String id : List.of("dist.entity", "dist.light")) {
             assertEquals("rtxremix.settings.value.auto",
-                    ((TranslatableContents) RtxOptionFactory.intValueText(id, 0).getContent()).getKey(), id);
+                    ((TranslatableContents) RtxOptionFactory.intValueText(id, 0).getContents()).getKey(), id);
         }
         assertEquals("7", RtxOptionFactory.intValueText("dist.entity", 7).getString());
         assertEquals("0", RtxOptionFactory.intValueText("light.reach", 0).getString(),

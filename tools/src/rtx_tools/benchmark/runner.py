@@ -203,7 +203,7 @@ def verify_jvm_matches_arch(arch: str) -> None:
     raise RuntimeError(
         f"benchmark arch {arch} does not match the JVM architecture {jvm_raw} "
         f"reported by {java_executable()}; the native SDK and JNI bridge must "
-        "match the JVM. On ARM64 runners install Microsoft Build of OpenJDK 21 "
+        "match the JVM. On ARM64 runners install Microsoft Build of OpenJDK 25 "
         "(ARM64) and remove any x64 Adoptium JDK or stale JAVA_HOME; see "
         "tools/docs/BENCHMARKING.md."
     )
@@ -2065,7 +2065,7 @@ def doctor_report(
     if java_home:
         add("ok", "java", f"JAVA_HOME={java_home}", javaArch=java_arch or "", processArch=process_arch or "")
     else:
-        add("error", "java", "Could not find a Java 21-style JDK with include/jni.h.")
+        add("error", "java", "Could not find a Java 25-style JDK with include/jni.h.")
 
     launcher_description = "Client launcher"
     try:
@@ -2587,7 +2587,7 @@ def write_options(config: dict, *, resource_pack_files: list[str] | None = None,
         return
 
     defaults = {
-        "version": "3955",
+        "version": "5023",
         "ao": "true",
         "biomeBlendRadius": "2",
         "prioritizeChunkUpdates": "1",

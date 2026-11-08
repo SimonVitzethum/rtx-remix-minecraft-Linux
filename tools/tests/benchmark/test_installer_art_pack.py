@@ -176,7 +176,7 @@ def test_a_new_instance_gets_the_pack_turned_on_above_fabric(run: Run, mc_dir: P
     assert installed(mc_dir) == [PACK]
     assert (mc_dir / "resourcepacks" / PACK).read_bytes() == PACK_BYTES
     # The game reads a file at its own data version as current, and fills in every other option.
-    assert options(mc_dir) == f"version:3955\r\n{resource_packs('vanilla', 'fabric', f'file/{PACK}')}\r\n"
+    assert options(mc_dir) == f"version:5023\r\n{resource_packs('vanilla', 'fabric', f'file/{PACK}')}\r\n"
 
 
 @pytest.mark.parametrize("newline", ["\r\n", "\n"])
@@ -185,24 +185,24 @@ def test_the_pack_goes_below_the_players_own_packs_and_nothing_else_changes(
     run: Run, mc_dir: Path, newline: str, bom: bytes
 ):
     before = newline.join(
-        ["version:3955", "ao:true", resource_packs("vanilla", "fabric", "file/Faithful.zip"), "fov:0.0"]
+        ["version:5023", "ao:true", resource_packs("vanilla", "fabric", "file/Faithful.zip"), "fov:0.0"]
     )
     (mc_dir / "options.txt").write_bytes(bom + (before + newline).encode("utf-8"))
 
     assert returned(run()) == ["Installed"]
 
     after = newline.join(
-        ["version:3955", "ao:true", resource_packs("vanilla", "fabric", f"file/{PACK}", "file/Faithful.zip"), "fov:0.0"]
+        ["version:5023", "ao:true", resource_packs("vanilla", "fabric", f"file/{PACK}", "file/Faithful.zip"), "fov:0.0"]
     )
     assert (mc_dir / "options.txt").read_bytes() == bom + (after + newline).encode("utf-8")
 
 
 def test_an_options_file_without_a_pack_list_gets_one_with_fabric_below_the_pack(run: Run, mc_dir: Path):
-    (mc_dir / "options.txt").write_bytes(b"version:3955\nao:true")
+    (mc_dir / "options.txt").write_bytes(b"version:5023\nao:true")
 
     assert returned(run()) == ["Installed"]
 
-    assert options(mc_dir) == f"version:3955\nao:true\n{resource_packs('vanilla', 'fabric', f'file/{PACK}')}\n"
+    assert options(mc_dir) == f"version:5023\nao:true\n{resource_packs('vanilla', 'fabric', f'file/{PACK}')}\n"
 
 
 def test_an_upgrade_replaces_an_earlier_pack_in_place(run: Run, mc_dir: Path):
