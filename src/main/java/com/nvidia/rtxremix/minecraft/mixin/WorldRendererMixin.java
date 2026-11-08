@@ -105,9 +105,33 @@ public abstract class WorldRendererMixin
 
     @Override
     public float[] rtxremix$copyStarVertices() {
-        // 26.3 builds the star buffer inside SkyRenderer, not here; the sky package
-        // reads it from there (TODO(SKY) if it still asks this interface).
-        return new float[0];
+        // 26.3 builds the star quads inside SkyRenderer straight into a GPU buffer, so the same
+        // deterministic generator (seed 10842, 1500 candidates) is replayed here for the positions.
+        net.minecraft.util.RandomSource random = net.minecraft.util.RandomSource.createThreadLocalInstance(10842L);
+        float[] out = new float[1500 * 4 * 3];
+        int count = 0;
+        for (int i = 0; i < 1500; i++) {
+            float x = random.nextFloat() * 2.0F - 1.0F;
+            float y = random.nextFloat() * 2.0F - 1.0F;
+            float z = random.nextFloat() * 2.0F - 1.0F;
+            float starSize = 0.15F + random.nextFloat() * 0.1F;
+            float lengthSq = net.minecraft.util.Mth.lengthSquared(x, y, z);
+            if (!(lengthSq <= 0.010000001F) && !(lengthSq >= 1.0F)) {
+                org.joml.Vector3f center = new org.joml.Vector3f(x, y, z).normalize(100.0F);
+                float zRot = (float) (random.nextDouble() * (float) Math.PI * 2.0);
+                org.joml.Matrix3f rotation = new org.joml.Matrix3f()
+                        .rotateTowards(new org.joml.Vector3f(center).negate(), new org.joml.Vector3f(0.0F, 1.0F, 0.0F))
+                        .rotateZ(-zRot);
+                float[][] corners = {{starSize, -starSize}, {starSize, starSize}, {-starSize, starSize}, {-starSize, -starSize}};
+                for (float[] corner : corners) {
+                    org.joml.Vector3f v = new org.joml.Vector3f(corner[0], corner[1], 0.0F).mul(rotation).add(center);
+                    out[count++] = v.x;
+                    out[count++] = v.y;
+                    out[count++] = v.z;
+                }
+            }
+        }
+        return java.util.Arrays.copyOf(out, count);
     }
 
     @Override

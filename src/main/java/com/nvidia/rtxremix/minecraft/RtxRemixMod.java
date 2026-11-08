@@ -248,6 +248,16 @@ public class RtxRemixMod implements ClientModInitializer {
         LOGGER.info("Remix menu closed");
     }
 
+    public static void beginWorldRenderFrame() {
+        // START_MAIN runs inside a frame graph pass, where texture uploads are not allowed, so
+        // this runs from the head of GameRenderer.renderLevel instead.
+        if (instance != null && instance.isRendererProfilingActive()) {
+            try (ProfileScope startScope = ProfileScope.begin("WorldRender.START")) {
+                renderer.beginWorldRenderFrame();
+            }
+        }
+    }
+
     /**
      * Moves input capture with a Remix menu the runtime showed or hid itself: through a menu's
      * own controls, the runtime's menu hotkey, or its First Use Guide. Called at the start of
@@ -580,9 +590,6 @@ public class RtxRemixMod implements ClientModInitializer {
                 renderer.beginBlockOutlineFrame();
             }
             if (isRendererProfilingActive()) {
-                try (ProfileScope startScope = ProfileScope.begin("WorldRender.START")) {
-                    renderer.beginWorldRenderFrame();
-                }
                 transitionWorldRenderPhase("WorldRender.vanilla.setup");
             } else {
                 closeWorldRenderPhaseScope();

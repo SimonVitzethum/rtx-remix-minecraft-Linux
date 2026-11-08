@@ -70,6 +70,12 @@ public abstract class GameRendererMixin {
      * Covers third person, sleeping, hidden-hand, panorama, and other paths
      * where the first-person pass is skipped.
      */
+    /** Before the frame graph runs: pending resource changes and atlas preloads upload textures. */
+    @Inject(method = "renderLevel", at = @At("HEAD"))
+    private void rtxremix$beginWorldRenderFrame(CallbackInfo ci) {
+        RtxRemixMod.beginWorldRenderFrame();
+    }
+
     @Inject(method = "renderLevel", at = @At("TAIL"))
     private void rtxremix$submitAtRenderWorldTail(CallbackInfo ci) {
         RtxRemixMod.submitRemixFrameIfReady();
