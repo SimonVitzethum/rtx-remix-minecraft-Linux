@@ -761,7 +761,7 @@ public class RemixEntityPass {
         int boneCount = ctx.getBoneCount();
 
         String typeKey = entityTypeKeyCache.computeIfAbsent(entity.getType(),
-                t -> BuiltInRegistries.ENTITY_TYPE.getStartTimeTicks(t).toString());
+                t -> BuiltInRegistries.ENTITY_TYPE.getKey(t).toString());
 
         return new EntityCaptureResult(
             entity,

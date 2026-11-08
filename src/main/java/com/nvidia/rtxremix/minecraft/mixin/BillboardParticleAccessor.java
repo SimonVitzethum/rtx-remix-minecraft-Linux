@@ -5,14 +5,23 @@
 package com.nvidia.rtxremix.minecraft.mixin;
 
 import net.minecraft.client.particle.SingleQuadParticle;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(SingleQuadParticle.class)
 public interface BillboardParticleAccessor {
-    @Accessor("quadSize")
-    float getScale();
+    @Accessor("rCol") float getRed();
+    @Accessor("gCol") float getGreen();
+    @Accessor("bCol") float getBlue();
+    @Accessor("alpha") float getAlpha();
+    @Accessor("roll") float getAngle();
+    @Accessor("oRoll") float getPrevAngle();
+    @Accessor("sprite") TextureAtlasSprite getSprite();
+
+    @Invoker("getLayer")
+    SingleQuadParticle.Layer invokeGetLayer();
 
     @Invoker("getU0")
     float invokeGetMinU();
