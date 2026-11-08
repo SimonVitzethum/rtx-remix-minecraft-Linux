@@ -116,8 +116,8 @@ public class ParticleAtlasManager {
                 Identifier spriteId = entry.getKey();
                 TextureAtlasSprite sprite = entry.getValue();
                 int pixX = sprite.getX(), pixY = sprite.getY();
-                int pixW = sprite.contents().getStartTimeNano();
-                int pixH = sprite.contents().getStartTimeTicks();
+                int pixW = sprite.contents().width();
+                int pixH = sprite.contents().height();
 
                 Identifier texId = Identifier.fromNamespaceAndPath(spriteId.getNamespace(),
                         "particle/" + spriteId.getPath());

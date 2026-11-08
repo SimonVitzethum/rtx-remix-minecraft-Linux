@@ -185,16 +185,15 @@ public final class DynamicTextureCache {
     private static Pixels extractPixels(NativeImage image) {
         int w = image.getWidth();
         int h = image.getHeight();
+        int[] pixels = image.getPixelsABGR();
         byte[] out = new byte[w * h * 4];
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                int abgr = image.getPixelABGR(x, y);
-                int idx = (y * w + x) * 4;
-                out[idx]     = (byte)  (abgr         & 0xFF);
-                out[idx + 1] = (byte) ((abgr >>  8)  & 0xFF);
-                out[idx + 2] = (byte) ((abgr >> 16)  & 0xFF);
-                out[idx + 3] = (byte) ((abgr >> 24)  & 0xFF);
-            }
+        for (int i = 0; i < w * h; i++) {
+            int abgr = pixels[i];
+            int idx = i * 4;
+            out[idx]     = (byte)  (abgr         & 0xFF);
+            out[idx + 1] = (byte) ((abgr >>  8)  & 0xFF);
+            out[idx + 2] = (byte) ((abgr >> 16)  & 0xFF);
+            out[idx + 3] = (byte) ((abgr >> 24)  & 0xFF);
         }
         return new Pixels(out, w, h, allocateVersion());
     }
