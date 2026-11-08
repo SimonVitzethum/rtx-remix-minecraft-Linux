@@ -389,6 +389,9 @@ public class RemixRenderer {
             lightManager = new LightManager(this);
             skyRenderer = new SkyRenderer(this);
             cloudRenderer = new CloudRenderer(this);
+            LOGGER.info("LOD: clouds beyond {} blocks, terrain beyond {} chunks (0 = off)",
+                    com.nvidia.rtxremix.minecraft.cloud.CloudLod.getDistance(),
+                    com.nvidia.rtxremix.minecraft.terrain.lod.TerrainLod.getDistance());
             
             particleAtlasManager = new ParticleAtlasManager(this);
             itemParticleAtlasManager = new ParticleAtlasManager(this,

@@ -16,7 +16,8 @@ public final class TerrainLod {
     static final double HYSTERESIS_CHUNKS = 1.5;
 
     private static volatile int distance = Math.max(0, Math.min(MAX_DISTANCE_CHUNKS,
-            Integer.getInteger("rtxremix.terrain.lodDistance", DEFAULT_DISTANCE_CHUNKS)));
+            com.nvidia.rtxremix.minecraft.util.LodOverrides.get(
+                    "rtxremix.terrain.lodDistance", DEFAULT_DISTANCE_CHUNKS)));
 
     private TerrainLod() {
     }

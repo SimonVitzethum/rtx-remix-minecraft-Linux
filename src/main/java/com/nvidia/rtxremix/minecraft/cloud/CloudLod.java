@@ -23,7 +23,8 @@ public final class CloudLod {
 
     private static int readDefault() {
         return Math.max(0, Math.min(MAX_DISTANCE,
-                Integer.getInteger("rtxremix.cloud.lodDistance", DEFAULT_DISTANCE)));
+                com.nvidia.rtxremix.minecraft.util.LodOverrides.get(
+                        "rtxremix.cloud.lodDistance", DEFAULT_DISTANCE)));
     }
 
     /** First ring boundary in blocks; 0 disables the coarser levels. */

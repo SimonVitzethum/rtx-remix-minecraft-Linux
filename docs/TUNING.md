@@ -83,7 +83,7 @@ per-frame budgets.
 | `rtxremix.chunk.maxSectionRemovalValidationsPerFrame` | Removal checks per frame | `ChunkManager` |
 | `rtxremix.chunk.maintenanceBudgetNs` | Render-thread time per frame for terrain maintenance | `ChunkManager` |
 | `rtxremix.chunk.maxColumnUnloadsPerFrame` | Column unloads processed per frame | `ChunkManager` |
-| `rtxremix.terrain.lodDistance` | Chunks beyond which a column's opaque block faces are greedy-merged into larger quads (0 turns the LOD off; default 12; settings screen: Terrain LOD Distance). Columns switch with 1.5 chunks of hysteresis | `TerrainLod`, `TerrainQuadMerger` |
+| `rtxremix.terrain.lodDistance` | Chunks beyond which a column's opaque block faces are greedy-merged into larger quads (0 turns the LOD off; default 12; settings screen: Terrain LOD Distance). Columns switch with 1.5 chunks of hysteresis. Both LOD distances can also be set in `rtxremix-lod.properties` in the game directory (same keys), for launchers that drop JVM arguments | `TerrainLod`, `TerrainQuadMerger` |
 | `rtxremix.terrain.maxLodRebuildsPerFrame` | Columns re-meshed per frame when the LOD boundary moves across them | `ChunkManager` |
 | `rtxremix.terrain.lodTileUv` | Tile merged quads' texcoords past the sprite bounds (one sprite per block) instead of stretching one sprite over the rectangle; needs a runtime that wraps inside the texcoord bounds | `BlockMeshBuilder` |
 | `rtxremix.cloud.lodDistance` | Blocks beyond which procedural clouds use the 3 m lattice mesh (6 m beyond 2.2 times this) and classic clouds use the merged, bevel-free chunk mesh (0 turns it off; default 256; settings screen: Cloud LOD Distance) | `CloudLod` |
