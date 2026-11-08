@@ -194,6 +194,14 @@ entry; a column build retains each snapshot before submission and releases in
 its executor task's `finally`; the last release returns the buffers and makes
 the surfaces unreadable while the cached hashes stay readable for diffing.
 
+**Terrain layers on 26.3.** A quad's layer is vanilla's `ChunkSectionLayer`
+(solid, cutout, translucent; the mipped cutout split no longer exists) plus the
+mod's own `glass`. Only block-atlas quads reach terrain capture; the item atlas
+has materials for dropped and held items and item break particles
+(`ParticleAtlasManager` instances), not for terrain. Dirty tracking rules
+(`LevelExtractorDirtyMixin`) and the enchantment glint (plain item captured, the
+stand-alone glint overlay layer skipped) are described at their classes.
+
 **Textures and atlases.** Atlas capture produces per-sprite materials plus
 atlas-level PBR, emissive, and luminance textures. Animated sprite uploads are
 batched and forwarded, which needs the upload hook, the patch types in the

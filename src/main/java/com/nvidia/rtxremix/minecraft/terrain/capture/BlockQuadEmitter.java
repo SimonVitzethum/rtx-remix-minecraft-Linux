@@ -441,7 +441,9 @@ public final class BlockQuadEmitter {
             return;
         }
         // Only the block atlas has materials in Remix; a block model painted from
-        // another atlas has no sprite entry to bind.
+        // another atlas has no sprite entry to bind. Vanilla's block models all use the
+        // block atlas on 26.3; only a pack or mod model that samples the item atlas is
+        // skipped here, since a section's UVs and its terrain material share one atlas.
         if (quad.atlas() != QuadAtlas.BLOCK) {
             return;
         }

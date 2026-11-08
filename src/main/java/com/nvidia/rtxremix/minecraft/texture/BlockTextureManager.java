@@ -75,6 +75,9 @@ public class BlockTextureManager {
     public static final float DEFAULT_TERRAIN_EMISSION_MULTIPLIER = 1.0f;
     public static final float MAX_TERRAIN_EMISSION_MULTIPLIER = 50.0f;
     private static final float BASE_TERRAIN_EMISSION_INTENSITY = 100.0f;
+    // 26.3's ChunkSectionLayer is SOLID/CUTOUT/TRANSLUCENT (mipmapping is no longer a layer
+    // property), so BlockQuadEmitter never emits "cutout_mipped"; L_CUTOUT_MIPPED stays for
+    // the name mapping and is built but unused.
     public static final int L_SOLID = 0, L_CUTOUT = 1, L_CUTOUT_MIPPED = 2, L_TRANS = 3, L_GLASS = 4, LAYER_COUNT = 5;
 
     private static BlockTextureManager INSTANCE;
