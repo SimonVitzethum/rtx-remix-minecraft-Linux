@@ -335,7 +335,7 @@ public class RtxRemixMod implements ClientModInitializer {
         BlockEntityRenderers.register(
                 CopperBeaconBlockEntity.TYPE, CopperBeaconBlockEntityRenderer::new);
         MenuScreens.register(CopperBeaconScreenHandler.TYPE, CopperBeaconScreen::new);
-        RemixWeatherRenderer.registerShaders();
+        // Weather shaders compile lazily on first use (resource manager is not available at client init).
         LOGGER.info("========================================");
         LOGGER.info("RTX Remix Renderer v{} initializing...", getModVersion());
         LOGGER.info("========================================");
