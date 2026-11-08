@@ -5,8 +5,6 @@
 package com.nvidia.rtxremix.minecraft.weather;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.renderpearl.backend.opengl.GlTextureView;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
