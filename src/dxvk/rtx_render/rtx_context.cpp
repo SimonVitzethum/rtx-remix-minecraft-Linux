@@ -411,6 +411,22 @@ namespace dxvk {
     // Calculate extents based on if DLSS is enabled or not
     VkExtent3D downscaledExtent = setDownscaleExtent(upscaledExtent);
 
+    // NV-DXVK start: log every change of the internal render resolution (upscaler quality mode switches)
+    {
+      static uint32_t s_lastRenderW = 0, s_lastRenderH = 0, s_lastOutW = 0, s_lastOutH = 0;
+      static uint32_t s_lastUpscaler = ~0u;
+      const uint32_t upscalerNow = uint32_t(getCurrentFrameUpscaler());
+      if (s_lastRenderW != downscaledExtent.width || s_lastRenderH != downscaledExtent.height ||
+          s_lastOutW != upscaledExtent.width || s_lastOutH != upscaledExtent.height || s_lastUpscaler != upscalerNow) {
+        s_lastRenderW = downscaledExtent.width; s_lastRenderH = downscaledExtent.height;
+        s_lastOutW = upscaledExtent.width; s_lastOutH = upscaledExtent.height; s_lastUpscaler = upscalerNow;
+        Logger::info(str::format("Render resolution: ", downscaledExtent.width, "x", downscaledExtent.height, " -> output ",
+          upscaledExtent.width, "x", upscaledExtent.height, " upscaler=", upscalerNow,
+          " qualityDLSS=", uint32_t(RtxOptions::qualityDLSS()), " rayReconstruction=", RtxOptions::enableRayReconstruction()));
+      }
+    }
+    // NV-DXVK end
+
     if (!getResourceManager().validateRaytracingOutput(downscaledExtent, upscaledExtent)) {
       Logger::debug("Raytracing output resources were not available to use this frame, so we must re-create inline.");
 

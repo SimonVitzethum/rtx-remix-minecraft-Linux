@@ -38,6 +38,15 @@
 #include "../dxvk/rtx_render/rtx_dlfg.h"
 // NV-DXVK end
 
+#ifdef REMIX_LINUX_NATIVE
+#include <atomic>
+// NV-DXVK: bring-up trace for the Linux frame generation path (shares the budget of the presenter trace)
+static std::atomic<int> g_d3d9DlfgTraceCount{0};
+#define D3D9_DLFG_TRACE(...) do { if (m_dlfgPresenter != nullptr && g_d3d9DlfgTraceCount.fetch_add(1) < 25) Logger::info(str::format("DLFG trace: swapchain ", __VA_ARGS__)); } while (0)
+#else
+#define D3D9_DLFG_TRACE(...) do {} while (0)
+#endif
+
 namespace dxvk {
   // NV-DXVK start: App Controlled FSE
   enum FSEState {
@@ -1195,7 +1204,9 @@ namespace dxvk {
 
   void D3D9SwapChainEx::PresentImage(UINT SyncInterval) {
     ScopedCpuProfileZone();
+    D3D9_DLFG_TRACE("PresentImage begin frame ", m_frameId);
     m_parent->Flush();
+    D3D9_DLFG_TRACE("flushed");
 
     // NV-DXVK start: Reflex integration
     auto& reflex = m_device->getCommon()->metaReflex();
@@ -1222,10 +1233,13 @@ namespace dxvk {
 
     // Bump our frame id.
     ++m_frameId;
+    D3D9_DLFG_TRACE("waiting frame latency");
     SyncFrameLatency();
+    D3D9_DLFG_TRACE("frame latency ok");
 
     for (uint32_t i = 0; i < SyncInterval || i < 1; i++) {
       SynchronizePresent();
+      D3D9_DLFG_TRACE("present synchronized");
 
       // NV-DXVK start: DLFG integration
       vk::Presenter* presenter = GetPresenter();
@@ -1255,6 +1269,7 @@ namespace dxvk {
           break;
       }
 
+      D3D9_DLFG_TRACE("acquired image ", imageIndex);
       m_context->beginRecording(
         m_device->createCommandList());
 
@@ -1327,7 +1342,9 @@ namespace dxvk {
       if (i + 1 >= SyncInterval)
         m_context->signal(m_frameLatencySignal, m_frameId);
 
+      D3D9_DLFG_TRACE("submitting present");
       SubmitPresent(sync, i, imageIndex);
+      D3D9_DLFG_TRACE("present submitted");
     }
 
     // Rotate swap chain buffers so that the back
@@ -1340,6 +1357,7 @@ namespace dxvk {
     // NV-DXVK start: Reflex integration
     // Note: Sleeping here in the present function essentially makes it so when the application calls into a D3D Present function it will block for the desired amount of time Reflex indicates.
     // This helps accomplish what Reflex desires by delaying the point at which the application does input sampling likely near the start of its simulation on the next frame, thus reducing latency.
+    D3D9_DLFG_TRACE("PresentImage end");
     reflex.sleep();
 
     // Note: Increment the Reflex Frame ID to prepare for the next frame, now that this Reflex frame has ended.

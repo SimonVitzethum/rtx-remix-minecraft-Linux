@@ -172,6 +172,14 @@ namespace dxvk {
     uint32_t presentQueue = findQueueFamily(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
                                             VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
 
+#ifdef REMIX_LINUX_NATIVE
+    // The compute-only family cannot present to a Wayland/X11 surface on NVIDIA; frame generation presents from a
+    // spare queue of the graphics family instead (handleQueueFamily gives it its own queue index).
+    if (m_queueFamilies[graphicsQueue].queueCount > 1) {
+      presentQueue = graphicsQueue;
+    }
+#endif
+
     if (presentQueue != VK_QUEUE_FAMILY_IGNORED) {
       queues.present = presentQueue;
     }

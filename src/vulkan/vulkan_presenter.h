@@ -303,6 +303,8 @@ namespace dxvk::vk {
 
     std::vector<PresenterImage> m_images;
     std::vector<PresenterSync>  m_semaphores;
+    // NV-DXVK: semaphores handed out at acquire time per swap chain image, for the frame generation presenter
+    std::vector<PresenterSync>  m_dlfgImageSync;
 
     uint32_t m_imageIndex = 0;
     uint32_t m_frameIndex = 0;

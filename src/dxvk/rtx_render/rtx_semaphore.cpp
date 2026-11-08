@@ -196,7 +196,9 @@ namespace dxvk {
       }
 
       if (status == VK_TIMEOUT) {
-        Logger::warn("Timeline semaphore wait timeout!");
+        uint64_t current = 0;
+        m_device->vkd()->vkGetSemaphoreCounterValue(m_device->handle(), m_sema, &current);
+        Logger::warn(str::format("Timeline semaphore wait timeout! semaphore=", (void*) m_sema, " waiting for ", value, ", current value ", current));
       } else {
         throw DxvkError("Timeline semaphore wait failed!");
       }

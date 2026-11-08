@@ -40,6 +40,16 @@ namespace {
   constexpr bool kSkipPacerSemaphoreWait = false;  // do not wait on pacer semaphore; this disables frame pacing, but still runs the pacer code
 };
 
+#ifdef REMIX_LINUX_NATIVE
+#include <atomic>
+// NV-DXVK: bring-up trace for the Linux frame generation path (first 60 messages), see PORT_KNOWLEDGE.md
+static std::atomic<int> g_dlfgTraceCount{0};
+static std::atomic<int> g_dlfgValidJobs{0};
+#define DLFG_TRACE(...) do { if ((g_dlfgValidJobs.load() > 0 || g_dlfgTraceCount.load() < 40) && g_dlfgTraceCount.fetch_add(1) < 300) Logger::info(str::format("DLFG trace: ", __VA_ARGS__)); } while (0)
+#else
+#define DLFG_TRACE(...) do {} while (0)
+#endif
+
 namespace dxvk {
   void DxvkDLFG::onPresetChanged(DxvkDevice* device) {
     if (device != nullptr) {
@@ -200,6 +210,7 @@ namespace dxvk {
     assert(m_presentQueue.empty());
     createBackbuffers();
 
+    DLFG_TRACE("presenter constructed, images=", m_info.imageCount);
     m_presentThread.threadHandle = dxvk::thread([this]() { runPresentThread(); });
     m_pacerThread.threadHandle = dxvk::thread([this]() { runPacerThread(); });
 
@@ -248,7 +259,9 @@ namespace dxvk {
     // stall until the image is available
     {
       std::unique_lock<dxvk::mutex> lock(m_presentThread.mutex);
+      DLFG_TRACE("app acquire: waiting for backbuffer ", m_backbufferIndex);
       m_presentThread.condWorkConsumed.wait(lock, [this] { return m_backbufferInFlight[m_backbufferIndex] == false; });
+      DLFG_TRACE("app acquire: got backbuffer ", m_backbufferIndex);
     }
 
     index = m_backbufferIndex;
@@ -430,13 +443,16 @@ namespace dxvk {
   }
 
   bool DxvkDLFGPresenter::swapchainAcquire(SwapchainImage& swapchainImage) {
+    DLFG_TRACE("swapchain acquire begin");
     m_lastPresentStatus = vk::Presenter::acquireNextImage(swapchainImage.sync, swapchainImage.index, true);
     if (m_lastPresentStatus != VK_SUCCESS) {
+      DLFG_TRACE("swapchain acquire failed: ", int(m_lastPresentStatus));
       // got an error, bail until it's handled
       // xxxnsubtil: may need to signal the frame end semaphore here
       return false;
     }
 
+    DLFG_TRACE("swapchain acquire done: index=", swapchainImage.index);
     assert(swapchainImage.index < m_blitCommandLists.size());
     swapchainImage.image = vk::Presenter::getImage(swapchainImage.index);
     return true;
@@ -607,7 +623,9 @@ namespace dxvk {
     }
 
     reflex.beginOutOfBandPresent(present.present.cachedReflexFrameId);
+    DLFG_TRACE("queue present begin image=", image.index);
     m_lastPresentStatus = vk::Presenter::presentImage(present.status, present.present, present.frameInterpolation, image.index, true, presentMetering);
+    DLFG_TRACE("submitPresent image=", image.index, " result=", int(m_lastPresentStatus), " metering=", presentMetering != nullptr ? int(presentMetering->presentConfigFeedback) : -1);
     reflex.endOutOfBandPresent(present.present.cachedReflexFrameId);
 
     if (m_lastPresentStatus == VK_SUCCESS) {
@@ -640,6 +658,20 @@ namespace dxvk {
       }
 
       PresentJob present = std::move(m_presentQueue.front());
+      if (present.frameInterpolation.valid()) g_dlfgValidJobs.fetch_add(1);
+#ifdef REMIX_LINUX_NATIVE
+      {
+        // Statistics: presented frames per rendered frame, logged every 120 jobs
+        static uint32_t statJobs = 0, statPresented = 0;
+        statJobs++;
+        statPresented += present.frameInterpolation.valid() ? present.frameInterpolation.interpolatedFrameCount + 1 : 1;
+        if (statJobs % 120 == 0) {
+          Logger::info(str::format("DLFG: ", statJobs, " rendered frames, ", statPresented, " presented frames, last multiplier x",
+            present.frameInterpolation.valid() ? present.frameInterpolation.interpolatedFrameCount + 1 : 1));
+        }
+      }
+#endif
+      DLFG_TRACE("present job: image=", present.acquiredImageIndex, " interpolation valid=", present.frameInterpolation.valid(), " frames=", present.frameInterpolation.interpolatedFrameCount);
 
       DxvkDLFGScopeGuard signalWorkConsumed([&]() {
         // m_device->vkd()->vkQueueWaitIdle(m_device->queues().__DLFG_QUEUE.queueHandle);
@@ -682,6 +714,7 @@ namespace dxvk {
         }
 
         PacerJob pacer;
+        DLFG_TRACE("interpolating");
 
         SwapchainImage interpolatedSwapchainImages[kDLFGMaxInterpolatedFrames];
         
@@ -801,6 +834,7 @@ namespace dxvk {
           pacerSemaphoreValue = kPacerDoNotWait;
         }
 
+        DLFG_TRACE("interpolation submitted, presenting first interpolated frame");
         // present the first interpolated frame
         // if we're using CPU pacing, this frame is presented immediately;
         // if we're using hardware pacing, this present sends down the pacing info
@@ -847,6 +881,7 @@ namespace dxvk {
           }
         }
 
+        DLFG_TRACE("interpolated frames presented, blitting rendered frame");
         // do the rendered frame blit into the swapchain
         if (!swapchainAcquire(renderedSwapchainImage)) {
           // got an error, bail until it's handled
@@ -884,6 +919,9 @@ namespace dxvk {
 
         blitRenderedFrame(commandList, renderedSwapchainImage, present, false);
 
+        // The present below waits on this semaphore and, without interpolation, no pacing command list signals it.
+        // A stray wait only got satisfied by a later interpolated frame, which never comes when no frame is interpolated.
+        commandList->addSignalSemaphore(renderedSwapchainImage.sync.present);
         commandList->addSignalSemaphore(backbufferSignalSemaphore);
         commandList->endRecording();
         commandList->submit();

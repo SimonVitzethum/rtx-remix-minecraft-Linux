@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <filesystem>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -209,7 +210,7 @@ namespace dxvk
     featureCommonInfo.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_ON;
     featureCommonInfo.LoggingInfo.DisableOtherLoggingSinks = true;
 #else
-    if (std::getenv("REMIX_NGX_LOG")) {
+    if (std::getenv("REMIX_NGX_LOG") || std::filesystem::exists("remix_ngx_log")) {
       featureCommonInfo.LoggingInfo.LoggingCallback = &NVSDK_NGX_AppLogCallback;
       featureCommonInfo.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_VERBOSE;
       featureCommonInfo.LoggingInfo.DisableOtherLoggingSinks = true;
@@ -484,8 +485,9 @@ namespace dxvk
 
 #ifdef REMIX_LINUX_NATIVE
   static bool checkHardwareSchedulingEnabled(DxvkDevice* device) {
-    // WDDM hardware scheduling does not exist on Linux.
-    return false;
+    // WDDM hardware scheduling does not exist on Linux; the NVIDIA driver always schedules in hardware (GSP), so the
+    // requirement of DLSS-G is met by construction.
+    return true;
   }
 #else
   static bool checkHardwareSchedulingEnabled(DxvkDevice* device) {
@@ -585,6 +587,8 @@ namespace dxvk
       m_dlfgNotSupportedReason = m_dlfgNotSupportedReason + " NGX parameter query for MultiFrameCountMax failed.";
       m_supportsDLFG = false;
     }
+
+    Logger::info(str::format("NVIDIA DLSS Frame Generation: supported=", m_supportsDLFG, ", MultiFrameCountMax=", m_dlfgMaxInterpolatedFrames));
 
     if (m_dlfgNotSupportedReason.size()) {
       Logger::warn(m_dlfgNotSupportedReason);

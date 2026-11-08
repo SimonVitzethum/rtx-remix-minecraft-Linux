@@ -84,7 +84,10 @@ namespace dxvk::vk {
 
     // NV-DXVK start: DLFG integration
     if (isDlfgPresenting) {
-      // DLFG manages swapchain images directly and can have more than one acquire outstanding at a time
+      // DLFG manages swapchain images directly and can have more than one acquire outstanding at a time. Every acquire
+      // needs its own semaphore pair (a binary semaphore must not be signaled twice before it is waited on), and the
+      // present of the image has to wait on the pair that was handed out when the image was acquired.
+      m_frameIndex = (m_frameIndex + 1) % m_semaphores.size();
       m_acquireStatus = m_vkd->vkAcquireNextImageKHR(m_vkd->device(),
                                                      m_swapchain,
                                                      std::numeric_limits<uint64_t>::max(),
@@ -92,6 +95,11 @@ namespace dxvk::vk {
                                                      VK_NULL_HANDLE,
                                                      &index);
       assert(m_acquireStatus != VK_NOT_READY);
+      if (m_acquireStatus == VK_SUCCESS || m_acquireStatus == VK_SUBOPTIMAL_KHR) {
+        if (m_dlfgImageSync.size() != m_semaphores.size())
+          m_dlfgImageSync.resize(m_semaphores.size());
+        m_dlfgImageSync.at(index) = sync;
+      }
     } else {
       // Don't acquire more than one image at a time
       if (m_acquireStatus == VK_NOT_READY) {
@@ -128,7 +136,7 @@ namespace dxvk::vk {
     // NV-DXVK start: DLFG integration
     PresenterSync sync;
     
-    sync = m_semaphores.at(m_frameIndex);
+    sync = isDlfgPresenting ? m_dlfgImageSync.at(imageIndex) : m_semaphores.at(m_frameIndex);
     // NV-DXVK end
 
     VkPresentInfoKHR info;
