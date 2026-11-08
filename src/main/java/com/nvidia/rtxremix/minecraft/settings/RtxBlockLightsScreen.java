@@ -86,7 +86,7 @@ final class RtxBlockLightsScreen extends OptionsSubScreen {
 
     private void confirmReset() {
         boolean pendingChanged = commitPendingValues();
-        this.minecraft.setScreen(new ConfirmScreen(confirmed -> {
+        this.minecraft.gui.setScreen(new ConfirmScreen(confirmed -> {
             boolean rebuild = pendingChanged;
             if (confirmed) {
                 rebuild |= settings.hasOverrides(SettingGroup.BLOCK_LIGHTS);
