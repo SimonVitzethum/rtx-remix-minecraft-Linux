@@ -108,6 +108,11 @@ public class ChunkManager {
     private int diagnosticsRefreshCountdown;
     /** Set when every retained instance has been removed and the next draw must resubmit them. */
     private boolean retainedInstancesHidden;
+    /** True after the texture-manager gate logged its first stall warning. */
+    private boolean textureGateWarned;
+    /** Last time a zero-publish stall warning was logged. */
+    private long lastZeroPublishLogNanos;
+    private static final long ZERO_PUBLISH_LOG_INTERVAL_NS = 5_000_000_000L;
 
     private final List<BlockDataQueue.QueuedCapture> pending = new ArrayList<>();
     private final List<BlockDataQueue.EvictedSection> evictedSectionScratch = new ArrayList<>();
@@ -619,7 +624,17 @@ public class ChunkManager {
             }
 
             BlockTextureManager tex = renderer.getTextureManager();
-            if (tex == null || !tex.isInitialized()) return;
+            if (tex == null || !tex.isInitialized()) {
+                if (!textureGateWarned) {
+                    textureGateWarned = true;
+                    LOGGER.warn(
+                            "Remix terrain: texture manager not initialized, skipping the terrain "
+                                    + "pipeline this frame (capture queue={}, pending builds={})",
+                            BlockDataQueue.pendingCount(), pendingResults.get());
+                }
+                return;
+            }
+            textureGateWarned = false;
             RemixAPI api = renderer.getRemixApi();
 
             if (cntCap == -1) {
@@ -730,6 +745,19 @@ public class ChunkManager {
 
                 publishTerrainDiagnostics();
                 TerrainDiagnostics diag = lastTerrainDiagnostics;
+                if (diag != null && diag.columnsPublished() == 0
+                        && (BlockDataQueue.pendingCount() > 0 || pendingResults.get() > 0)
+                        && System.nanoTime() - lastZeroPublishLogNanos
+                                > ZERO_PUBLISH_LOG_INTERVAL_NS) {
+                    lastZeroPublishLogNanos = System.nanoTime();
+                    LOGGER.warn(
+                            "Remix terrain: zero columns published (capture queue={}, pending mesh "
+                                    + "builds={}, ready meshes={}, known sections={}, capture queue "
+                                    + "bytes={})",
+                            BlockDataQueue.pendingCount(), pendingResults.get(),
+                            countCompletedBuilds(), diag.knownSections(),
+                            BlockDataQueue.pendingBytes());
+                }
                 timer.count(cntKnownSections, diag.knownSections());
                 timer.count(cntColumns, diag.columns());
                 timer.count(cntPublishedColumns, diag.columnsPublished());
