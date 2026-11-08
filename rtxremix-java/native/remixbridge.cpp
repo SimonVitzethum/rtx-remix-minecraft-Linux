@@ -553,6 +553,10 @@ static bool initTracyFunctionsLocked() {
 // ════════════════════════════════════════════════════════════════════════════
 
 static void*             g_remixDll   = nullptr;
+#if !defined(_WIN32)
+static void*             g_pendingWaylandDisplay = nullptr;
+static int               g_pendingWidth = 0, g_pendingHeight = 0;
+#endif
 static remixapi_Interface g_remix    = {};
 static bool             g_inited     = false;
 
@@ -774,6 +778,16 @@ static jint initializeRuntimeUtf8(const char* dllPath)
     g_remixDll = dlopen(dllPath, RTLD_NOW | RTLD_LOCAL);
     if (!g_remixDll) {
         return REMIXAPI_ERROR_CODE_LOAD_LIBRARY_FAILURE;
+    }
+
+    // The display and window size are reported before the runtime is loaded: forward them now.
+    if (g_pendingWaylandDisplay) {
+        auto setDisplay = (void (*)(void*)) dlsym(g_remixDll, "remixapi_linux_SetWaylandDisplay");
+        if (setDisplay) setDisplay(g_pendingWaylandDisplay);
+    }
+    if (g_pendingWidth > 0 && g_pendingHeight > 0) {
+        auto setSize = (void (*)(uint32_t, uint32_t)) dlsym(g_remixDll, "remixapi_linux_SetWindowSize");
+        if (setSize) setSize((uint32_t) g_pendingWidth, (uint32_t) g_pendingHeight);
     }
 
     auto pfnInit = (PFN_remixapi_InitializeLibrary)
@@ -2401,11 +2415,12 @@ Java_com_nvidia_rtxremix_RemixBridge_openglCreateSemaphoresNV(JNIEnv* env, jclas
 }
 
 #if !defined(_WIN32)
-// Selects Wayland presentation in the runtime and EGL for GL entry point lookup. display is the GLFW wl_display.
+// Selects Wayland presentation in the runtime and EGL for GL entry point lookup. display is the SDL wl_display.
 JNIEXPORT void JNICALL
 Java_com_nvidia_rtxremix_RemixBridge_linuxSetWaylandDisplay(JNIEnv*, jclass, jlong display)
 {
     g_useEglProcs = display != 0;
+    g_pendingWaylandDisplay = (void*)(uintptr_t) display;
     if (!g_remixDll) return;
     auto fn = (void (*)(void*)) dlsym(g_remixDll, "remixapi_linux_SetWaylandDisplay");
     if (fn) fn((void*)(uintptr_t) display);
@@ -2415,6 +2430,8 @@ Java_com_nvidia_rtxremix_RemixBridge_linuxSetWaylandDisplay(JNIEnv*, jclass, jlo
 JNIEXPORT void JNICALL
 Java_com_nvidia_rtxremix_RemixBridge_linuxSetWindowSize(JNIEnv*, jclass, jint width, jint height)
 {
+    g_pendingWidth = width;
+    g_pendingHeight = height;
     if (!g_remixDll) return;
     static auto fn = (void (*)(uint32_t, uint32_t)) dlsym(g_remixDll, "remixapi_linux_SetWindowSize");
     if (fn) fn((uint32_t) width, (uint32_t) height);
