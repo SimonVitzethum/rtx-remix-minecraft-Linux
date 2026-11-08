@@ -4736,6 +4736,20 @@ namespace dxvk {
 
     update(ctx);
 
+#ifdef REMIX_LINUX_NATIVE
+    {
+      // Debug aid: logs the GUI state of every 120th frame while a menu is shown (the launcher does not pass environment variables on).
+      const bool logImgui = RtxOptions::showUI() != UIType::None;
+      static uint32_t logCounter = 0;
+      if (logImgui && (logCounter++ % 120) == 0) {
+        const ImDrawData* dd = ImGui::GetDrawData();
+        Logger::info(str::format("[ImGui] showUI=", (int) RtxOptions::showUI(), " surface=", surfaceSize.width, "x", surfaceSize.height,
+          " verts=", dd ? dd->TotalVtxCount : -1, " lists=", dd ? dd->CmdListsCount : -1,
+          " mouse=(", io.MousePos.x, ",", io.MousePos.y, ") down=", (int) io.MouseDown[0], " wantMouse=", (int) io.WantCaptureMouse));
+      }
+    }
+#endif
+
     ImGui_ImplDxvk::RenderDrawData(ImGui::GetDrawData(), ctx.ptr(), surfaceSize.width, surfaceSize.height);
   }
 

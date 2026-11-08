@@ -1275,10 +1275,11 @@ namespace dxvk {
 
       auto& gui = m_device->getCommon()->getImgui();
 #ifdef REMIX_LINUX_NATIVE
-      // The GUI pass draws into the swap chain image, so bind it again after the blit.
+      // The GUI pass draws into the presented WSI image (the blit's destination), not the back buffer that was just
+      // copied from, so bind it again after the blit.
       {
         DxvkRenderTargets guiTargets;
-        guiTargets.color[0].view = swapImageView;
+        guiTargets.color[0].view = m_imageViews.at(imageIndex);
         guiTargets.color[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         m_context->bindRenderTargets(guiTargets);
       }
