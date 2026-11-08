@@ -4,8 +4,6 @@
     "package": "com.nvidia.rtxremix.minecraft.mixin",
     "compatibilityLevel": "JAVA_25",
     "mixins": [
-        "ChunkHolderMixin",
-        "ServerChunkManagerMixin",
         "WallBlockMixin"
     ],
     "client": [
@@ -31,7 +29,6 @@
         "EntityRenderDispatcherAccessor",
         "EntityRenderDispatcherMixin",
         "FoliageColorsMixin",
-        "FrustumAccessor",
         "GameRendererMixin",
         "GlStateManagerUploadMixin",
         "GlyphAtlasTextureMixin",

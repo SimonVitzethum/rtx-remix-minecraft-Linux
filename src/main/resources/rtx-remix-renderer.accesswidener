@@ -7,3 +7,10 @@ accessible field net/minecraft/world/level/chunk/PalettedContainer data Lnet/min
 # Section dirty tracker, read by the chunk-load re-flag filter (BuiltChunkStorageMixin)
 accessible field net/minecraft/client/renderer/extract/LevelExtractor sectionUpdateTracker Lnet/minecraft/client/SectionUpdateTracker;
 accessible method net/minecraft/client/renderer/ViewArea getRenderSection (J)Lnet/minecraft/client/renderer/chunk/SectionRenderDispatcher$RenderSection;
+
+# Integrated-server light snapshot published as an overlay view (LightStorageMixin)
+accessible field net/minecraft/world/level/lighting/DataLayerStorageMap map Lit/unimi/dsi/fastutil/longs/Long2ObjectOpenHashMap;
+accessible class net/minecraft/world/level/lighting/SkyLightSectionStorage$SkyDataLayerStorageMap
+accessible field net/minecraft/world/level/lighting/SkyLightSectionStorage$SkyDataLayerStorageMap topSections Lit/unimi/dsi/fastutil/longs/Long2IntOpenHashMap;
+accessible field net/minecraft/world/level/lighting/SkyLightSectionStorage$SkyDataLayerStorageMap currentLowestY I
+accessible class net/minecraft/world/level/lighting/BlockLightSectionStorage$BlockDataLayerStorageMap

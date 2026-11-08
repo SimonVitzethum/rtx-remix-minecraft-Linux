@@ -924,7 +924,7 @@ public final class BlockQuadEmitter {
         }
 
         neighborPos.set(neighborX, neighborY, neighborZ);
-        boolean drawn = Block.shouldRenderFace(state, world, mutablePos, side, neighborPos);
+        boolean drawn = Block.shouldRenderFace(state, neighbor, side);
         faceCullKeys[slot] = key;
         faceCullResults[slot] = drawn ? FACE_CULL_DRAWN : FACE_CULL_HIDDEN;
         return drawn;
