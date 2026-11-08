@@ -511,7 +511,7 @@ The script stages `remix-runtime/linux64/`: `libremixapi.so` from the dxvk-remix
 checkout's `native-linux` branch, the OpenUSD and NRD libraries from
 `../dxvk-deps`, the DLSS libraries `libnvidia-ngx-dlss*.so`, and the standalone
 shader precompiler with its launcher script. The runtime library is
-`libremixapi.so`; the JNI bridge `libremixbridge.so` (`remixbridge.so`) is
+`libremixapi.so`; the JNI bridge `remixbridge.so` is
 compiled separately into `build/native/linux64/`.
 
 ### Windowing
