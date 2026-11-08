@@ -19,6 +19,7 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <cstdlib>
 #include "vulkan_presenter.h"
 #include <windows.h>
 #include "../dxvk/dxvk_scoped_annotation.h"
@@ -259,6 +260,12 @@ namespace dxvk::vk {
     // NV-DXVK start: Add storage bit for Frameview because it runs computer shader
                                     | VK_IMAGE_USAGE_STORAGE_BIT;
     // NV-DXVK end
+#ifdef REMIX_LINUX_NATIVE
+    // The present dump debug aid reads the swap chain image back.
+    if (std::getenv("REMIX_DUMP_PRESENT")) {
+      swapInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
+#endif
     swapInfo.imageSharingMode       = VK_SHARING_MODE_EXCLUSIVE;
     swapInfo.queueFamilyIndexCount  = 0;
     swapInfo.pQueueFamilyIndices    = nullptr;

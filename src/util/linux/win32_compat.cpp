@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/sysinfo.h>
+#include <algorithm>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -93,18 +94,19 @@ int MultiByteToWideChar(UINT, DWORD, const char* src, int srcLen, wchar_t* dst, 
     out += (wchar_t)cp;
   }
   if (dstLen == 0) { return (int)out.size(); }
-  if ((int)out.size() > dstLen) { return 0; }
-  memcpy(dst, out.data(), out.size() * sizeof(wchar_t));
-  return (int)out.size();
+  // Like Windows, fill as much of a too small buffer as fits and report the failure.
+  const size_t count = std::min((size_t)dstLen, out.size());
+  memcpy(dst, out.data(), count * sizeof(wchar_t));
+  return (int)out.size() > dstLen ? 0 : (int)out.size();
 }
 int WideCharToMultiByte(UINT, DWORD, const wchar_t* src, int srcLen, char* dst, int dstLen, const char*, BOOL*) {
   std::wstring w = srcLen < 0 ? std::wstring(src) + L'\0' : std::wstring(src, srcLen);
   std::string out;
   for (wchar_t wc : w) { wchar_t t[2] = { wc, 0 }; if (wc == 0) { out += '\0'; } else { out += narrow(t); } }
   if (dstLen == 0) { return (int)out.size(); }
-  if ((int)out.size() > dstLen) { return 0; }
-  memcpy(dst, out.data(), out.size());
-  return (int)out.size();
+  const size_t count = std::min((size_t)dstLen, out.size());
+  memcpy(dst, out.data(), count);
+  return (int)out.size() > dstLen ? 0 : (int)out.size();
 }
 
 DWORD GetEnvironmentVariableA(const char* n, char* buf, DWORD size) {
@@ -349,15 +351,17 @@ const char* GetCommandLineA() {
   return cmd.c_str();
 }
 int ShowCursor(BOOL show) { static int count = 0; count += show ? 1 : -1; return count; }
-BOOL GetCursorPos(POINT* p) { p->x = 0; p->y = 0; return TRUE; }
+short remixLinuxGetKeyState(int);
+void remixLinuxGetCursorPos(long*, long*);
+BOOL GetCursorPos(POINT* p) { long x = 0, y = 0; remixLinuxGetCursorPos(&x, &y); p->x = x; p->y = y; return TRUE; }
 BOOL GetPhysicalCursorPos(POINT* p) { return GetCursorPos(p); }
 BOOL SetCursorPos(int, int) { return TRUE; }
 BOOL ClientToScreen(HWND, POINT*) { return TRUE; }
 BOOL ScreenToClient(HWND, POINT*) { return TRUE; }
 HWND GetForegroundWindow() { return (HWND)(uintptr_t)1; }
 DWORD GetWindowThreadProcessId(HWND, DWORD* pid) { if (pid) *pid = getpid(); return (DWORD)gettid(); }
-SHORT GetAsyncKeyState(int) { return 0; }
-SHORT GetKeyState(int) { return 0; }
+SHORT GetAsyncKeyState(int vk) { return remixLinuxGetKeyState(vk); }
+SHORT GetKeyState(int vk) { return remixLinuxGetKeyState(vk); }
 
 BOOL CloseHandle(HANDLE h) {
   if (h == nullptr || h == INVALID_HANDLE_VALUE) { return FALSE; }

@@ -302,8 +302,18 @@ namespace ImGui_ImplDxvk {
       const ImDrawList* cmd_list = draw_data->CmdLists[n];
       const size_t listVtxBytes = cmd_list->VtxBuffer.Size * sizeof(ImDrawVert);
       const size_t listIdxBytes = cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx);
-      ctx->updateBuffer(g->buffers.vb, vbOffset, listVtxBytes, cmd_list->VtxBuffer.Data);
-      ctx->updateBuffer(g->buffers.ib, ibOffset, listIdxBytes, cmd_list->IdxBuffer.Data);
+      // NV-DXVK start: vkCmdUpdateBuffer is limited to 65536 bytes per call
+      auto updateChunked = [ctx](const Rc<DxvkBuffer>& buffer, VkDeviceSize offset, size_t size, const void* pData) {
+        constexpr size_t kMaxUpdateSize = 65536;
+        const uint8_t* pBytes = static_cast<const uint8_t*>(pData);
+        for (size_t done = 0; done < size; done += kMaxUpdateSize) {
+          const size_t chunk = std::min(kMaxUpdateSize, size - done);
+          ctx->updateBuffer(buffer, offset + done, chunk, pBytes + done);
+        }
+      };
+      updateChunked(g->buffers.vb, vbOffset, listVtxBytes, cmd_list->VtxBuffer.Data);
+      updateChunked(g->buffers.ib, ibOffset, listIdxBytes, cmd_list->IdxBuffer.Data);
+      // NV-DXVK end
 
       vbOffset += listVtxBytes;
       ibOffset += listIdxBytes;

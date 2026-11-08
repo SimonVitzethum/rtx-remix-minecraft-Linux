@@ -1274,7 +1274,49 @@ namespace dxvk {
         m_hud->render(m_context, info.format, info.imageExtent);
 
       auto& gui = m_device->getCommon()->getImgui();
+#ifdef REMIX_LINUX_NATIVE
+      // The GUI pass draws into the swap chain image, so bind it again after the blit.
+      {
+        DxvkRenderTargets guiTargets;
+        guiTargets.color[0].view = swapImageView;
+        guiTargets.color[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        m_context->bindRenderTargets(guiTargets);
+      }
+#endif
       gui.render(m_context, info.imageExtent);
+
+#ifdef REMIX_LINUX_NATIVE
+      // Debug aid: REMIX_DUMP_PRESENT=1 logs pixel statistics of every 20th presented frame, including the GUI.
+      static const char* presentDumpDir = std::getenv("REMIX_DUMP_PRESENT");
+      static uint64_t presentDumpCounter = 0;
+      if (presentDumpDir && (presentDumpCounter++ % 20) == 0) {
+        const Rc<DxvkImage> dumpImage = swapImageView->image();
+        const VkExtent3D dumpExtent = dumpImage->info().extent;
+        const bool swapRB = dumpImage->info().format == VK_FORMAT_B8G8R8A8_UNORM || dumpImage->info().format == VK_FORMAT_B8G8R8A8_SRGB;
+        DxvkBufferCreateInfo bufferInfo = {};
+        bufferInfo.size = VkDeviceSize(dumpExtent.width) * dumpExtent.height * 4;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        bufferInfo.access = VK_ACCESS_TRANSFER_WRITE_BIT;
+        auto dumpBuffer = m_device->createBuffer(bufferInfo,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+          DxvkMemoryStats::Category::RTXBuffer, "Present dump");
+        m_context->copyImageToBuffer(dumpBuffer, 0, 0, 0, dumpImage, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+                                     VkOffset3D{ 0, 0, 0 }, dumpExtent);
+        m_context->flushCommandList();
+        m_device->waitForIdle();
+        // Logs the brightest pixel in the top band instead of writing a file.
+        const uint8_t* pixels = static_cast<const uint8_t*>(dumpBuffer->mapPtr(0));
+        uint32_t brightest = 0;
+        for (uint32_t y = 0; y < std::min(dumpExtent.height, 300u); ++y) {
+          for (uint32_t x = 0; x < dumpExtent.width; ++x) {
+            const uint8_t* px = pixels + (size_t(y) * dumpExtent.width + x) * 4;
+            brightest = std::max<uint32_t>(brightest, uint32_t(px[0]) + px[1] + px[2]);
+          }
+        }
+        Logger::info(str::format("present stats frame ", presentDumpCounter - 1, ": top band brightest rgb sum=", brightest));
+      }
+#endif
 
       // NV-DXVK start
       m_parent->m_rtx.OnPresent(m_imageViews.at(imageIndex)->image());
