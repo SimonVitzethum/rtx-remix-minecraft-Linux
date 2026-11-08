@@ -184,22 +184,29 @@ public final class GlInterop {
         }
         // Minecraft leaves scissoring enabled for GUI clipping, and a blit honours it.
         GlStateManager._disableScissorTest();
-        copyFromFramebuffer(sourceAttachment.fboFor(texture));
+        copyFromFramebuffer(sourceAttachment.fboFor(texture), source.width, source.height);
     }
 
-    private void copyFromFramebuffer(int sourceFbo) {
+    private void copyFromFramebuffer(int sourceFbo, int sourceWidth, int sourceHeight) {
         drainStaleGlErrors();
         if (!colorImage.available()) {
             return;
         }
+        if (!colorImage.matches(sourceWidth, sourceHeight)) {
+            logSizeMismatchOnce("copyFromRenderTarget", sourceWidth, sourceHeight,
+                    colorImage.width, colorImage.height);
+        }
         int destinationFbo = colorImage.framebuffer();
+        // The render target and the Remix color image use independent extents: the source rect
+        // covers the whole render target, the destination rect the whole color image, and the
+        // blit scales when they differ. The Vulkan interop path does the same.
         glBlitNamedFramebuffer(
                 sourceFbo,
                 destinationFbo,
                 0,
                 0,
-                colorImage.width,
-                colorImage.height,
+                sourceWidth,
+                sourceHeight,
                 0,
                 0,
                 colorImage.width,
@@ -207,6 +214,20 @@ public final class GlInterop {
                 GL_COLOR_BUFFER_BIT,
                 GL_NEAREST);
         checkGlError("glBlitNamedFramebuffer");
+    }
+
+    private int lastLoggedSourceWidth = -1;
+    private int lastLoggedSourceHeight = -1;
+
+    private void logSizeMismatchOnce(String operation, int sourceWidth, int sourceHeight,
+            int destWidth, int destHeight) {
+        if (lastLoggedSourceWidth == sourceWidth && lastLoggedSourceHeight == sourceHeight) {
+            return;
+        }
+        lastLoggedSourceWidth = sourceWidth;
+        lastLoggedSourceHeight = sourceHeight;
+        LOGGER.warn("GlInterop: {} source {}x{} differs from Remix color image {}x{}; blit scales",
+                operation, sourceWidth, sourceHeight, destWidth, destHeight);
     }
 
     public int getTexture() {
@@ -380,6 +401,10 @@ public final class GlInterop {
 
         private boolean available() {
             return memoryObject != 0 && texture != 0;
+        }
+
+        private boolean matches(int w, int h) {
+            return available() && width == w && height == h;
         }
 
         private void destroy() {

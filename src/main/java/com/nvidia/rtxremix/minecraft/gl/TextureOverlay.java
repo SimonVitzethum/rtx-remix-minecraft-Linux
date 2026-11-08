@@ -12,7 +12,10 @@ import org.slf4j.LoggerFactory;
 
 import static org.lwjgl.opengl.GL11.GL_COLOR_BUFFER_BIT;
 import static org.lwjgl.opengl.GL11.GL_NEAREST;
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT;
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH;
 import static org.lwjgl.opengl.GL45.glBlitNamedFramebuffer;
+import static org.lwjgl.opengl.GL45.glGetTextureLevelParameteri;
 
 /**
  * Replaces Minecraft's main render target color with the Remix output texture, fully opaque,
@@ -57,16 +60,39 @@ public class TextureOverlay {
         if (targetTexture == 0) {
             return;
         }
-        int width = target.width;
-        int height = target.height;
+        // The Remix color image has its own extent (it follows the runtime's back buffer, which
+        // can differ from the render target around a resize), so read it at its own size and let
+        // the blit scale into the render target.
+        int readWidth = glGetTextureLevelParameteri(texId, 0, GL_TEXTURE_WIDTH);
+        int readHeight = glGetTextureLevelParameteri(texId, 0, GL_TEXTURE_HEIGHT);
+        if (readWidth <= 0 || readHeight <= 0) {
+            return;
+        }
+        if (readWidth != target.width || readHeight != target.height) {
+            logSizeMismatchOnce(readWidth, readHeight, target.width, target.height);
+        }
         int read = source.fboFor(texId);
         int draw = destination.fboFor(targetTexture);
         // A blit honours the scissor box that GUI clipping leaves enabled.
         GlStateManager._disableScissorTest();
         // The Remix image has Vulkan orientation (row 0 at the top), so the copy flips it into
         // GL's bottom-up framebuffer rows.
-        glBlitNamedFramebuffer(read, draw, 0, 0, width, height, 0, height, width, 0,
+        glBlitNamedFramebuffer(read, draw, 0, 0, readWidth, readHeight,
+                0, target.height, target.width, 0,
                 GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    private int lastLoggedReadWidth = -1;
+    private int lastLoggedReadHeight = -1;
+
+    private void logSizeMismatchOnce(int readWidth, int readHeight, int drawWidth, int drawHeight) {
+        if (lastLoggedReadWidth == readWidth && lastLoggedReadHeight == readHeight) {
+            return;
+        }
+        lastLoggedReadWidth = readWidth;
+        lastLoggedReadHeight = readHeight;
+        LOGGER.warn("TextureOverlay: Remix color image {}x{} differs from main render target {}x{}; blit scales",
+                readWidth, readHeight, drawWidth, drawHeight);
     }
 
     /**
