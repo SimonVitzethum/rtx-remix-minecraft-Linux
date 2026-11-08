@@ -160,9 +160,8 @@ texture partitions that keep vanilla's cloud period and phase.
 merges them into chunk-column assets split into byte-capped pages per category,
 and the render thread publishes them under a frame budget and retires replaced
 pages through a bounded queue. Concurrent vanilla section builds are capped.
-Visibility rebuilds use a low-priority executor and produce a coarse frustum
-index that survives chunk slots being re-originned by replaying a render-thread
-move log. While capture is on, integrated-server chunk delivery and chunk
+Visibility rebuilds use a low-priority executor (on 26.3 the frustum
+index is vanilla's `Octree`, and slots are re-keyed by `RotatingSectionStorage`). While capture is on, integrated-server chunk delivery and chunk
 unloads are paced by measured render-thread cost under separate budgets, with
 chunk caps on delivery and a ring-edge bypass for unloads
 (`LocalChunkBatchPacing`, `PacedUnloadQueue`, `ChunkDataSenderMixin`); a
@@ -179,11 +178,14 @@ Each policy has a `rtxremix.*` kill switch listed in `docs/TUNING.md`.
 
 **Allocation.** The collector's concurrent work is what stretches frames at
 high render distance, so the hot vanilla paths that run per section or per
-frame are ported allocation-free and kept that way: the chunk visibility walk
-and its far-section probe (`ChunkRenderingDataPreparerMixin`,
-`terrain/visibility/`), block model variant and part selection
+frame are ported allocation-free and kept that way: block model variant and part selection
 (`WeightedBakedModelMixin`, `MultipartBakedModelMixin`), biome colour blending,
-and the integrated server's per-tick chunk list. Retained section meshes live
+and the integrated server's per-tick chunk list. On 26.3 the chunk visibility
+walk stays vanilla's: `SectionOcclusionGraph` already indexes nodes by slot and
+culls through an `Octree`, so only the visibility thread's short-lived node and
+probe objects remain (`ChunkRenderingDataPreparerMixin` keeps the low-priority
+executor and profiler labels; the old allocation-free helpers in
+`terrain/visibility/` are unused until a profile asks for them). Retained section meshes live
 in C-allocated direct buffers outside the JDK's direct-memory budget
 (`SectionMeshData`, `DirectBufferPool`) and render-region snapshots in pooled
 heap arrays (`RenderRegionStoragePool`), both under explicit reference counts:

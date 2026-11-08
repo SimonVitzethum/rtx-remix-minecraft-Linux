@@ -27,21 +27,19 @@ import java.util.concurrent.Executors;
  * dedicated low-priority executor so long view distances cannot starve terrain capture or
  * the render thread, and labels each phase for the profiler.
  *
- * <p>26.3 port note: vanilla's {@code SectionOcclusionGraph} now owns an {@code Octree}
- * that does its own hierarchical frustum culling, and its storage is a fixed array indexed
- * by section slot. That replaces what the 1.21 hooks added: the coarse frustum index, the
- * pooled walk buffers and the per-frame propagation slicing are therefore not ported, and
- * neither is the allocation-free replacement for the walk's far-section probe.
- * {@link #rtxremix$ALLOCATION_FREE_WALK_PORTED} records that: the walk is vanilla's, which
- * allocates two {@code Vector3d} per probe step and one {@code Node} per section. The
- * pure helpers of the old port ({@code FarChunkProbe}, {@code HierarchicalFrustumCuller},
- * {@code TimeSlicedWorkQueue}) stay in {@code terrain/visibility/} for a later port.
+ * <p>26.3 decision (kept vanilla): {@code SectionOcclusionGraph} now stores its nodes in a fixed
+ * array indexed by section slot and hands the frustum pass to an {@code Octree} that culls
+ * hierarchically, which is what the 1.21 hooks (coarse frustum index, pooled walk buffers,
+ * per-frame propagation slicing) existed to provide. What still allocates is one {@code Node}
+ * per visited section, which the graph retains anyway, and the {@code Vector3d}/{@code BlockPos}
+ * of the far-section probe, which are short-lived and non-escaping in a hot loop on the
+ * visibility thread (scalar-replaced by the JIT). That does not justify replacing {@code runUpdates}
+ * wholesale. The pure helpers of the old port ({@code FarChunkProbe},
+ * {@code HierarchicalFrustumCuller}, {@code TimeSlicedWorkQueue}) stay in
+ * {@code terrain/visibility/} should a profile ever show the walk again.
  */
 @Mixin(SectionOcclusionGraph.class)
 public abstract class ChunkRenderingDataPreparerMixin {
-
-    /** TODO: port the allocation-free walk and the time-sliced propagation onto the 26.3 graph. */
-    private static final boolean rtxremix$ALLOCATION_FREE_WALK_PORTED = false;
 
     private static final ExecutorService rtxremix$visibilityExecutor =
             Executors.newSingleThreadExecutor(task -> {
