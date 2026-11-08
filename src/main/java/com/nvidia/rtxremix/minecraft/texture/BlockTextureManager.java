@@ -66,6 +66,10 @@ public class BlockTextureManager {
     public static final InstanceInfoBlendEXT ATLAS_TRANSLUCENT_BLEND =
             InstanceInfoBlendEXT.textureTimesVertexColor();
     private static final float POM_DISPLACE_IN = 0.25f;
+    // TODO: the Linux runtime does not implement texcoordBounds, so POM on the shared atlas height map marches
+    // out of the sprite into its neighbours and smears the block faces into long streaks. Re-enable once the
+    // runtime clamps POM to the per-vertex UV bounds.
+    private static final boolean ATLAS_POM_ENABLED = false;
     private static final float COMMON_GLASS_IOR = 1.52f;
     private static final float THIN_SSS_MEASUREMENT_DISTANCE = 0.75f;
     private static final int THIN_SSS_DEFAULT_THICKNESS = Math.round(THIN_SSS_MEASUREMENT_DISTANCE * 255.0f);
@@ -602,7 +606,7 @@ public class BlockTextureManager {
         if (lt != L_SOLID) ob.alphaTestType(4).alphaReferenceValue(128);
         if (roughnessTex != null) ob.roughnessTexture(roughnessTex.getHandle());
         if (metallicTex != null)  ob.metallicTexture(metallicTex.getHandle());
-        if (heightTex != null)    ob.heightTexture(heightTex.getHandle()).displaceIn(POM_DISPLACE_IN);
+        if (ATLAS_POM_ENABLED && heightTex != null) ob.heightTexture(heightTex.getHandle()).displaceIn(POM_DISPLACE_IN);
         if (sssTex != null)       ob.subsurfaceExt(buildAtlasSSS(
                 lt == L_SOLID, sssTex, sssAlbedoTex));
 
