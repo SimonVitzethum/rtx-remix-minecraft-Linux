@@ -40,7 +40,6 @@
         "GlyphAtlasTextureMixin",
         "GrassColorsMixin",
         "HeldItemRendererMixin",
-        "IndigoMeshMixin",
         "ItemRendererMixin",
         "KeyboardMixin",
         "LightStorageMixin",

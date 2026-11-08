@@ -4,26 +4,28 @@
  */
 package com.nvidia.rtxremix.minecraft.mixin;
 
+import com.nvidia.rtxremix.minecraft.RtxRemixMod;
+import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
+import com.nvidia.rtxremix.minecraft.terrain.VanillaSectionBuilds;
+import com.nvidia.rtxremix.minecraft.terrain.capture.BlockDataQueue;
+import com.nvidia.rtxremix.minecraft.terrain.capture.BlockQuadEmitter;
+import com.nvidia.rtxremix.minecraft.terrain.capture.SectionBlockData;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
+import com.mojang.blaze3d.vertex.VertexSorting;
+import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.renderer.SectionBufferBuilderPack;
-import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.renderer.block.BlockAndTintGetter;
+import net.minecraft.client.renderer.block.BlockStateModelSet;
+import net.minecraft.client.renderer.block.FluidRenderer;
+import net.minecraft.client.renderer.block.FluidStateModelSet;
 import net.minecraft.client.renderer.chunk.RenderSectionRegion;
 import net.minecraft.client.renderer.chunk.SectionCompiler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
-import net.minecraft.world.level.BlockAndTintGetter;
-import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
-import com.nvidia.rtxremix.minecraft.terrain.capture.SectionBlockData;
-import com.nvidia.rtxremix.minecraft.terrain.capture.BlockQuadEmitter;
-import com.nvidia.rtxremix.minecraft.terrain.capture.BlockDataQueue;
-import com.nvidia.rtxremix.minecraft.terrain.VanillaSectionBuilds;
-import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
-import com.mojang.blaze3d.vertex.VertexConsumer;
-import com.mojang.blaze3d.vertex.VertexSorting;
-import com.nvidia.rtxremix.minecraft.RtxRemixMod;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -36,15 +38,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * RTX Remix <b>inline</b>, piggybacking on MC's own block loop instead
  * of running a separate pass.
  *
+ * <p>26.3 hooks, all in {@code SectionCompiler.compile}:
  * <ul>
- *   <li>{@code isOpaqueFullCube} redirect: captures opacity bitmap,
- *       face masks, and light entries for every block, and emits the
- *       block's model quads directly to the Remix interleaved buffer.</li>
- *   <li>{@code getRenderType} redirect: reports every block invisible while
- *       capturing, so vanilla skips its layer buffers, matrix stack, and
- *       {@code renderBlock} for geometry that is never drawn.</li>
- *   <li>{@code renderFluid} redirect: emits fluid quads directly,
- *       skipping GL vertex generation.</li>
+ *   <li>{@code RenderSectionRegion.getBlockState} redirect: the loop reads every block
+ *       (air included) through it once. Captures opacity bitmap, face masks, and light
+ *       entries, and emits the block's model quads directly to the Remix interleaved
+ *       buffer. It stands in for 1.21's {@code isOpaqueFullCube} redirect; the position
+ *       is the loop's shared mutable pos, so the hook keeps no reference to it.</li>
+ *   <li>{@code getRenderShape} redirect: reports every block invisible while
+ *       capturing, so vanilla skips {@code ModelBlockRenderer.tesselateBlock} (and its
+ *       lighting work) for geometry that is never drawn. Fabric API redirects the
+ *       {@code tesselateBlock} call itself, so this mod deliberately does not touch it.</li>
+ *   <li>{@code FluidRenderer.tesselate} redirect: emits fluid quads directly.</li>
  *   <li>RETURN inject: finalises the section mesh data and enqueues it
  *       for the render thread.</li>
  * </ul>
@@ -80,7 +85,16 @@ public class SectionBuilderMixin {
     }
 
     @Shadow
-    private BlockRenderDispatcher blockRenderer;
+    @Final
+    private BlockStateModelSet blockModelSet;
+
+    @Shadow
+    @Final
+    private FluidStateModelSet fluidModelSet;
+
+    @Shadow
+    @Final
+    private BlockColors blockColors;
 
     // HEAD: init per-section emission state
     @Inject(method = "compile", at = @At("HEAD"))
@@ -109,54 +123,54 @@ public class SectionBuilderMixin {
             tex = mod.getRenderer().getTextureManager();
         }
 
-        BlockQuadEmitter.threadLocal().beginSection(sectionPos, tex, this.blockRenderer);
+        BlockQuadEmitter.threadLocal().beginSection(sectionPos, tex, this.blockModelSet, this.fluidModelSet, this.blockColors);
         rtxremix$tracyBlockLoop.set(ProfileScope.begin("block loop"));
     }
 
-    // isOpaqueFullCube: capture opacity / face masks / lights / quads
+    // getBlockState: capture opacity / face masks / lights / quads for every position
     @Redirect(method = "compile",
               at = @At(value = "INVOKE",
-                       target = "Lnet/minecraft/world/level/block/state/BlockState;isOpaqueFullCube(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Z"))
-    private boolean rtxremix$captureBlock(BlockState state, BlockGetter world, BlockPos pos) {
-        boolean opaque = state.isSolidRender(world, pos);
+                       target = "Lnet/minecraft/client/renderer/chunk/RenderSectionRegion;getBlockState(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/state/BlockState;"))
+    private BlockState rtxremix$captureBlock(RenderSectionRegion region, BlockPos pos) {
+        BlockState state = region.getBlockState(pos);
+        if (!rtxremix$capturing()) return state;
         BlockQuadEmitter emitter = BlockQuadEmitter.current();
         if (emitter != null && emitter.isActive()) {
-            emitter.processBlock(state, world, pos, opaque);
-            // Vanilla hands only MODEL blocks to renderBlock; ENTITYBLOCK_ANIMATED blocks
+            emitter.processBlock(state, region, pos, state.isSolidRender());
+            // Vanilla hands only MODEL blocks to tesselateBlock; ENTITYBLOCK_ANIMATED blocks
             // belong to their block-entity renderer.
-            if (BlockQuadEmitter.getRenderTypeCached(state) == RenderShape.MODEL) {
-                // build() only ever passes its ChunkRendererRegion here.
-                emitter.emitBlock(state, pos, (BlockAndTintGetter) world);
+            if (!state.isAir() && BlockQuadEmitter.getRenderTypeCached(state) == RenderShape.MODEL) {
+                emitter.emitBlock(state, pos, region);
             }
         }
-        return opaque;
+        return state;
     }
 
     // While capturing, the block's quads were already emitted above, so vanilla's raster
-    // path for it (layer buffer, matrix stack, renderBlock) is dead work. Reporting the
+    // path for it (tesselateBlock, lighting, layer buffers) is dead work. Reporting the
     // block invisible makes vanilla skip all of it.
     @Redirect(method = "compile",
               at = @At(value = "INVOKE",
-                       target = "Lnet/minecraft/world/level/block/state/BlockState;getRenderType()Lnet/minecraft/world/level/block/RenderShape;"))
+                       target = "Lnet/minecraft/world/level/block/state/BlockState;getRenderShape()Lnet/minecraft/world/level/block/RenderShape;"))
     private RenderShape rtxremix$renderTypeForVanilla(BlockState state) {
         return rtxremix$capturing()
                 ? RenderShape.INVISIBLE
                 : BlockQuadEmitter.getRenderTypeCached(state);
     }
 
-    // renderFluid: emit fluid quads for Remix, skip GL
+    // FluidRenderer.tesselate: emit fluid quads for Remix, skip the vertex output
     @Redirect(method = "compile",
               at = @At(value = "INVOKE",
-                       target = "Lnet/minecraft/client/renderer/block/BlockRenderDispatcher;renderLiquid(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/BlockAndTintGetter;Lcom/mojang/blaze3d/vertex/VertexConsumer;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/material/FluidState;)V"))
-    private void rtxremix$redirectFluid(BlockRenderDispatcher brm,
-            BlockPos pos, BlockAndTintGetter world, VertexConsumer consumer,
+                       target = "Lnet/minecraft/client/renderer/block/FluidRenderer;tesselate(Lnet/minecraft/client/renderer/block/BlockAndTintGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/client/renderer/block/FluidRenderer$Output;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/material/FluidState;)V"))
+    private void rtxremix$redirectFluid(FluidRenderer renderer,
+            BlockAndTintGetter world, BlockPos pos, FluidRenderer.Output output,
             BlockState blockState, FluidState fluidState) {
         if (rtxremix$capturing()) {
             BlockQuadEmitter emitter = BlockQuadEmitter.threadLocal();
             if (!emitter.isActive()) return;
             emitter.emitFluid(pos, world, fluidState);
         } else {
-            brm.renderLiquid(pos, world, consumer, blockState, fluidState);
+            renderer.tesselate(world, pos, output, blockState, fluidState);
         }
     }
 
