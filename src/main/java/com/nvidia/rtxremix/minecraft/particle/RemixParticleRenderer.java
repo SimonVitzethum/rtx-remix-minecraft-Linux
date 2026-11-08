@@ -71,6 +71,7 @@ public class RemixParticleRenderer {
 
     private final RemixRenderer renderer;
     private final ParticleAtlasManager atlasManager;
+    private final ParticleAtlasManager itemAtlasManager;
     private final HashMap<BucketKey, DynamicBucket> buckets = new HashMap<>();
 
     private InstanceInfoBlendEXT blendExt;
@@ -94,9 +95,11 @@ public class RemixParticleRenderer {
     private int capacityGrowsThisFrame;
     private int meshUpdatesThisFrame;
 
-    public RemixParticleRenderer(RemixRenderer renderer, ParticleAtlasManager atlasManager) {
+    public RemixParticleRenderer(RemixRenderer renderer, ParticleAtlasManager atlasManager,
+                                 ParticleAtlasManager itemAtlasManager) {
         this.renderer = renderer;
         this.atlasManager = atlasManager;
+        this.itemAtlasManager = itemAtlasManager;
     }
 
     private void ensureBlendExts() {
@@ -140,8 +143,10 @@ public class RemixParticleRenderer {
         // material, the particle atlas the blended particle material.
         DynamicBucket terrainBucket = null;
         DynamicBucket particleBucket = null;
+        DynamicBucket itemBucket = null;
         boolean terrainResolved = false;
         boolean particleResolved = false;
+        boolean itemResolved = false;
 
         for (var entry : groupMap.entrySet()) {
             ParticleRenderType type = entry.getKey();
@@ -171,9 +176,14 @@ public class RemixParticleRenderer {
                         particleBucket = resolveBucket(false, blockTexMgr);
                     }
                     bucket = particleBucket;
+                } else if (TextureAtlas.LOCATION_ITEMS.equals(atlas)) {
+                    // Item break particles: the item atlas material blends like the particle one.
+                    if (!itemResolved) {
+                        itemResolved = true;
+                        itemBucket = resolveItemBucket();
+                    }
+                    bucket = itemBucket;
                 } else {
-                    // TODO: particles drawn from the item atlas (item break particles) have no
-                    // Remix material; the particle atlas manager only mirrors the particle atlas.
                     continue;
                 }
                 if (bucket == null) continue;
@@ -336,6 +346,13 @@ public class RemixParticleRenderer {
         int blendKind = terrain ? BLEND_TERRAIN : BLEND_PARTICLE;
         return getOrCreateBucket(new BucketKey(material.getHandle(), categoryFlags, blendKind),
                 material, categoryFlags, blendKind);
+    }
+
+    private DynamicBucket resolveItemBucket() {
+        RemixMaterial material = itemAtlasManager != null ? itemAtlasManager.getMaterial() : null;
+        if (material == null || !material.isAlive()) return null;
+        return getOrCreateBucket(new BucketKey(material.getHandle(), InstanceCategoryBit.PARTICLE, BLEND_PARTICLE),
+                material, InstanceCategoryBit.PARTICLE, BLEND_PARTICLE);
     }
 
     private DynamicBucket getOrCreateBucket(BucketKey key, RemixMaterial material,

@@ -177,6 +177,8 @@ public class RemixRenderer {
 
     // Particle rendering: atlas manager + per-frame renderer
     private ParticleAtlasManager particleAtlasManager;
+    /** Material of the item atlas for item break particles; the particle renderer draws from it. */
+    private ParticleAtlasManager itemParticleAtlasManager;
     private RemixParticleRenderer particleRenderer;
     private RemixWeatherRenderer weatherRenderer;
     private final ExecutorService particleExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -382,6 +384,8 @@ public class RemixRenderer {
             cloudRenderer = new CloudRenderer(this);
             
             particleAtlasManager = new ParticleAtlasManager(this);
+            itemParticleAtlasManager = new ParticleAtlasManager(this,
+                    net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_ITEMS, "", "item_particle");
             entityPass = new RemixEntityPass(lightManager::ownsLightThisFrame);
             entitySubmitter = new RemixEntitySubmitter(remixApi, particleAtlasManager);
             firstPersonPass = new RemixFirstPersonPass();
@@ -389,7 +393,7 @@ public class RemixRenderer {
             blockEntityPass = new RemixBlockEntityPass();
             blockDamagePass = new RemixBlockDamagePass();
 
-            particleRenderer = new RemixParticleRenderer(this, particleAtlasManager);
+            particleRenderer = new RemixParticleRenderer(this, particleAtlasManager, itemParticleAtlasManager);
             weatherRenderer = new RemixWeatherRenderer();
             
             perfCamera = perfTimer.registerSection("Camera");
@@ -629,6 +633,7 @@ public class RemixRenderer {
         if (entityPass != null) entityPass.discardPoseSnapshots();
         if (particleRenderer != null) particleRenderer.cleanup();
         if (particleAtlasManager != null) particleAtlasManager.cleanup();
+        if (itemParticleAtlasManager != null) itemParticleAtlasManager.cleanup();
         entityAtlasPreloadPending = true;
         if (weatherRenderer != null) weatherRenderer.cleanup();
         if (chunkManager != null) chunkManager.clear();
@@ -1102,6 +1107,10 @@ public class RemixRenderer {
         }
         if (!particleAtlasManager.isInitialized()) {
             return null;
+        }
+        // Initialized here on the render thread, not lazily on the worker: it uploads textures.
+        if (itemParticleAtlasManager != null && !itemParticleAtlasManager.isInitialized()) {
+            itemParticleAtlasManager.initialize();
         }
 
         CompletableFuture<ParticleRenderResult> future = CompletableFuture.supplyAsync(
@@ -1702,6 +1711,10 @@ public class RemixRenderer {
         if (particleAtlasManager != null) {
             particleAtlasManager.cleanup();
             particleAtlasManager = null;
+        }
+        if (itemParticleAtlasManager != null) {
+            itemParticleAtlasManager.cleanup();
+            itemParticleAtlasManager = null;
         }
         if (textureManager != null) {
             textureManager.cleanup();

@@ -51,6 +51,10 @@ public class ParticleAtlasManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(ParticleAtlasManager.class);
 
     private final RemixRenderer renderer;
+    private final Identifier atlasId;
+    /** Prepended to a sprite id's path to get the texture the LabPBR variants sit next to. */
+    private final String spritePathPrefix;
+    private final String name;
 
     private final List<RemixTexture> managedTextures = new ArrayList<>();
     private final List<RemixMaterial> managedMaterials = new ArrayList<>();
@@ -61,7 +65,19 @@ public class ParticleAtlasManager {
     private boolean initFailed;
 
     public ParticleAtlasManager(RemixRenderer renderer) {
+        this(renderer, TextureAtlas.LOCATION_PARTICLES, "particle/", "particle");
+    }
+
+    /**
+     * Manager for another atlas that particles draw from, the item atlas of item break
+     * particles. Sprite ids of the item atlas already name their texture ({@code item/apple}),
+     * so its prefix is empty.
+     */
+    public ParticleAtlasManager(RemixRenderer renderer, Identifier atlasId, String spritePathPrefix, String name) {
         this.renderer = renderer;
+        this.atlasId = atlasId;
+        this.spritePathPrefix = spritePathPrefix;
+        this.name = name;
     }
 
     public void initialize() {
@@ -72,20 +88,20 @@ public class ParticleAtlasManager {
             if (api == null || client == null || client.getTextureManager() == null) return;
 
             AbstractTexture tex = client.getTextureManager()
-                    .getTexture(TextureAtlas.LOCATION_PARTICLES);
+                    .getTexture(atlasId);
             if (!(tex instanceof TextureAtlas atlas)) return;
 
             SpriteAtlasAccessor acc = (SpriteAtlasAccessor) atlas;
             int atlasW = acc.getWidth();
             int atlasH = acc.getHeight();
             if (atlasW == 0 || atlasH == 0) {
-                LOGGER.warn("Particle atlas dimensions are zero, deferring init");
+                LOGGER.warn("{} atlas dimensions are zero, deferring init", name);
                 return;
             }
 
             Map<Identifier, TextureAtlasSprite> sprites = acc.getSprites();
             if (sprites == null || sprites.isEmpty()) {
-                LOGGER.warn("Particle atlas has no sprites, deferring init");
+                LOGGER.warn("{} atlas has no sprites, deferring init", name);
                 return;
             }
 
@@ -120,7 +136,7 @@ public class ParticleAtlasManager {
                 int pixH = sprite.contents().height();
 
                 Identifier texId = Identifier.fromNamespaceAndPath(spriteId.getNamespace(),
-                        "particle/" + spriteId.getPath());
+                        spritePathPrefix + spriteId.getPath());
                 NativeImage nImg = labPBRVariants.loadVariant(texId, "_n");
                 NativeImage sImg = labPBRVariants.loadVariant(texId, "_s");
                 try {
@@ -146,25 +162,25 @@ public class ParticleAtlasManager {
                 }
             }
 
-            RemixTexture albedoTex = uploadTexture("particle_atlas_albedo",
+            RemixTexture albedoTex = uploadTexture(name + "_atlas_albedo",
                     albedoRGBA, atlasW, atlasH, TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR);
 
             RemixTexture normalTex = hasAnyNormal
-                    ? uploadTexture("particle_atlas_normal", normalAtlas, atlasW, atlasH,
+                    ? uploadTexture(name + "_atlas_normal", normalAtlas, atlasW, atlasH,
                             TextureFormat.RGBA8_UNORM, TexturePurpose.NORMAL_DX) : null;
             RemixTexture heightTex = hasAnyHeight
-                    ? uploadTexture("particle_atlas_height", heightAtlas, atlasW, atlasH,
+                    ? uploadTexture(name + "_atlas_height", heightAtlas, atlasW, atlasH,
                             TextureFormat.R8_UNORM, TexturePurpose.HEIGHTMAP) : null;
-            RemixTexture roughnessTex = uploadTexture("particle_atlas_roughness",
+            RemixTexture roughnessTex = uploadTexture(name + "_atlas_roughness",
                     roughnessAtlas, atlasW, atlasH, TextureFormat.R8_UNORM, TexturePurpose.DATA);
-            RemixTexture metallicTex = uploadTexture("particle_atlas_metallic",
+            RemixTexture metallicTex = uploadTexture(name + "_atlas_metallic",
                     metallicAtlas, atlasW, atlasH, TextureFormat.R8_UNORM, TexturePurpose.DATA);
             RemixTexture emissiveTex = hasAnyEmissive
-                    ? uploadTexture("particle_atlas_emissive", emissiveAtlas, atlasW, atlasH,
+                    ? uploadTexture(name + "_atlas_emissive", emissiveAtlas, atlasW, atlasH,
                             TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR) : null;
 
             if (albedoTex == null) {
-                LOGGER.error("Failed to upload particle atlas albedo, aborting");
+                LOGGER.error("Failed to upload {} atlas albedo, aborting", name);
                 initFailed = true;
                 return;
             }
@@ -173,17 +189,17 @@ public class ParticleAtlasManager {
                     roughnessTex, metallicTex, emissiveTex);
 
             if (material == null) {
-                LOGGER.error("Failed to create particle material(s)");
+                LOGGER.error("Failed to create {} atlas material(s)", name);
                 initFailed = true;
                 return;
             }
 
             initialized = true;
-            LOGGER.info("Particle atlas initialized ({}x{}, {} sprites, normal={}, height={}, emissive={})",
-                    atlasW, atlasH, sprites.size(), hasAnyNormal, hasAnyHeight, hasAnyEmissive);
+            LOGGER.info("{} atlas initialized ({}x{}, {} sprites, normal={}, height={}, emissive={})",
+                    name, atlasW, atlasH, sprites.size(), hasAnyNormal, hasAnyHeight, hasAnyEmissive);
 
         } catch (Exception e) {
-            LOGGER.error("Particle atlas init failed", e);
+            LOGGER.error("{} atlas init failed", name, e);
             initFailed = true;
         }
     }
