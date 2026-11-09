@@ -300,9 +300,9 @@ float3 pomCalculateTexcoordTile(
   const float2 tileSizeUv = tileSizeTexels / atlasSize;
   const float2 halfTexel = 0.5f / tileSizeTexels;
 
-  // viewDir is in texture space (xy in uv units): rescale xy to tile local units.
-  float3 localView = float3(viewDir.xy / tileSizeUv, viewDir.z);
-  localView = normalize(localView);
+  // viewDir is in texture space with the raw tangent/bitangent scaled by the longer of the two (genTangSpace), so its xy are
+  // already in units of the surface's longer edge: for a block face that is the tile local coordinate system.
+  const float3 localView = viewDir;
 
   const float totalHeight = opaqueSurfaceMaterial.displaceIn + opaqueSurfaceMaterial.displaceOut;
   const float neutralHeight = opaqueSurfaceMaterial.displaceIn / totalHeight;
