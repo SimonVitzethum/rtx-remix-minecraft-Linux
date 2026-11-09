@@ -176,7 +176,16 @@ public final class RemixInputTestScript {
                 if (w.length > 4) com.nvidia.rtxremix.minecraft.light.Fullbright.backRadiance = Float.parseFloat(w[4]);
                 if (w.length > 5) com.nvidia.rtxremix.minecraft.light.Fullbright.evMinDrop = Float.parseFloat(w[5]);
             }
-            case "shot" -> LOGGER.info("shot marker {}", w.length > 1 ? w[1] : "");
+            case "shot" -> {
+                LOGGER.info("shot marker {}", w.length > 1 ? w[1] : "");
+                // The external screenshot tool acknowledges with a file; the render thread waits (max 30 s) so the picture is of this moment.
+                Path ack = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("shot-ack-" + (w.length > 1 ? w[1] : ""));
+                if (w.length > 1 && Boolean.getBoolean("rtxremix.test.shotAck") || Files.exists(net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("shot-ack-enable"))) {
+                    for (int i = 0; i < 300 && !Files.exists(ack); i++) {
+                        Thread.sleep(100);
+                    }
+                }
+            }
             case "cmd" -> mc.player.connection.sendCommand(String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length)));
             case "scmd" -> {
                 // server-side command with full permission (test worlds without cheats): scmd execute as @p run tp @s 0 120 0
