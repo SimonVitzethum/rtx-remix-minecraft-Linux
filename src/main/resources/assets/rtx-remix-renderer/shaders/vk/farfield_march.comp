@@ -1,0 +1,143 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Far-field sky: ray marches a sparse voxel DAG (see FarFieldDag.java) from the camera for every texel of an
+// equirect environment texture and composites the lit terrain over the procedural sky. Compile with
+//   glslc --target-env=vulkan1.2 -O farfield_march.comp -o farfield_march.spv
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Node k = nodes[8k .. 8k+7], each child: 0 empty, bit 31 set = uniform leaf of material (low bits), else node index.
+layout(std430, binding = 0) readonly buffer Dag { uint nodes[]; };
+// aux[0..255] = palette (0xRRGGBB, material m = MapColor id + 1); aux[256 + 2 * i] = sky texel i as two packed halves.
+layout(std430, binding = 1) readonly buffer Aux { uint aux[]; };
+layout(rgba16f, binding = 2) uniform writeonly image2D outImage;
+
+layout(push_constant) uniform PC {
+    vec4 camSize;   // xyz camera in cube space, w cube edge in blocks
+    ivec4 dims;     // x root ref, y log2(cube edge), z width, w height
+    vec4 sunDir;    // xyz world-space direction to the sun
+    vec4 sunE;      // rgb sun contribution on a surface facing the sun
+    vec4 ambient;   // rgb ambient, w fog distance in blocks
+    ivec4 skyDims;  // x sky width, y sky height
+} pc;
+
+const float PI = 3.14159265358979;
+const uint LEAF = 0x80000000u;
+const int STACK = 96;
+
+vec3 skyAt(vec3 t) {
+    // t is the texture-space direction (same convention as sky_atmosphere.comp::skyDirection).
+    float phi = atan(t.z, t.x);
+    float u = fract((phi + 0.5 * PI) / (2.0 * PI));
+    float v = acos(clamp(t.y, -1.0, 1.0)) / PI;
+    int w = pc.skyDims.x, h = pc.skyDims.y;
+    vec2 p = vec2(u * float(w), v * float(h)) - 0.5;
+    ivec2 i0 = ivec2(floor(p));
+    vec2 f = p - vec2(i0);
+    vec3 acc = vec3(0.0);
+    for (int k = 0; k < 4; k++) {
+        ivec2 o = ivec2(k & 1, k >> 1);
+        ivec2 q = i0 + o;
+        q.x = (q.x % w + w) % w;
+        q.y = clamp(q.y, 0, h - 1);
+        uint idx = 256u + 2u * uint(q.y * w + q.x);
+        vec2 rg = unpackHalf2x16(aux[idx]);
+        vec2 ba = unpackHalf2x16(aux[idx + 1u]);
+        float wgt = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+        acc += vec3(rg, ba.x) * wgt;
+    }
+    return acc;
+}
+
+bool box(vec3 ro, vec3 invd, vec3 bmin, float size, out float tmin) {
+    vec3 t0 = (bmin - ro) * invd;
+    vec3 t1 = (bmin + size - ro) * invd;
+    vec3 lo = min(t0, t1), hi = max(t0, t1);
+    tmin = max(max(lo.x, lo.y), lo.z);
+    float tmax = min(min(hi.x, hi.y), hi.z);
+    return tmax >= max(tmin, 0.0);
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    int W = pc.dims.z, H = pc.dims.w;
+    if (px.x >= W || px.y >= H) return;
+    float u = (float(px.x) + 0.5) / float(W);
+    float v = (float(px.y) + 0.5) / float(H);
+    float theta = v * PI, phi = u * 2.0 * PI - 0.5 * PI;
+    vec3 t = vec3(sin(theta) * cos(phi), cos(theta), sin(theta) * sin(phi));
+    vec3 rd = vec3(-t.x, t.y, t.z); // texture space -> world space (the mod mirrors X for the dome)
+    vec3 sky = skyAt(t);
+
+    vec3 ro = pc.camSize.xyz;
+    vec3 sgn = vec3(rd.x < 0.0 ? -1.0 : 1.0, rd.y < 0.0 ? -1.0 : 1.0, rd.z < 0.0 ? -1.0 : 1.0);
+    vec3 safe = mix(rd, sgn * 1e-6, lessThan(abs(rd), vec3(1e-6)));
+    vec3 invd = 1.0 / safe;
+
+    uint sRef[STACK];
+    ivec3 sOrg[STACK];
+    int sLvl[STACK];
+    int sp = 0;
+    float tRoot;
+    bool found = false;
+    float hitT = 0.0;
+    uint hitMat = 0u;
+    vec3 hitN = vec3(0.0, 1.0, 0.0);
+    uint root = uint(pc.dims.x);
+    if (root != 0u && box(ro, invd, vec3(0.0), pc.camSize.w, tRoot)) {
+        sRef[0] = root; sOrg[0] = ivec3(0); sLvl[0] = pc.dims.y; sp = 1;
+    }
+    int guard = 0;
+    while (sp > 0 && guard++ < 8192) {
+        sp--;
+        uint ref = sRef[sp];
+        ivec3 org = sOrg[sp];
+        int lvl = sLvl[sp];
+        if ((ref & LEAF) != 0u) {
+            float size = float(1 << lvl), tn;
+            vec3 t0 = (vec3(org) - ro) * invd, t1 = (vec3(org) + size - ro) * invd;
+            vec3 lo = min(t0, t1);
+            tn = max(max(lo.x, lo.y), lo.z);
+            hitT = max(tn, 0.0);
+            hitMat = ref & 0xffu;
+            if (lo.x >= lo.y && lo.x >= lo.z) hitN = vec3(-sgn.x, 0, 0);
+            else if (lo.y >= lo.z) hitN = vec3(0, -sgn.y, 0);
+            else hitN = vec3(0, 0, -sgn.z);
+            found = true;
+            break;
+        }
+        int hs = 1 << (lvl - 1);
+        int cidx[8]; float ct[8]; int cn = 0;
+        for (int i = 0; i < 8; i++) {
+            if (nodes[ref * 8u + uint(i)] == 0u) continue;
+            ivec3 co = org + ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1) * hs;
+            float tc;
+            if (!box(ro, invd, vec3(co), float(hs), tc)) continue;
+            // insertion sort, far first, so the nearest child is popped first
+            int j = cn++;
+            while (j > 0 && ct[j - 1] < tc) { ct[j] = ct[j - 1]; cidx[j] = cidx[j - 1]; j--; }
+            ct[j] = tc; cidx[j] = i;
+        }
+        for (int k = 0; k < cn && sp < STACK; k++) {
+            int i = cidx[k];
+            sRef[sp] = nodes[ref * 8u + uint(i)];
+            sOrg[sp] = org + ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1) * hs;
+            sLvl[sp] = lvl - 1;
+            sp++;
+        }
+    }
+
+    vec3 color = sky;
+    if (found) {
+        uint rgb = aux[hitMat];
+        vec3 albedo = vec3(float((rgb >> 16) & 255u), float((rgb >> 8) & 255u), float(rgb & 255u)) / 255.0;
+        albedo = pow(albedo, vec3(2.2));
+        float ndl = max(dot(hitN, pc.sunDir.xyz), 0.0);
+        vec3 lit = albedo * (pc.ambient.rgb * (0.6 + 0.4 * hitN.y) + pc.sunE.rgb * ndl);
+        float fog = 1.0 - exp(-hitT / max(pc.ambient.w, 1.0));
+        color = mix(lit, sky, fog);
+    }
+    imageStore(outImage, px, vec4(color, 1.0));
+}

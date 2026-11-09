@@ -146,6 +146,7 @@ public class SkyRenderer {
     private final RemixRenderer renderer;
     private ClientLevel currentWorld;
     private RemixTexture skyTextureAsset;
+    private long lastDomeTexture;
     private RemixLight skyDomeLightAsset;
     private long overcastTextureHandle;
     private RemixLight overcastDomeLightAsset;
@@ -289,6 +290,7 @@ public class SkyRenderer {
 
         try (ProfileScope ignored = ProfileScope.begin("Sky.Atmosphere")) {
             updateAtmosphericDomeLight(api, lightState);
+            tickFarField(api, world, cameraPos, lightState);
         }
         try (ProfileScope ignored = ProfileScope.begin("Sky.Celestial")) {
             renderCelestialMeshes(
@@ -365,6 +367,22 @@ public class SkyRenderer {
         publishSkyDome(api);
     }
 
+    /** Far-field prototype (default off, Vulkan only): feeds the far terrain over the sky into the dome texture. */
+    private void tickFarField(RemixAPI api, ClientLevel world, Vec3 cameraPos, LightManager.SkyLightState lightState) {
+        com.nvidia.rtxremix.minecraft.vulkan.FarField farField = com.nvidia.rtxremix.minecraft.vulkan.FarField.get();
+        if (farField != null) {
+            farField.tick(api, world, cameraPos, lightState,
+                    new float[]{atmosphericMeanR, atmosphericMeanG, atmosphericMeanB});
+        }
+    }
+
+    /** The texture the dome light shows: the far-field composite when it exists, else the procedural sky. */
+    private long domeTextureHandle() {
+        com.nvidia.rtxremix.minecraft.vulkan.FarField farField = com.nvidia.rtxremix.minecraft.vulkan.FarField.get();
+        long far = farField == null ? 0L : farField.textureHandle();
+        return far != 0L ? far : skyTextureAsset.getHandle();
+    }
+
     /**
      * Creates the dome light over the live sky texture when it is missing, refreshes its
      * multiplier when that changed, and draws it. Does nothing until the texture exists.
@@ -374,9 +392,11 @@ public class SkyRenderer {
             return;
         }
         boolean domeAlive = skyDomeLightAsset != null && skyDomeLightAsset.isAlive();
-        if (!domeAlive || Float.compare(lastSkyDomeMultiplier, skyDomeMultiplier) != 0) {
+        long domeTexture = domeTextureHandle();
+        if (!domeAlive || Float.compare(lastSkyDomeMultiplier, skyDomeMultiplier) != 0 || domeTexture != lastDomeTexture) {
+            lastDomeTexture = domeTexture;
             LightInfoDomeEXT domeExt = new LightInfoDomeEXT();
-            domeExt.setColorTexture(skyTextureAsset.getHandle());
+            domeExt.setColorTexture(domeTexture);
             LightInfo lightInfo = LightInfo.builder()
                     .radiance(skyDomeMultiplier, skyDomeMultiplier, skyDomeMultiplier)
                     .domeExt(domeExt)
@@ -485,6 +505,10 @@ public class SkyRenderer {
                 publishedOutputValid);
         if (pixelBuf == null) {
             return;
+        }
+        com.nvidia.rtxremix.minecraft.vulkan.FarField farField = com.nvidia.rtxremix.minecraft.vulkan.FarField.get();
+        if (farField != null) {
+            farField.offerSky(pixelBuf);
         }
         atmosphericMeanR = atmosphericMean[0];
         atmosphericMeanG = atmosphericMean[1];
@@ -1065,6 +1089,7 @@ public class SkyRenderer {
         try {
             cleanup();
         } finally {
+            com.nvidia.rtxremix.minecraft.vulkan.FarField.shutdown();
             atmosphericGenerator.destroy();
         }
     }

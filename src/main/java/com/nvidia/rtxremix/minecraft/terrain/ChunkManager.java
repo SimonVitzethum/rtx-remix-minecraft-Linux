@@ -1549,6 +1549,10 @@ public class ChunkManager {
     private boolean activateNextPage(MeshInstallCursor cursor, RemixAPI api) {
         if (cursor.nextActivation >= cursor.installedPages.size()) return false;
         InstalledMeshPage page = cursor.installedPages.get(cursor.nextActivation++);
+        // Far-field debug cut (default off): the page stays hidden because the far-field sky draws this column.
+        if (com.nvidia.rtxremix.minecraft.vulkan.FarField.cutsColumn(cursor.result.owner().cx, cursor.result.owner().cz)) {
+            return true;
+        }
         try (ProfileScope activationScope = ProfileScope.begin("activateTerrainPage")) {
             activationScope.meshCategory(page.category);
             page.instance.setCategoryFlags(page.categoryFlags);
