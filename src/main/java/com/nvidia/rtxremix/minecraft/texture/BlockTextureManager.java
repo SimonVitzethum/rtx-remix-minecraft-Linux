@@ -65,11 +65,10 @@ public class BlockTextureManager {
     /** Blend state for draw calls using the atlas translucent material, as terrain pairs its translucent pages. */
     public static final InstanceInfoBlendEXT ATLAS_TRANSLUCENT_BLEND =
             InstanceInfoBlendEXT.textureTimesVertexColor();
+    /** Depth of the LabPBR height map in tile units (1 = one block). The runtime marches inside each sprite's atlas tile. */
     private static final float POM_DISPLACE_IN = 0.25f;
-    // TODO: the Linux runtime does not implement texcoordBounds, so POM on the shared atlas height map marches
-    // out of the sprite into its neighbours and smears the block faces into long streaks. Re-enable once the
-    // runtime clamps POM to the per-vertex UV bounds.
-    private static final boolean ATLAS_POM_ENABLED = false;
+    /** Terrain vertices carry UNORM16 tile bounds (HardcodedVertex.packUnorm2x16), which the runtime's POM needs. */
+    private static final boolean ATLAS_POM_ENABLED = true;
     private static final float COMMON_GLASS_IOR = 1.52f;
     private static final float THIN_SSS_MEASUREMENT_DISTANCE = 0.75f;
     private static final int THIN_SSS_DEFAULT_THICKNESS = Math.round(THIN_SSS_MEASUREMENT_DISTANCE * 255.0f);

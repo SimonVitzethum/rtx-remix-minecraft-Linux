@@ -146,8 +146,44 @@ public final class RemixInputTestScript {
                 mc.player.yRotO = yaw;
                 mc.player.xRotO = pitch;
             }
+            case "tp" -> {
+                // tp X Y Z [yaw pitch]: server-side teleport (the test world has no cheats), gravity off so the camera stays put.
+                double x = Double.parseDouble(w[1]), y = Double.parseDouble(w[2]), z = Double.parseDouble(w[3]);
+                var srv = mc.getSingleplayerServer();
+                var sp = srv == null ? null : srv.getPlayerList().getPlayer(mc.player.getUUID());
+                if (srv != null && sp != null) {
+                    srv.execute(() -> { sp.setNoGravity(true); sp.setDeltaMovement(0, 0, 0); sp.teleportTo(x, y, z); });
+                }
+                mc.player.setNoGravity(true);
+                mc.player.setPos(x, y, z);
+                if (w.length > 5) {
+                    float yaw = Float.parseFloat(w[4]), pitch = Float.parseFloat(w[5]);
+                    mc.player.setYRot(yaw); mc.player.setXRot(pitch); mc.player.yRotO = yaw; mc.player.xRotO = pitch;
+                }
+            }
+            case "wall" -> {
+                // wall X Y Z: builds a 12x4 test wall (several block types) at X..X+11, Y..Y+3, Z on the integrated server.
+                int bx = Integer.parseInt(w[1]), by = Integer.parseInt(w[2]), bz = Integer.parseInt(w[3]);
+                var srv = mc.getSingleplayerServer();
+                if (srv != null) {
+                    srv.execute(() -> {
+                        var lvl = srv.overworld();
+                        var blocks = new net.minecraft.world.level.block.Block[] {
+                                net.minecraft.world.level.block.Blocks.BRICKS, net.minecraft.world.level.block.Blocks.COBBLESTONE,
+                                net.minecraft.world.level.block.Blocks.OAK_PLANKS, net.minecraft.world.level.block.Blocks.STONE_BRICKS,
+                                net.minecraft.world.level.block.Blocks.DIRT, net.minecraft.world.level.block.Blocks.SPRUCE_PLANKS,
+                                net.minecraft.world.level.block.Blocks.DEEPSLATE_BRICKS, net.minecraft.world.level.block.Blocks.SANDSTONE,
+                                net.minecraft.world.level.block.Blocks.IRON_BLOCK, net.minecraft.world.level.block.Blocks.NETHER_BRICKS,
+                                net.minecraft.world.level.block.Blocks.GRASS_BLOCK, net.minecraft.world.level.block.Blocks.STONE};
+                        for (int i = 0; i < 12; i++)
+                            for (int j = 0; j < 4; j++)
+                                lvl.setBlockAndUpdate(new net.minecraft.core.BlockPos(bx + i, by + j, bz), blocks[(i + (j % 2) * 3) % blocks.length].defaultBlockState());
+                    });
+                }
+            }
             case "diag" -> {
                 var srv = mc.getSingleplayerServer();
+                LOGGER.info("diag: pos={} fps={}", mc.player.position(), mc.getFps());
                 LOGGER.info("diag: client loaded chunks={} effectiveRD={} optionRD={} serverViewDistance={} serverLoaded={}",
                         mc.level.getChunkSource().getLoadedChunksCount(), mc.options.getEffectiveRenderDistance(),
                         mc.options.renderDistance().get(),
