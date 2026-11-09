@@ -338,6 +338,7 @@ public class RtxRemixMod implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         instance = this;
+        com.nvidia.rtxremix.minecraft.debug.RtxDebugStats.register();
         ModelLayerRegistry.registerModelLayer(
                 CopperBeaconBlockEntityRenderer.BODY_MODEL_LAYER,
                 CopperBeaconBlockEntityRenderer::getBodyTexturedModelData);

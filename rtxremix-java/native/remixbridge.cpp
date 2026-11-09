@@ -2457,6 +2457,21 @@ Java_com_nvidia_rtxremix_RemixBridge_linuxInput(JNIEnv*, jclass, jint kind, jint
     case 5: if (focus) focus(a); break;
     }
 }
+
+// Linux only: runtime frame statistics for the F3 overlay (8 values, see rtx_dlfg.cpp). Returns false when the runtime lacks the export.
+JNIEXPORT jboolean JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_linuxFrameStats(JNIEnv* env, jclass, jlongArray out)
+{
+    if (!g_remixDll) return JNI_FALSE;
+    static auto fn = (void (*)(uint64_t*)) dlsym(g_remixDll, "remixapi_linux_GetFrameStats");
+    if (!fn) return JNI_FALSE;
+    uint64_t v[8];
+    fn(v);
+    jlong j[8];
+    for (int i = 0; i < 8; i++) j[i] = (jlong) v[i];
+    env->SetLongArrayRegion(out, 0, 8, j);
+    return JNI_TRUE;
+}
 #endif
 
 } // extern "C"

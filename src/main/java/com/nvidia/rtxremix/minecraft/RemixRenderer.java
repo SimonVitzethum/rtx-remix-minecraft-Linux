@@ -1470,6 +1470,8 @@ public class RemixRenderer {
                 remixApi.present(presentInfo);
             }
             presentedFrames++;
+            com.nvidia.rtxremix.minecraft.debug.RtxDebugStats.onPresent();
+            com.nvidia.rtxremix.minecraft.debug.RtxDebugStats.enableByDefault(net.minecraft.client.Minecraft.getInstance());
         } catch (Exception e) {
             failed = true;
             logPresentFailureOnce("Error presenting frame", e);

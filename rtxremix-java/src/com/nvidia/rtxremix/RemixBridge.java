@@ -287,6 +287,12 @@ public final class RemixBridge {
     /** Linux only: forwards overlay input. Kinds: 0 mouse move, 1 mouse button, 2 wheel, 3 key, 4 char, 5 focus. */
     public static native void linuxInput(int kind, int a, float x, float y);
 
+    /**
+     * Linux only: runtime frame statistics into {@code out[8]}: rendered frames, presented frames (incl. interpolated),
+     * last multiplier, render width/height, output width/height, upscaler id. False if the runtime lacks the export.
+     */
+    public static native boolean linuxFrameStats(long[] out);
+
     public static native long d3d9CreateDevice(long pD3D9Ex, long hwnd,
                                                int width, int height);
 
