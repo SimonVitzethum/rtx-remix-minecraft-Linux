@@ -109,6 +109,35 @@ public final class RtxSettingsFactory {
                 com.nvidia.rtxremix.minecraft.terrain.lod.TerrainLod::getDistance,
                 com.nvidia.rtxremix.minecraft.terrain.lod.TerrainLod::setDistance));
 
+        // --- Far field (Vulkan backend only): terrain beyond the path-traced radius as a ray marched environment ---
+        list.add(RtxSetting.ofBool("farfield.enabled", SettingGroup.FAR_FIELD,
+                "rtxremix.setting.farfield.enabled", "rtxremix.setting.farfield.enabled.tip",
+                com.nvidia.rtxremix.minecraft.vulkan.FarField.getEnabledSetting(),
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::getEnabledSetting,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::setEnabledSetting));
+        list.add(RtxSetting.ofInt("farfield.radius", SettingGroup.FAR_FIELD,
+                "rtxremix.setting.farfield.radius", "rtxremix.setting.farfield.radius.tip",
+                0, com.nvidia.rtxremix.minecraft.vulkan.FarField.MAX_RADIUS_CHUNKS,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField.getRadiusSetting(),
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::getRadiusSetting,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::setRadiusSetting));
+        list.add(RtxSetting.ofInt("farfield.distance", SettingGroup.FAR_FIELD,
+                "rtxremix.setting.farfield.distance", "rtxremix.setting.farfield.distance.tip",
+                16, com.nvidia.rtxremix.minecraft.vulkan.FarField.MAX_DISTANCE_CHUNKS,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField.getDistanceSetting(),
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::getDistanceSetting,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::setDistanceSetting));
+        list.add(RtxSetting.ofBool("farfield.fog", SettingGroup.FAR_FIELD,
+                "rtxremix.setting.farfield.fog", "rtxremix.setting.farfield.fog.tip",
+                com.nvidia.rtxremix.minecraft.vulkan.FarField.getFogSetting(),
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::getFogSetting,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::setFogSetting));
+        list.add(RtxSetting.ofBool("farfield.shadows", SettingGroup.FAR_FIELD,
+                "rtxremix.setting.farfield.shadows", "rtxremix.setting.farfield.shadows.tip",
+                com.nvidia.rtxremix.minecraft.vulkan.FarField.getShadowsSetting(),
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::getShadowsSetting,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::setShadowsSetting));
+
         // --- Framerate ---
         list.add(unfocusedFramerate());
 

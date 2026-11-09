@@ -138,6 +138,14 @@ public final class RemixInputTestScript {
             case "size" -> org.lwjgl.sdl.SDLVideo.SDL_SetWindowSize(h, Integer.parseInt(w[1]), Integer.parseInt(w[2]));
             case "shot" -> LOGGER.info("shot marker {}", w.length > 1 ? w[1] : "");
             case "cmd" -> mc.player.connection.sendCommand(String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length)));
+            case "scmd" -> {
+                // server-side command with full permission (test worlds without cheats): scmd execute as @p run tp @s 0 120 0
+                net.minecraft.server.MinecraftServer server = mc.getSingleplayerServer();
+                String text = String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length));
+                if (server != null) {
+                    server.execute(() -> server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), text));
+                }
+            }
             case "look" -> {
                 float yaw = Float.parseFloat(w[1]);
                 float pitch = Float.parseFloat(w[2]);

@@ -220,16 +220,37 @@ final class FarFieldGpu implements AutoCloseable {
         }
     }
 
-    /** Copies a new DAG into the GPU buffer (grows it when needed). Only call while no dispatch is in flight. */
-    void uploadDag(int[] nodes, int words) {
+    private Buf dagNext;
+    private int upWords, upDone;
+
+    /** Starts an incremental DAG upload into the spare buffer (the live one may still be read by an in-flight dispatch). */
+    void beginUpload(int words) {
         long bytes = Math.max(32L, (long) words * 4L);
-        if (dag == null || dag.size < bytes) {
-            destroyBuffer(dag);
-            dag = createBuffer(bytes + bytes / 4, VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+        if (dagNext == null || dagNext.size < bytes) {
+            destroyBuffer(dagNext);
+            dagNext = createBuffer(bytes + bytes / 8, VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
         }
-        dag.mapped.clear();
-        dag.mapped.asIntBuffer().put(nodes, 0, words);
-        vmaFlush(dag);
+        upWords = words;
+        upDone = 0;
+    }
+
+    /** Copies up to {@code maxWords} more words of the DAG; returns true when the whole DAG is in the spare buffer. */
+    boolean uploadSlice(int[] nodes, int maxWords) {
+        int n = Math.min(maxWords, upWords - upDone);
+        dagNext.mapped.clear();
+        dagNext.mapped.position(upDone * 4);
+        dagNext.mapped.asIntBuffer().put(nodes, upDone, n);
+        dagNext.mapped.clear();
+        upDone += n;
+        return upDone >= upWords;
+    }
+
+    /** Makes the uploaded DAG the live one (only while no dispatch is in flight). */
+    void commitUpload() {
+        vmaFlush(dagNext);
+        Buf t = dag;
+        dag = dagNext;
+        dagNext = t;
     }
 
     /** Records and submits one render + readback. {@code push} holds PUSH_BYTES. */
@@ -324,6 +345,7 @@ final class FarFieldGpu implements AutoCloseable {
         }
         VK12.vkDeviceWaitIdle(vk);
         destroyBuffer(dag);
+        destroyBuffer(dagNext);
         destroyBuffer(aux);
         destroyBuffer(readback);
         VK12.vkDestroyQueryPool(vk, queryPool, null);

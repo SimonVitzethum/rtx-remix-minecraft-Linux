@@ -8,9 +8,9 @@
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-// Node k = nodes[8k .. 8k+7], each child: 0 empty, bit 31 set = uniform leaf of material (low bits), else node index.
+// Node k = nodes[8k .. 8k+7], each child: 0 empty, bit 31 set = uniform leaf of one colour (low 16 bits RGB565), else node index.
 layout(std430, binding = 0) readonly buffer Dag { uint nodes[]; };
-// aux[0..255] = palette (0xRRGGBB, material m = MapColor id + 1); aux[256 + 2 * i] = sky texel i as two packed halves.
+// aux[0..255] unused; aux[256 + 2 * i] = sky texel i as two packed halves. Leaf payload = RGB565 colour.
 layout(std430, binding = 1) readonly buffer Aux { uint aux[]; };
 layout(rgba16f, binding = 2) uniform writeonly image2D outImage;
 
@@ -25,7 +25,7 @@ layout(push_constant) uniform PC {
 
 const float PI = 3.14159265358979;
 const uint LEAF = 0x80000000u;
-const int STACK = 96;
+const int STACK = 128;
 
 vec3 skyAt(vec3 t) {
     // t is the texture-space direction (same convention as sky_atmosphere.comp::skyDirection).
@@ -60,53 +60,40 @@ bool box(vec3 ro, vec3 invd, vec3 bmin, float size, out float tmin) {
     return tmax >= max(tmin, 0.0);
 }
 
-void main() {
-    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
-    int W = pc.dims.z, H = pc.dims.w;
-    if (px.x >= W || px.y >= H) return;
-    float u = (float(px.x) + 0.5) / float(W);
-    float v = (float(px.y) + 0.5) / float(H);
-    float theta = v * PI, phi = u * 2.0 * PI - 0.5 * PI;
-    vec3 t = vec3(sin(theta) * cos(phi), cos(theta), sin(theta) * sin(phi));
-    vec3 rd = vec3(-t.x, t.y, t.z); // texture space -> world space (the mod mirrors X for the dome)
-    vec3 sky = skyAt(t);
-
-    vec3 ro = pc.camSize.xyz;
+// Front-to-back traversal. anyHit stops at the first leaf (shadow rays); tLimit bounds the ray.
+bool march(vec3 ro, vec3 rd, bool anyHit, float tLimit, out float hitT, out uint hitLeaf, out vec3 hitN) {
     vec3 sgn = vec3(rd.x < 0.0 ? -1.0 : 1.0, rd.y < 0.0 ? -1.0 : 1.0, rd.z < 0.0 ? -1.0 : 1.0);
     vec3 safe = mix(rd, sgn * 1e-6, lessThan(abs(rd), vec3(1e-6)));
     vec3 invd = 1.0 / safe;
-
     uint sRef[STACK];
     ivec3 sOrg[STACK];
     int sLvl[STACK];
     int sp = 0;
     float tRoot;
-    bool found = false;
-    float hitT = 0.0;
-    uint hitMat = 0u;
-    vec3 hitN = vec3(0.0, 1.0, 0.0);
     uint root = uint(pc.dims.x);
+    hitT = 0.0; hitLeaf = 0u; hitN = vec3(0.0, 1.0, 0.0);
     if (root != 0u && box(ro, invd, vec3(0.0), pc.camSize.w, tRoot)) {
         sRef[0] = root; sOrg[0] = ivec3(0); sLvl[0] = pc.dims.y; sp = 1;
     }
     int guard = 0;
-    while (sp > 0 && guard++ < 8192) {
+    while (sp > 0 && guard++ < 16384) {
         sp--;
         uint ref = sRef[sp];
         ivec3 org = sOrg[sp];
         int lvl = sLvl[sp];
         if ((ref & LEAF) != 0u) {
-            float size = float(1 << lvl), tn;
+            float size = float(1 << lvl);
             vec3 t0 = (vec3(org) - ro) * invd, t1 = (vec3(org) + size - ro) * invd;
             vec3 lo = min(t0, t1);
-            tn = max(max(lo.x, lo.y), lo.z);
-            hitT = max(tn, 0.0);
-            hitMat = ref & 0xffu;
+            float tn = max(max(lo.x, lo.y), lo.z);
+            if (tn > tLimit) return false;
+            if (tn < 0.0) continue; // the ray starts inside this cell (camera or shadow origin in coarse terrain): pass through
+            hitT = tn;
+            hitLeaf = ref;
             if (lo.x >= lo.y && lo.x >= lo.z) hitN = vec3(-sgn.x, 0, 0);
             else if (lo.y >= lo.z) hitN = vec3(0, -sgn.y, 0);
             else hitN = vec3(0, 0, -sgn.z);
-            found = true;
-            break;
+            return true;
         }
         int hs = 1 << (lvl - 1);
         int cidx[8]; float ct[8]; int cn = 0;
@@ -115,7 +102,6 @@ void main() {
             ivec3 co = org + ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1) * hs;
             float tc;
             if (!box(ro, invd, vec3(co), float(hs), tc)) continue;
-            // insertion sort, far first, so the nearest child is popped first
             int j = cn++;
             while (j > 0 && ct[j - 1] < tc) { ct[j] = ct[j - 1]; cidx[j] = cidx[j - 1]; j--; }
             ct[j] = tc; cidx[j] = i;
@@ -128,15 +114,40 @@ void main() {
             sp++;
         }
     }
+    return false;
+}
 
+vec3 rgb565(uint v) {
+    return vec3(float((v >> 11) & 31u) / 31.0, float((v >> 5) & 63u) / 63.0, float(v & 31u) / 31.0);
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    int W = pc.dims.z, H = pc.dims.w;
+    if (px.x >= W || px.y >= H) return;
+    float u = (float(px.x) + 0.5) / float(W);
+    float v = (float(px.y) + 0.5) / float(H);
+    float theta = v * PI, phi = u * 2.0 * PI - 0.5 * PI;
+    vec3 t = vec3(sin(theta) * cos(phi), cos(theta), sin(theta) * sin(phi));
+    vec3 rd = vec3(-t.x, t.y, t.z); // texture space -> world space (the mod mirrors X for the dome)
+    vec3 sky = skyAt(t);
+
+    vec3 ro = pc.camSize.xyz;
+    float hitT; uint leaf; vec3 hitN;
     vec3 color = sky;
-    if (found) {
-        uint rgb = aux[hitMat];
-        vec3 albedo = vec3(float((rgb >> 16) & 255u), float((rgb >> 8) & 255u), float(rgb & 255u)) / 255.0;
-        albedo = pow(albedo, vec3(2.2));
-        float ndl = max(dot(hitN, pc.sunDir.xyz), 0.0);
-        vec3 lit = albedo * (pc.ambient.rgb * (0.6 + 0.4 * hitN.y) + pc.sunE.rgb * ndl);
-        float fog = 1.0 - exp(-hitT / max(pc.ambient.w, 1.0));
+    if (march(ro, rd, false, 1e30, hitT, leaf, hitN)) {
+        vec3 albedo = pow(rgb565(leaf & 0xffffu), vec3(2.2));
+        vec3 sunDir = pc.sunDir.xyz;
+        float ndl = max(dot(hitN, sunDir), 0.0);
+        float sh = 1.0;
+        if (ndl > 0.0 && (pc.skyDims.z & 1) != 0) {
+            vec3 p = ro + rd * hitT + hitN * 0.5;
+            float t2; uint l2; vec3 n2;
+            if (march(p, sunDir, true, 3000.0, t2, l2, n2)) sh = 0.0;
+        }
+        vec3 lit = albedo * (pc.ambient.rgb * (0.6 + 0.4 * hitN.y) + pc.sunE.rgb * ndl * sh);
+        float fogD = pc.ambient.w; // 0 = no aerial perspective
+        float fog = fogD > 0.0 ? 1.0 - exp(-hitT / fogD) : 0.0;
         color = mix(lit, sky, fog);
     }
     imageStore(outImage, px, vec4(color, 1.0));

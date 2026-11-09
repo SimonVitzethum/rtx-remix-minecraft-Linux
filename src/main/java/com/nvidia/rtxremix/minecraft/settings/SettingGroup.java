@@ -7,6 +7,7 @@ package com.nvidia.rtxremix.minecraft.settings;
 /** Ordering of constants drives ordering of rows in the settings screen. */
 public enum SettingGroup {
     RENDER_DISTANCE(SettingCategory.PERFORMANCE, "rtxremix.settings.group.renderDistance"),
+    FAR_FIELD(SettingCategory.PERFORMANCE, "rtxremix.settings.group.farField"),
     FRAMERATE(SettingCategory.PERFORMANCE, "rtxremix.settings.group.framerate"),
     UPSCALING(SettingCategory.PERFORMANCE, "rtxremix.settings.group.upscaling"),
     SKY(SettingCategory.LIGHTING, "rtxremix.settings.group.sky"),
