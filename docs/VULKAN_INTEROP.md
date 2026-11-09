@@ -42,5 +42,16 @@ The FD of an image/semaphore is reported once and the number repeated afterwards
 1. Init: import both semaphores (`vkImportSemaphoreFdKHR`, timeline).
 2. After world: `compositeWorld`: in the frame submission wait dxvkDone, copy/blit Remix image over the main RT (before HUD).
 3. At `VulkanGpuSurface.present` HEAD (`VulkanGpuSurfaceMixin` -> `RemixRenderer.presentFrameVk`): own submission waits dxvkDone, copies the main RT into the
-   Remix image, signals clientDone; then `remix.Present` with `interopFlipY = 0` (Vulkan row order).
+   Remix image, signals clientDone; then `remix.Present` with `interopFlipY = 1`.
 Imported images get a one-time UNDEFINED to GENERAL transition (relies on driver keeping contents; no queue-family-external ownership transfer).
+
+## Corrections found by running it (S14)
+- Minecraft's Vulkan main render target is stored bottom-up like GL's (its swapchain blit flips it). Both copies therefore flip like the GL path:
+  composite = flipping blit (Remix image -> main RT), present copy = plain copy, `interopFlipY = 1`.
+- LWJGL's typed `pNext(struct)` PREPENDS and overwrites the struct's own pNext. Chaining dedicated -> import by hand and then calling `allocate.pNext(dedicated)`
+  silently dropped the FD import: a fresh unshared allocation that works in isolation (symptom: nothing written by either side is ever seen by the other).
+- The procedural sky is OpenGL compute code; under Vulkan `SideGlContext` creates a hidden SDL GL 4.4 window/context, kept current on the render thread.
+  Minecraft's `Window.handleEvent` does not check window ids, so `WindowMixin` drops the side window's events (else it resized the main window to 64x64).
+- Shared images get queue family ownership transfers to/from `VK_QUEUE_FAMILY_EXTERNAL`.
+- Debug aids: file `rtxremix-vk-debug` in the game dir (or `-Drtxremix.vk.debug`): `readback` (PNG of main RT / Remix image to /tmp), `clear`, `sync`.
+- Not ported (GL only): rain/snow overlay (`RemixWeatherRenderer`, GL shaders on MC GL textures) is skipped under Vulkan; the exported depth image is imported but unused.

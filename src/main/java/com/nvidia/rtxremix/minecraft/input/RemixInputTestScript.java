@@ -135,6 +135,7 @@ public final class RemixInputTestScript {
             }
             case "get" -> LOGGER.info("get {} = {}", w[1],
                     RtxRemixMod.renderer.getRemixApi().getConfigVariableResolved(w[1]));
+            case "size" -> org.lwjgl.sdl.SDLVideo.SDL_SetWindowSize(h, Integer.parseInt(w[1]), Integer.parseInt(w[2]));
             case "shot" -> LOGGER.info("shot marker {}", w.length > 1 ? w[1] : "");
             case "cmd" -> mc.player.connection.sendCommand(String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length)));
             case "look" -> {
