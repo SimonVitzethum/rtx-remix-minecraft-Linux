@@ -80,7 +80,7 @@ final class BlockGridTest {
                     for (int y = oy; y <= oy + 4; y++) {
                         level.setBlock(new BlockPos(x, y, z), Blocks.AIR.defaultBlockState(), 2 | 16);
                     }
-                    level.setBlock(new BlockPos(x, oy - 1, z), Blocks.CONCRETE.pick(net.minecraft.world.item.DyeColor.LIGHT_GRAY).defaultBlockState(), 2 | 16);
+                    level.setBlock(new BlockPos(x, oy - 1, z), Blocks.CONCRETE.pick(net.minecraft.world.item.DyeColor.GRAY).defaultBlockState(), 2 | 16);
                 }
             }
             int i = 0;
@@ -93,9 +93,8 @@ final class BlockGridTest {
                 try {
                     var res = BlockStateParser.parseForBlock(level.holderLookup(net.minecraft.core.registries.Registries.BLOCK), e, true);
                     BlockPos pos = new BlockPos(x, oy, z);
-                    // backdrop behind (north) so wall-mounted blocks and cutouts have contrast
-                    level.setBlock(pos.north(), Blocks.CONCRETE.pick(net.minecraft.world.item.DyeColor.PURPLE).defaultBlockState(), 2 | 16);
-                    level.setBlock(pos.north().above(), Blocks.CONCRETE.pick(net.minecraft.world.item.DyeColor.PURPLE).defaultBlockState(), 2 | 16);
+                    // dark floor with a light pad under each block: cutouts and translucency show against both
+                    level.setBlock(pos.below(), Blocks.CONCRETE.pick(net.minecraft.world.item.DyeColor.LIGHT_GRAY).defaultBlockState(), 2 | 16);
                     level.setBlock(pos, res.blockState(), 2 | 16);
                     if (res.nbt() != null) {
                         var be = level.getBlockEntity(pos);

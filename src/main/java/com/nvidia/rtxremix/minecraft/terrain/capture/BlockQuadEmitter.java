@@ -469,6 +469,12 @@ public final class BlockQuadEmitter {
 
         TextureAtlasSprite sprite = blockSpriteFinder().find(quad);
         Identifier spriteId = sprite.contents().name();
+        // Redstone dust is modelled with force_translucent textures (flat, tinted, mostly transparent quads).
+        // Remix's translucent material is refractive glass: the dust turned clear and, unpowered, invisible.
+        // It is a decal, so it takes the alpha-tested layer; the coplanar overlay quad becomes a decal.
+        if (spriteId.getPath().startsWith("block/redstone_dust")) {
+            layerName = "cutout";
+        }
         if (isWaterSprite(spriteId)) {
             emitBlockWaterQuad(nx, ny, nz, color, layerName);
             return;
