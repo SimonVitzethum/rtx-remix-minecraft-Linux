@@ -206,3 +206,15 @@ Open a fresh screen instance, as the settings reset paths do.
 | Make a texture pack this renderer understands | [Resource Packs](RESOURCE_PACKS.md) |
 | Record a camera flythrough | [Camera Paths](CAMERA_PATHS.md) |
 | Install, repair, or uninstall | [Playing](PLAYING.md) |
+
+## Far field in multiplayer (Vulkan backend)
+
+The far field (terrain beyond the path-traced radius, ray marched into the environment light) needs chunk data the client does not have in
+multiplayer. Two sources feed it, both optional:
+
+- **Far Chunk Cache** (Performance > Far Field, default on, applies on world join): the surface (height and biome-tinted colour) of every chunk the
+  server sent is remembered per server in `<game dir>/rtxremix-farcache/<server>/<dimension>/`, so terrain you visited stays visible beyond the
+  server view distance, also after relogging. **Far Cache Size (MB)** limits the disk use of all servers together (oldest regions are deleted).
+  `rtxremix-farfield` keys: `cache=0|1`, `cacheMb=N`.
+- **Bobby** (optional mod, 26.3 build 5.2.16 or newer): its cached "fake chunks" are drawn by the far field as exact terrain beyond the traced radius;
+  the settings screen notes "Bobby detected". Bobby's own render distance (`config/bobby.conf`) bounds how far its chunks reach; the cache covers the rest.
