@@ -177,10 +177,11 @@ public final class RemixInputTestScript {
                 if (w.length > 5) com.nvidia.rtxremix.minecraft.light.Fullbright.evMinDrop = Float.parseFloat(w[5]);
             }
             case "shot" -> {
-                LOGGER.info("shot marker {}", w.length > 1 ? w[1] : "");
+                String shotName = w.length > 2 ? w[2] : (w.length > 1 ? w[1] : "");
+                LOGGER.info("shot marker {}", shotName);
                 // The external screenshot tool acknowledges with a file; the render thread waits (max 30 s) so the picture is of this moment.
-                Path ack = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("shot-ack-" + (w.length > 1 ? w[1] : ""));
-                if (w.length > 1 && Boolean.getBoolean("rtxremix.test.shotAck") || Files.exists(net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("shot-ack-enable"))) {
+                Path ack = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("shot-ack-" + shotName);
+                if (Boolean.getBoolean("rtxremix.test.shotAck") || Files.exists(net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("shot-ack-enable"))) {
                     for (int i = 0; i < 300 && !Files.exists(ack); i++) {
                         Thread.sleep(100);
                     }
