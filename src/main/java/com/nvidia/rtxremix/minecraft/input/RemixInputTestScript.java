@@ -29,6 +29,9 @@ import java.util.List;
  * <pre>
  * open [dev|graphics]      RtxRemixMod.openRemixMenu
  * conf KEY VALUE          Remix config variable (SetConfigVariable), e.g. conf rtx.qualityDLSS 2
+ * cmd TEXT...             chat command without the slash (sendCommand), e.g. cmd tp @s 0 100 0 90 0
+ * look YAW PITCH          set the local player's view direction (degrees)
+ * diag                     log client/server loaded chunk counts and view distances
  * close                    close the menu like Alt+X does
  * altx                     Alt+X chord through KeyboardHandler.keyPress (toggles the developer menu)
  * move X Y                 cursor in window coordinates; "c" is the window centre; X and Y may be fractions like 0.5
@@ -127,6 +130,23 @@ public final class RemixInputTestScript {
             }
             case "get" -> LOGGER.info("get {} = {}", w[1],
                     RtxRemixMod.renderer.getRemixApi().getConfigVariableResolved(w[1]));
+            case "cmd" -> mc.player.connection.sendCommand(String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length)));
+            case "look" -> {
+                float yaw = Float.parseFloat(w[1]);
+                float pitch = Float.parseFloat(w[2]);
+                mc.player.setYRot(yaw);
+                mc.player.setXRot(pitch);
+                mc.player.yRotO = yaw;
+                mc.player.xRotO = pitch;
+            }
+            case "diag" -> {
+                var srv = mc.getSingleplayerServer();
+                LOGGER.info("diag: client loaded chunks={} effectiveRD={} optionRD={} serverViewDistance={} serverLoaded={}",
+                        mc.level.getChunkSource().getLoadedChunksCount(), mc.options.getEffectiveRenderDistance(),
+                        mc.options.renderDistance().get(),
+                        srv == null ? -1 : srv.getPlayerList().getViewDistance(),
+                        srv == null ? -1 : srv.overworld().getChunkSource().getLoadedChunksCount());
+            }
             case "close" -> {
                 if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
                     RtxRemixMod.toggleRemixMenu();
