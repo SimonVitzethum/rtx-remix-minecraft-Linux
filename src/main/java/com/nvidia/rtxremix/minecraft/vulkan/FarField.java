@@ -75,6 +75,9 @@ public final class FarField {
     private static boolean configRead;
     private static volatile boolean enabled;
     private static volatile int radius = 0, distance = 256;
+    /** Multiplayer chunk cache (surface columns of every chunk received, per server) and its disk limit. */
+    private static volatile boolean cacheOn = true;
+    private static volatile int cacheMb = 256;
     private static int width = 2048, cut = 1, lodThreads = 2, buildThreads = 3;
     private static volatile boolean fogOn = false, shadowsOn = true;
     private static float fogDist = 4000f, sunBoost = 1f;
@@ -96,6 +99,10 @@ public final class FarField {
     public static void setRadiusSetting(int chunks) { radius = Math.clamp(chunks, 0, MAX_RADIUS_CHUNKS); }
     public static int getDistanceSetting() { readConfig(); return distance; }
     public static void setDistanceSetting(int chunks) { distance = Math.clamp(chunks, 16, MAX_DISTANCE_CHUNKS); }
+    public static boolean getCacheSetting() { readConfig(); return cacheOn; }
+    public static void setCacheSetting(boolean on) { cacheOn = on; }
+    public static int getCacheMbSetting() { readConfig(); return cacheMb; }
+    public static void setCacheMbSetting(int mb) { cacheMb = Math.clamp(mb, 16, 4096); }
     public static boolean getFogSetting() { readConfig(); return fogOn; }
     public static void setFogSetting(boolean on) { fogOn = on; }
     public static boolean getShadowsSetting() { readConfig(); return shadowsOn; }
@@ -124,6 +131,8 @@ public final class FarField {
                     case "radius" -> radius = Math.clamp(Integer.parseInt(v), 0, MAX_RADIUS_CHUNKS);
                     case "distance" -> distance = Math.clamp(Integer.parseInt(v), 16, MAX_DISTANCE_CHUNKS);
                     case "width" -> width = Integer.parseInt(v);
+                    case "cache" -> cacheOn = !v.equals("0");
+                    case "cacheMb" -> cacheMb = Math.clamp(Integer.parseInt(v), 16, 4096);
                     case "fog" -> fogOn = !v.equals("0");
                     case "fogDist" -> fogDist = Float.parseFloat(v);
                     case "shadows" -> shadowsOn = !v.equals("0");
@@ -209,7 +218,9 @@ public final class FarField {
     private long lastMergeMs, lastPlanMs, lastStatMs;
 
     private Object levelKey;
-    private FarLodSource source;
+    private FarTileSource source;
+    /** Loaded real chunks handed to the multiplayer cache (render thread): position -> chunk object recorded last. */
+    private final HashMap<Long, LevelChunk> tracked = new HashMap<>();
     private int camChunkX = Integer.MIN_VALUE, camChunkZ = Integer.MIN_VALUE;
     private volatile int lastRadius = 6;
     private Build current, uploading;
@@ -317,7 +328,7 @@ public final class FarField {
         if (now - lastStatMs > 10_000 && source != null && (source.pending() > 0 || pendingTasks.get() > 0)) {
             lastStatMs = now;
             LOGGER.info("FarField progress: lod tiles generated {} (disk {}, pending {}), subtree tasks pending {}, cached subtrees {}",
-                    source.generated.get(), source.loadedFromDisk.get(), source.pending(), pendingTasks.get(), cache.size());
+                    source.generatedCount(), source.diskCount(), source.pending(), pendingTasks.get(), cache.size());
         }
 
         // 4. render when something changed
@@ -346,8 +357,24 @@ public final class FarField {
         minY = level.getMinY();
         worldHeight = level.getHeight();
         MinecraftServer server = Minecraft.getInstance().getSingleplayerServer();
+        tracked.clear();
         if (server == null) {
-            LOGGER.info("FarField: no integrated server, only loaded chunks (no LOD beyond the server view distance)");
+            if (!cacheOn) {
+                LOGGER.info("FarField: no integrated server and the chunk cache is off, only loaded chunks");
+                return;
+            }
+            try {
+                var current = Minecraft.getInstance().getCurrentServer();
+                String name = current == null ? "unknown" : current.ip;
+                name = name.replaceAll("[^A-Za-z0-9._-]", "_");
+                Path dir = FabricLoader.getInstance().getGameDir().resolve("rtxremix-farcache").resolve(name)
+                        .resolve(level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
+                source = new FarCacheSource(dir, cacheMb, minY);
+                LOGGER.info("FarField: multiplayer chunk cache {} (limit {} MB){}", dir, cacheMb,
+                        BobbyCompat.isPresent() ? ", Bobby fake chunks are read as well" : "");
+            } catch (RuntimeException | Error e) {
+                LOGGER.error("FarField: chunk cache init failed", e);
+            }
             return;
         }
         ServerLevel sl = server.getLevel(level.dimension());
@@ -380,22 +407,31 @@ public final class FarField {
         int originSx = csx - cubeSub / 2, originSz = csz - cubeSub / 2;
         if (source != null) source.setCenter((int) cam.x, (int) cam.z);
 
-        // loaded client chunks, grouped per column
+        // loaded client chunks (Bobby's fake chunks included), grouped per column; real ones are also offered to the multiplayer cache
         HashMap<Long, ColumnIn> loaded = new HashMap<>();
         int lm = rd + 2;
+        java.util.HashSet<Long> seen = new java.util.HashSet<>();
+        int recordBudget = 128;
         for (int dx = -lm; dx <= lm; dx++) {
             for (int dz = -lm; dz <= lm; dz++) {
                 LevelChunk c = level.getChunkSource().getChunkNow(camChunkX + dx, camChunkZ + dz);
                 if (c == null) continue;
-                int cx = camChunkX + dx, cz = camChunkZ + dz;
-                long k = subKey(Math.floorDiv(cx, 16), Math.floorDiv(cz, 16));
-                ColumnIn in = loaded.computeIfAbsent(k, x -> new ColumnIn());
-                int slot = (Math.floorMod(cz, 16) << 4) | Math.floorMod(cx, 16);
-                int d = Math.max(Math.abs(dx), Math.abs(dz));
-                in.chunks[slot] = c;
-                in.cls[slot] = (byte) (d < R - 1 ? 1 : 2);
-                in.loaded++;
-                in.sig = in.sig * 1000003L + slot * 4 + in.cls[slot] + 0x9E3779B9L * System.identityHashCode(c);
+                recordBudget = addLoaded(loaded, seen, c, camChunkX + dx, camChunkZ + dz, R, recordBudget);
+            }
+        }
+        if (BobbyCompat.isPresent()) {
+            for (LevelChunk c : BobbyCompat.fakeChunks(level)) {
+                int cx = c.getPos().x(), cz = c.getPos().z();
+                if (!seen.add(((long) cx << 32) | (cz & 0xFFFFFFFFL))) continue;
+                addLoaded(loaded, seen, c, cx, cz, R, recordBudget);
+            }
+        }
+        if (source instanceof FarCacheSource cs) {
+            // chunks that left the client: record their last state once more
+            var it = tracked.entrySet().iterator();
+            while (it.hasNext()) {
+                var e = it.next();
+                if (!seen.contains(e.getKey()) && cs.record(e.getValue())) it.remove();
             }
         }
 
@@ -439,7 +475,7 @@ public final class FarField {
                 }
             }
             long sig = (lgUsed + 2L) * 0x100000001B3L ^ (in == null ? 0L : in.sig) ^ ((long) (in == null ? 0 : in.loaded) << 50)
-                    ^ (tile == null ? 0L : 0x5555L);
+                    ^ (tile == null ? 0L : 0x5555L + tile.version * 0x9E3779B97F4A7C15L);
             Entry e = cache.get(key);
             if (e != null && e.sig == sig) continue;
             if (budget <= 0 || inProgress.putIfAbsent(key, Boolean.TRUE) != null) continue;
@@ -500,6 +536,27 @@ public final class FarField {
                 }
             });
         }
+    }
+
+    /** Adds one client chunk to its column; real chunks go to the multiplayer cache (at most {@code recordBudget} per call). */
+    private int addLoaded(HashMap<Long, ColumnIn> loaded, java.util.Set<Long> seen, LevelChunk c, int cx, int cz, int R, int recordBudget) {
+        long pk = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
+        seen.add(pk);
+        long k = subKey(Math.floorDiv(cx, 16), Math.floorDiv(cz, 16));
+        ColumnIn in = loaded.computeIfAbsent(k, x -> new ColumnIn());
+        int slot = (Math.floorMod(cz, 16) << 4) | Math.floorMod(cx, 16);
+        int d = Math.max(Math.abs(cx - camChunkX), Math.abs(cz - camChunkZ));
+        in.chunks[slot] = c;
+        in.cls[slot] = (byte) (d < R - 1 ? 1 : 2);
+        in.loaded++;
+        in.sig = in.sig * 1000003L + slot * 4 + in.cls[slot] + 0x9E3779B9L * System.identityHashCode(c);
+        if (source instanceof FarCacheSource cs && recordBudget > 0 && !BobbyCompat.isFake(c) && tracked.get(pk) != c) {
+            if (cs.record(c)) {
+                tracked.put(pk, c);
+                recordBudget--;
+            }
+        }
+        return recordBudget;
     }
 
     private Build merge(long[] wanted, int levels, int originSx, int originSz, int minY, int slabs) {
@@ -603,10 +660,10 @@ public final class FarField {
         return FarSubtree.build(useLg, top, rgb, exact, slabs);
     }
 
-    private static final int KIND_PLAIN = 0, KIND_GRASS = 1, KIND_FOLIAGE = 2, KIND_WATER = 3;
+    static final int KIND_PLAIN = 0, KIND_GRASS = 1, KIND_FOLIAGE = 2, KIND_WATER = 3;
 
     /** Block state to (kind << 24 | rgb), 0 = not visible from afar. */
-    private static int classify(BlockState st) {
+    static int classify(BlockState st) {
         if (st.isAir()) return 0;
         MapColor color = st.getMapColor(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
         if (color == MapColor.NONE) return 0;

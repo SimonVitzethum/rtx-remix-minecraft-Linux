@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>Colour is an approximation of the top block (biome grass / water colour, sand for beaches and deserts, snow when
  * cold, stone on high mountains, terracotta in badlands); trees, structures and caves are not represented.
  */
-final class FarLodSource {
+final class FarLodSource implements FarTileSource {
     private static final Logger LOGGER = LoggerFactory.getLogger(FarLodSource.class);
     static final int TILE_CELLS = 64;
     static final int MIN_LG = 2, MAX_LG = 4;
@@ -50,6 +50,8 @@ final class FarLodSource {
     static final class Tile {
         final short[] top = new short[TILE_CELLS * TILE_CELLS];
         final short[] rgb = new short[TILE_CELLS * TILE_CELLS];
+        /** Changes whenever the content changed (cache sources); part of the column signature. */
+        long version;
     }
 
     private final ChunkGenerator generator;
@@ -109,17 +111,20 @@ final class FarLodSource {
         return ((long) lg << 56) | ((long) (tx & 0xFFFFFFF) << 28) | (long) (tz & 0xFFFFFFF);
     }
 
-    void setCenter(int blockX, int blockZ) {
+    @Override
+    public void setCenter(int blockX, int blockZ) {
         centerX = blockX;
         centerZ = blockZ;
     }
 
     int sea() { return seaLevel; }
 
-    int pending() { return queue.size(); }
+    @Override
+    public int pending() { return queue.size(); }
 
     /** The tile when available, else null and (once) a generation job is queued. */
-    Tile get(int lg, int tx, int tz) {
+    @Override
+    public Tile get(int lg, int tx, int tz) {
         long k = key(lg, tx, tz);
         Tile t = tiles.get(k);
         if (t != null) return t;
@@ -131,12 +136,13 @@ final class FarLodSource {
         return null;
     }
 
-    boolean has(int lg, int tx, int tz) {
+    @Override
+    public boolean has(int lg, int tx, int tz) {
         return tiles.containsKey(key(lg, tx, tz));
     }
 
-    /** Drops tiles farther than the given block distance from the centre (memory bound). */
-    void trim(int maxBlocks) {
+    @Override
+    public void trim(int maxBlocks) {
         if (tiles.size() < 600) return;
         tiles.keySet().removeIf(k -> {
             int lg = (int) (k >>> 56);
@@ -153,10 +159,17 @@ final class FarLodSource {
         });
     }
 
-    void close() {
+    @Override
+    public void close() {
         closed = true;
         for (Thread t : threads) t.interrupt();
     }
+
+    @Override
+    public long generatedCount() { return generated.get(); }
+
+    @Override
+    public long diskCount() { return loadedFromDisk.get(); }
 
     private void run() {
         while (!closed) {

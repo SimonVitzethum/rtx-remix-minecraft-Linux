@@ -35,5 +35,8 @@
         "fabric-api": ">=0.165.0+26.3",
         "minecraft": "~26.3",
         "java": ">=25"
+    },
+    "suggests": {
+        "bobby": ">=5.2.16"
     }
 }

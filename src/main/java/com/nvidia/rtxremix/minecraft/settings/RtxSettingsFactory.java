@@ -138,6 +138,19 @@ public final class RtxSettingsFactory {
                 com.nvidia.rtxremix.minecraft.vulkan.FarField::getShadowsSetting,
                 com.nvidia.rtxremix.minecraft.vulkan.FarField::setShadowsSetting));
 
+        list.add(RtxSetting.ofBool("farfield.cache", SettingGroup.FAR_FIELD,
+                "rtxremix.setting.farfield.cache",
+                com.nvidia.rtxremix.minecraft.vulkan.BobbyCompat.isPresent()
+                        ? "rtxremix.setting.farfield.cache.tip.bobby" : "rtxremix.setting.farfield.cache.tip",
+                true,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::getCacheSetting,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::setCacheSetting));
+        list.add(RtxSetting.ofInt("farfield.cacheMb", SettingGroup.FAR_FIELD,
+                "rtxremix.setting.farfield.cacheMb", "rtxremix.setting.farfield.cacheMb.tip",
+                16, 4096, 256,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::getCacheMbSetting,
+                com.nvidia.rtxremix.minecraft.vulkan.FarField::setCacheMbSetting));
+
         // --- Framerate ---
         list.add(unfocusedFramerate());
 
