@@ -218,6 +218,72 @@ namespace dxvk {
     }
 
     generateMips(dstX, dstY, dstX + width, dstY + height);
+
+    // Record the same region per mip level that generateMips rewrote.
+    m_dirty.resize(m_levels.size());
+    uint32_t rx0 = dstX, ry0 = dstY, rx1 = dstX + width, ry1 = dstY + height;
+    for (size_t level = 0; level < m_levels.size(); ++level) {
+      if (level > 0) {
+        const VkExtent2D src = m_extents[level - 1];
+        rx1 = std::min(rx1, src.width); ry1 = std::min(ry1, src.height);
+        rx0 >>= 1; ry0 >>= 1; rx1 = (rx1 + 1) >> 1; ry1 = (ry1 + 1) >> 1;
+      }
+      const VkExtent2D ext = m_extents[level];
+      const uint32_t ex1 = std::min(rx1, ext.width), ey1 = std::min(ry1, ext.height);
+      if (rx0 >= ex1 || ry0 >= ey1) {
+        continue;
+      }
+      // Animated tiles are scattered over a huge atlas: keep separate rectangles (a union would cover most of it) and
+      // only merge a rectangle into another when they overlap or touch. Beyond 256 rectangles everything is merged.
+      auto& rects = m_dirty[level];
+      DirtyRect n = { rx0, ry0, ex1, ey1, true };
+      for (bool merged = true; merged;) {
+        merged = false;
+        for (size_t i = 0; i < rects.size(); ++i) {
+          const DirtyRect& r = rects[i];
+          if (n.x0 <= r.x1 && r.x0 <= n.x1 && n.y0 <= r.y1 && r.y0 <= n.y1) {
+            n = { std::min(n.x0, r.x0), std::min(n.y0, r.y0), std::max(n.x1, r.x1), std::max(n.y1, r.y1), true };
+            rects.erase(rects.begin() + i);
+            merged = true;
+            break;
+          }
+        }
+      }
+      rects.push_back(n);
+      if (rects.size() > 256) {
+        DirtyRect u = rects[0];
+        for (const auto& r : rects) {
+          u = { std::min(u.x0, r.x0), std::min(u.y0, r.y0), std::max(u.x1, r.x1), std::max(u.y1, r.y1), true };
+        }
+        rects.assign(1, u);
+      }
+    }
+    return true;
+  }
+
+  void MemoryAssetData::clearDirty() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_dirty.clear();
+  }
+
+  bool MemoryAssetData::uploadDirty(DxvkContext* ctx, const Rc<DxvkImage>& image) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (image == nullptr || image->info().mipLevels != m_levels.size() || image->info().format != m_info.format
+        || image->info().extent.width != m_extents[0].width || image->info().extent.height != m_extents[0].height) {
+      return false;
+    }
+    for (size_t level = 0; level < m_dirty.size(); ++level) {
+      for (const DirtyRect& d : m_dirty[level]) {
+        const uint32_t levelWidth = m_extents[level].width;
+        const uint8_t* src = m_levels[level].data() + (static_cast<size_t>(d.y0) * levelWidth + d.x0) * m_format.bytesPerPixel;
+        VkImageSubresourceLayers layers = { VK_IMAGE_ASPECT_COLOR_BIT, static_cast<uint32_t>(level), 0, 1 };
+        ctx->updateImage(image, layers,
+          VkOffset3D{ static_cast<int32_t>(d.x0), static_cast<int32_t>(d.y0), 0 },
+          VkExtent3D{ d.x1 - d.x0, d.y1 - d.y0, 1 },
+          src, static_cast<VkDeviceSize>(levelWidth) * m_format.bytesPerPixel, 0);
+      }
+    }
+    m_dirty.clear();
     return true;
   }
 

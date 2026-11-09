@@ -70,6 +70,13 @@ namespace dxvk {
     // Overwrites a rectangle of mip 0 and regenerates the mip chain. Pixel data must be in the texture's format.
     bool patch(uint32_t dstX, uint32_t dstY, uint32_t width, uint32_t height, const uint8_t* pixels, uint32_t rowPitch);
 
+    // Uploads only the regions changed by patch() since the last call (one copy per mip level) into an image that
+    // holds the full mip chain of this asset, then clears the dirty regions. Returns false (and leaves the dirty
+    // regions untouched) when the image does not match, in which case the caller has to upload the whole texture.
+    bool uploadDirty(DxvkContext* ctx, const Rc<DxvkImage>& image);
+    // Forgets the dirty regions (a full upload makes them obsolete).
+    void clearDirty();
+
   private:
     void generateMips(uint32_t rx0 = 0, uint32_t ry0 = 0, uint32_t rx1 = UINT32_MAX, uint32_t ry1 = UINT32_MAX);
 
@@ -77,6 +84,8 @@ namespace dxvk {
     bool m_useMaxFilter;
     std::vector<std::vector<uint8_t>> m_levels;
     std::vector<VkExtent2D> m_extents;
+    struct DirtyRect { uint32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0; bool valid = false; };
+    std::vector<std::vector<DirtyRect>> m_dirty;   // per mip level, the (merged) regions patched since the last upload
     std::mutex m_mutex;
   };
 

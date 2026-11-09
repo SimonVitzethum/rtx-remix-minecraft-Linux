@@ -47,6 +47,20 @@ static std::atomic<int> g_d3d9DlfgTraceCount{0};
 #define D3D9_DLFG_TRACE(...) do {} while (0)
 #endif
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+static bool remixProfileFlag(const char* name) {
+  // Environment variable, or a marker file ~/.remix_<name> (a game started through an already running Prism instance does not see the shell's environment).
+  if (std::getenv(name)) return true;
+  const char* home = std::getenv("HOME");
+#ifndef _WIN32
+  return home && access((std::string(home) + "/.remix_" + name).c_str(), F_OK) == 0;
+#else
+  return false;
+#endif
+}
+
 namespace dxvk {
   // NV-DXVK start: App Controlled FSE
   enum FSEState {
@@ -2187,7 +2201,7 @@ namespace dxvk {
       EnsureInteropSemaphores();
       EnsureInteropImage(extent.width, extent.height);
 
-      static const bool profileSubmit = std::getenv("REMIX_PROFILE_SUBMIT") != nullptr;
+      static const bool profileSubmit = remixProfileFlag("REMIX_PROFILE_SUBMIT");
       using ProfClock = std::chrono::steady_clock;
       static double profEnd = 0, profSync = 0, profGpu = 0; static uint32_t profN = 0;
       const auto profT0 = ProfClock::now();

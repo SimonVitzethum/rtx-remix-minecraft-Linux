@@ -1,4 +1,12 @@
 #include "dxvk_cs.h"
+#include <cxxabi.h>
+#include <typeinfo>
+#include <unordered_map>
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <string>
+#include <vector>
 #include "dxvk_scoped_annotation.h"
 
 // NV-DXVK start: notify user and kill process on exception in CS thread to avoid silent hangs
@@ -6,6 +14,20 @@
 // NV-DXVK end
 
 #include "../tracy/TracyC.h"
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+static bool remixProfileFlag(const char* name) {
+  // Environment variable, or a marker file ~/.remix_<name> (a game started through an already running Prism instance does not see the shell's environment).
+  if (std::getenv(name)) return true;
+  const char* home = std::getenv("HOME");
+#ifndef _WIN32
+  return home && access((std::string(home) + "/.remix_" + name).c_str(), F_OK) == 0;
+#else
+  return false;
+#endif
+}
 
 namespace dxvk {
   
@@ -24,9 +46,60 @@ namespace dxvk {
   }
 
 
+  // REMIX_PROFILE_CS=1: time every command executed on the CS thread, grouped by command type (one lambda type per
+  // EmitCs call site), and log the top entries every 10 seconds together with the idle time of the thread.
+  namespace {
+    struct CsProfile {
+      bool enabled = remixProfileFlag("REMIX_PROFILE_CS");
+      std::unordered_map<const char*, std::pair<double, uint64_t>> perType;
+      double busyMs = 0;
+      std::chrono::steady_clock::time_point windowStart = std::chrono::steady_clock::now();
+      void report() {
+        const auto now = std::chrono::steady_clock::now();
+        const double windowMs = std::chrono::duration<double, std::milli>(now - windowStart).count();
+        if (windowMs < 10000.0) return;
+        std::vector<std::pair<double, const char*>> v;
+        for (auto& kv : perType) v.emplace_back(kv.second.first, kv.first);
+        std::sort(v.rbegin(), v.rend());
+        std::string line = str::format("[CsProfile] window ", windowMs, " ms, cs busy ", busyMs, " ms (", 100.0 * busyMs / windowMs, "%)");
+        for (size_t i = 0; i < v.size() && i < 14; i++) {
+          int st = 0;
+          char* dm = abi::__cxa_demangle(v[i].second, nullptr, nullptr, &st);
+          std::string n = dm ? dm : v[i].second;
+          free(dm);
+          if (n.size() > 150) n.resize(150);
+          line += str::format("\n    ", v[i].first, " ms  x", perType[v[i].second].second, "  ", n);
+        }
+        Logger::info(line);
+        perType.clear(); busyMs = 0; windowStart = now;
+      }
+    };
+    CsProfile g_csProfile;
+  }
+
   void DxvkCsChunk::executeAll(DxvkContext* ctx) {
     ScopedCpuProfileZone();
     auto cmd = m_head;
+
+    if (g_csProfile.enabled) {
+      // Profiling path (CS thread only): same command order and lifetime handling as below.
+      const bool singleUse = m_flags.test(DxvkCsChunkFlag::SingleUse);
+      if (singleUse) m_commandOffset = 0;
+      while (cmd != nullptr) {
+        auto next = cmd->next();
+        const auto t0 = std::chrono::steady_clock::now();
+        cmd->exec(ctx);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        auto& e = g_csProfile.perType[typeid(*cmd).name()];
+        e.first += ms; e.second++;
+        g_csProfile.busyMs += ms;
+        if (singleUse) cmd->~DxvkCsCmd();
+        cmd = next;
+      }
+      if (singleUse) { m_head = nullptr; m_tail = nullptr; }
+      g_csProfile.report();
+      return;
+    }
     
     if (m_flags.test(DxvkCsChunkFlag::SingleUse)) {
       m_commandOffset = 0;

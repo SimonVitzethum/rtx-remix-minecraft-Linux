@@ -26,6 +26,7 @@
 #include "dxvk_device.h"
 #include "client/TracyProfiler.hpp"
 #include <map>
+#include <chrono>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -33,6 +34,20 @@
 
 // Global overload
 TRACY_OBJECT_MEMORY_PROFILING
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+static bool remixProfileFlag(const char* name) {
+  // Environment variable, or a marker file ~/.remix_<name> (a game started through an already running Prism instance does not see the shell's environment).
+  if (std::getenv(name)) return true;
+  const char* home = std::getenv("HOME");
+#ifndef _WIN32
+  return home && access((std::string(home) + "/.remix_" + name).c_str(), F_OK) == 0;
+#else
+  return false;
+#endif
+}
 
 namespace dxvk {
 
@@ -42,13 +57,15 @@ namespace dxvk {
     struct GpuZoneProfiler {
       static constexpr uint32_t kSegments = 4, kPerSegment = 1024;
       struct Zone { const char* name; uint32_t begin; uint32_t end; };
-      bool enabled = std::getenv("REMIX_PROFILE_GPU") != nullptr;
+      bool enabled = remixProfileFlag("REMIX_PROFILE_GPU");
       VkQueryPool pool = VK_NULL_HANDLE;
       uint32_t segment = 0, used = 0;
       bool segmentValid[kSegments] = {};
       std::vector<Zone> zones[kSegments];
       std::vector<uint32_t> stack;
       std::map<std::string, double> sumMs;
+      std::map<std::string, double> cpuSumMs;   // wall time spent between zone begin and end on the recording thread
+      std::vector<std::chrono::steady_clock::time_point> cpuStack;
       uint32_t frames = 0;
       uint32_t skipped = 0;
       bool active = false;
@@ -78,7 +95,13 @@ namespace dxvk {
           std::string line = "[GpuProfile] avg ms/frame (inclusive, nested zones overlap):";
           for (auto& p : v) line += str::format("\n    ", p.second, ": ", p.first);
           Logger::info(line);
-          sumMs.clear(); frames = 0;
+          std::vector<std::pair<double, std::string>> c;
+          for (auto& kv : cpuSumMs) c.emplace_back(kv.second / 120.0, kv.first);
+          std::sort(c.rbegin(), c.rend());
+          std::string cl = "[GpuProfile] CPU record ms/frame per zone (inclusive):";
+          for (size_t i = 0; i < c.size() && i < 25; i++) cl += str::format("\n    ", c[i].second, ": ", c[i].first);
+          Logger::info(cl);
+          sumMs.clear(); cpuSumMs.clear(); frames = 0;
         }
       }
 
@@ -119,11 +142,12 @@ namespace dxvk {
       }
     };
     GpuZoneProfiler g_gpuProfiler;
-    thread_local std::vector<uint32_t> t_zoneStack;
+    struct ZoneEntry { uint32_t idx; const char* name; std::chrono::steady_clock::time_point t0; };
+    thread_local std::vector<ZoneEntry> t_zoneStack;
   }
 
   __ScopedAnnotation::__ScopedAnnotation(Rc<DxvkContext> ctx, const char* name) : m_ctx(ctx) {
-    if (g_gpuProfiler.enabled) t_zoneStack.push_back(g_gpuProfiler.begin(ctx.ptr(), name));
+    if (g_gpuProfiler.enabled) t_zoneStack.push_back({ g_gpuProfiler.begin(ctx.ptr(), name), name, std::chrono::steady_clock::now() });
     VkDebugUtilsLabelEXT info = {
       VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, name, { 1.0f, 0.0f, 0.0f, 1.0f } // Red color
     };
@@ -134,7 +158,12 @@ namespace dxvk {
   }
 
   __ScopedAnnotation::~__ScopedAnnotation() {
-    if (g_gpuProfiler.enabled && !t_zoneStack.empty()) { g_gpuProfiler.end(m_ctx.ptr(), t_zoneStack.back()); t_zoneStack.pop_back(); }
+    if (g_gpuProfiler.enabled && !t_zoneStack.empty()) {
+      const ZoneEntry z = t_zoneStack.back();
+      t_zoneStack.pop_back();
+      g_gpuProfiler.end(m_ctx.ptr(), z.idx);
+      if (g_gpuProfiler.active) g_gpuProfiler.cpuSumMs[z.name] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - z.t0).count();
+    }
     m_ctx->endDebugLabel();
   }
 
