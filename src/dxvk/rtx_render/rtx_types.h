@@ -175,6 +175,10 @@ struct ReplacementInstance {
 
   ~ReplacementInstance();
 
+  // NV-DXVK: liveness token for callers that cache a raw ReplacementInstance pointer (retained external instances).
+  // Set to false when the RI is destroyed. Created lazily by SceneManager::getReplacementInstanceLiveToken.
+  std::shared_ptr<bool> liveToken;
+
   // Mark all prim entities for GC, drop the prim/root slots, reset cached
   // aggregate bounding boxes, and clear activeReplacements. Returns the RI to
   // the same shape it had immediately after construction.

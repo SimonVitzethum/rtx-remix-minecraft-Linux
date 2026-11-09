@@ -44,6 +44,8 @@
 #include "../../util/util_string.h"
 
 #include <atomic>
+#include <chrono>
+#include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -97,6 +99,12 @@ namespace {
   IDirect3D9Ex* s_dxvkD3D9 { nullptr };
   dxvk::D3D9DeviceEx* s_dxvkDevice { nullptr };
   dxvk::mutex s_mutex {};
+
+  // Bumped by everything that can change how an unchanged retained instance has to render (material updates).
+  std::atomic<uint64_t> g_retainedGeneration { 1 };
+  // Set by Submit() after it emitted the retained instances, consumed by the following Present().
+  std::atomic<bool> g_retainedEmittedBySubmit { false };
+
   bool s_interopImageEnabled { false };
 
 
@@ -920,6 +928,7 @@ namespace {
     }
 
     // async load
+    g_retainedGeneration++;
     std::lock_guard lock { s_mutex };
     remixDevice->EmitCs([cHandle = handle,
                          cMaterialData = convert::toRtMaterialWithoutTexturePreload(*info),
@@ -1785,9 +1794,22 @@ namespace {
   // ---------------------------------------------------------------------------------------------
   // Retained scene instances
 
+  // A retained instance. `state` is immutable once published (SceneInstanceUpdate swaps the pointer), so an unchanged instance is
+  // recognised on the CS thread by pointer identity. The cs* fields are only touched on the CS thread.
+  struct RetainedEntry {
+    std::shared_ptr<dxvk::ExternalDrawState> state;
+
+    std::shared_ptr<dxvk::ExternalDrawState> csState;  // the state the cached RI was built from (kept alive so the address cannot be reused)
+    dxvk::ReplacementInstance* csRI = nullptr;
+    std::shared_ptr<bool> csAlive;
+    size_t csPrims = 0;
+    uint32_t csNextFull = 0;                           // frame id after which the instance is submitted in full again
+    uint64_t csGeneration = 0;
+  };
+
   struct SceneInstanceRegistry {
     std::mutex mutex;
-    std::unordered_map<remixapi_SceneInstanceHandle, std::shared_ptr<dxvk::ExternalDrawState>> instances;
+    std::unordered_map<remixapi_SceneInstanceHandle, std::shared_ptr<RetainedEntry>> instances;
     uint64_t nextId = 1;
   };
 
@@ -1796,15 +1818,43 @@ namespace {
     return s_registry;
   }
 
+  // REMIX_NO_RETAINED_FASTPATH=1 (or ~/.remix_REMIX_NO_RETAINED_FASTPATH) submits every retained instance in full every frame (old behaviour).
+  bool retainedFastPathEnabled() {
+    static const bool enabled = [] {
+      if (std::getenv("REMIX_NO_RETAINED_FASTPATH")) return false;
+      const char* h = std::getenv("HOME");
+      return !(h && access((std::string(h) + "/.remix_REMIX_NO_RETAINED_FASTPATH").c_str(), F_OK) == 0);
+    }();
+    return enabled;
+  }
+
+  // REMIX_NO_RETAINED_TOUCH=1 keeps the single emission per frame but submits every instance in full (measurement aid).
+  bool retainedTouchEnabled() {
+    static const bool enabled = retainedFastPathEnabled() && !std::getenv("REMIX_NO_RETAINED_TOUCH");
+    return enabled;
+  }
+
+  bool retainedProfileEnabled() {
+    static const bool enabled = [] {
+      if (std::getenv("REMIX_PROFILE_BLAS")) return true;
+      const char* h = std::getenv("HOME");
+      return h && access((std::string(h) + "/.remix_REMIX_PROFILE_BLAS").c_str(), F_OK) == 0;
+    }();
+    return enabled;
+  }
+
   // Draws every retained instance once. Called at the end of each frame, before the frame is rendered.
+  // One CS command carries the whole list. Instances whose state did not change since their last full submission are only
+  // kept alive (SceneManager::touchExternalDraw) instead of being copied, hashed, looked up and processed again; every
+  // instance is still submitted in full every 32-95 frames as a safety net.
   void emitRetainedInstances(dxvk::D3D9DeviceEx* remixDevice) {
-    std::vector<std::shared_ptr<dxvk::ExternalDrawState>> states;
+    std::vector<std::pair<std::shared_ptr<RetainedEntry>, std::shared_ptr<dxvk::ExternalDrawState>>> states;
     {
       auto& registry = sceneInstances();
       std::lock_guard lock { registry.mutex };
       states.reserve(registry.instances.size());
-      for (const auto& [handle, state] : registry.instances) {
-        states.push_back(state);
+      for (const auto& [handle, entry] : registry.instances) {
+        states.emplace_back(entry, entry->state);
       }
     }
     if (states.empty()) {
@@ -1812,12 +1862,54 @@ namespace {
     }
 
     std::lock_guard lock { s_mutex };
-    for (auto& state : states) {
-      remixDevice->EmitCs<false>([cState = std::make_unique<dxvk::ExternalDrawState>(*state)](dxvk::DxvkContext* dxvkCtx) mutable {
-        auto* ctx = static_cast<dxvk::RtxContext*>(dxvkCtx);
-        ctx->commitExternalGeometryToRT(std::move(cState));
-      });
-    }
+    remixDevice->EmitCs<false>([cStates = std::move(states)](dxvk::DxvkContext* dxvkCtx) mutable {
+      auto* ctx = static_cast<dxvk::RtxContext*>(dxvkCtx);
+      auto& sceneManager = ctx->getCommonObjects()->getSceneManager();
+      const uint32_t frameId = ctx->getDevice()->getCurrentFrameId();
+      const uint64_t generation = g_retainedGeneration.load();
+      const bool fastPath = retainedTouchEnabled();
+      const auto tStart = std::chrono::steady_clock::now();
+      uint32_t touched = 0, full = 0;
+      for (auto& [entry, state] : cStates) {
+        if (fastPath && entry->csState == state && entry->csGeneration == generation && entry->csAlive && *entry->csAlive &&
+            frameId < entry->csNextFull &&
+            sceneManager.touchExternalDraw(entry->csRI, *state, entry->csPrims)) {
+          touched++;
+          continue;
+        }
+        full++;
+        dxvk::ReplacementInstance* ri = ctx->commitExternalGeometryToRT(std::make_unique<dxvk::ExternalDrawState>(*state));
+        entry->csState.reset();
+        entry->csAlive.reset();
+        entry->csRI = nullptr;
+        // Only plain static world geometry on the main camera may be kept alive without a resubmission.
+        const bool eligible = fastPath && ri != nullptr && state->cameraType == dxvk::CameraType::Main &&
+          !state->optionalParticleDesc.has_value() && state->gpuInstancingTransforms.empty() &&
+          !state->categories.test(dxvk::InstanceCategories::ParticleEmitter) &&
+          !ri->prims.empty() && ri->prims.size() < 4096;
+        if (eligible) {
+          entry->csState = state;
+          entry->csRI = ri;
+          entry->csAlive = dxvk::SceneManager::getReplacementInstanceLiveToken(ri);
+          entry->csPrims = ri->prims.size();
+          entry->csGeneration = generation;
+          entry->csNextFull = frameId + 32 + uint32_t(reinterpret_cast<uintptr_t>(entry.get()) >> 4) % 64;
+        }
+      }
+      if (retainedProfileEnabled()) {
+        static double sMs = 0; static uint64_t sTouched = 0, sFull = 0, sFrames = 0;
+        static auto sLast = std::chrono::steady_clock::now();
+        sMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count();
+        sTouched += touched; sFull += full;
+        if (++sFrames % 120 == 0) {
+          const auto now = std::chrono::steady_clock::now();
+          dxvk::Logger::info(dxvk::str::format("[RetainedProfile] per emit call: wall ms=", std::chrono::duration<double, std::milli>(now - sLast).count() / 120,
+            " emit ms=", sMs / 120, " touched=", sTouched / 120, " full=", sFull / 120));
+          sLast = now;
+          sMs = 0; sTouched = 0; sFull = 0;
+        }
+      }
+    });
   }
 
   remixapi_ErrorCode REMIXAPI_CALL remixapi_SceneInstanceAdd(
@@ -1834,7 +1926,9 @@ namespace {
     auto& registry = sceneInstances();
     std::lock_guard lock { registry.mutex };
     auto handle = reinterpret_cast<remixapi_SceneInstanceHandle>(static_cast<uintptr_t>(registry.nextId++ << 4));
-    registry.instances.emplace(handle, std::move(state));
+    auto entry = std::make_shared<RetainedEntry>();
+    entry->state = std::move(state);
+    registry.instances.emplace(handle, std::move(entry));
     *out_handle = handle;
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
@@ -1856,7 +1950,7 @@ namespace {
     if (it == registry.instances.end()) {
       return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
     }
-    it->second = std::move(state);
+    it->second->state = std::move(state);
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
@@ -2024,6 +2118,7 @@ namespace {
     }
 
     emitRetainedInstances(remixDevice);
+    g_retainedEmittedBySubmit.store(true);
 
     if (FAILED(swapchain->SubmitInterop(info ? info->interopFlags : 0))) {
       return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
@@ -2178,7 +2273,11 @@ namespace {
     if (!remixDevice) {
       return REMIXAPI_ERROR_CODE_REMIX_DEVICE_WAS_NOT_REGISTERED;
     }
-    emitRetainedInstances(remixDevice);
+    // A client that calls Submit() before Present() (the Minecraft mod) already had its retained instances emitted for this frame;
+    // emitting them again here only repeats the work (and made every instance a second submission of the next frame).
+    if (!g_retainedEmittedBySubmit.exchange(false) || !retainedFastPathEnabled()) {
+      emitRetainedInstances(remixDevice);
+    }
     if (info) {
       if (auto* swapchain = interopSwapchain(remixDevice)) {
         swapchain->SetInteropPresentParams(info->clientDoneSemaphore_ValueToWait, info->interopFlipY != 0);

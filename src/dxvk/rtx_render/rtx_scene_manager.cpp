@@ -2601,7 +2601,7 @@ namespace dxvk {
     ExternalDrawProfile g_externalDrawProfile;
   }
 
-  void SceneManager::submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> pstate) {
+  ReplacementInstance* SceneManager::submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> pstate) {
     ScopedCpuProfileZone();
     auto& prof = g_externalDrawProfile;
     if (prof.enabled) prof.begin();
@@ -2694,6 +2694,46 @@ namespace dxvk {
       replacementInstance->objectToWorld = xform;
     }
     if (prof.enabled) { prof.mark(3); prof.end(submeshes.size()); }
+    return replacementInstance;
+  }
+
+  std::shared_ptr<bool> SceneManager::getReplacementInstanceLiveToken(ReplacementInstance* replacementInstance) {
+    if (!replacementInstance->liveToken) {
+      replacementInstance->liveToken = std::make_shared<bool>(true);
+    }
+    return replacementInstance->liveToken;
+  }
+
+  bool SceneManager::touchExternalDraw(ReplacementInstance* replacementInstance, const ExternalDrawState& state, size_t expectedPrims) {
+    // Same gates as the preserve path of regular draws (see submitDrawState).
+    const uint32_t currentFrameId = m_device->getCurrentFrameId();
+    if (!RtxOptions::enablePreservePath() ||
+        replacementInstance->prims.size() != expectedPrims ||
+        !replacementInstance->dirtyFlags.isClear() ||
+        replacementInstance->activeReplacements != nullptr ||
+        replacementInstance->frameLastSeen == currentFrameId ||
+        RtxOptionManager::isDrawcallTranslationInvalid() ||
+        m_device->getCommon()->getTextureManager().getTextureCacheGeneration() != m_textureCacheGenerationValidForPreserve ||
+        state.cameraType != CameraType::Main) {
+      return false;
+    }
+    for (const auto& prim : replacementInstance->prims) {
+      RtInstance* inst = prim.getInstance();
+      if (inst == nullptr || inst->getBlas() == nullptr || inst->getBlas()->frameLastUpdated == currentFrameId) {
+        return false;
+      }
+    }
+
+    const ObjectPickingValue pickingValue = state.drawCall.drawCallID;
+    for (const auto& prim : replacementInstance->prims) {
+      RtInstance* instance = prim.getInstance();
+      instance->surface.objectPickingValue = pickingValue;
+      preserveInstance(*instance, nullptr);
+      m_instanceManager.preserveInstance(*instance, state.drawCall, nullptr);
+    }
+    trackObjectPickingMeta(state.drawCall, pickingValue);
+    replacementInstance->frameLastSeen = currentFrameId;
+    return true;
   }
 
   // Set from remixapi_dxvk_CreateD3D9() when the client is an editor/DCC host (HdRemix).

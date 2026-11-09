@@ -135,7 +135,13 @@ public:
   void onDestroy();
 
   void submitDrawState(Rc<DxvkContext> ctx, const DrawCallState& input, const MaterialData* overrideMaterialData);
-  void submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> state);
+  // Returns the ReplacementInstance the draw was matched to (owned by the draw call tracker).
+  ReplacementInstance* submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> state);
+  // Keep-alive for an unchanged retained external draw: the same per-frame work as the preserve path of regular draws
+  // (no state copy, hashing, lookup or processDrawCallState). Returns false when the draw has to be submitted in full.
+  bool touchExternalDraw(ReplacementInstance* replacementInstance, const ExternalDrawState& state, size_t expectedPrims);
+  // Liveness token of an RI (false once the RI was destroyed), created on first use.
+  static std::shared_ptr<bool> getReplacementInstanceLiveToken(ReplacementInstance* replacementInstance);
   void setStartInMediumMaterial(const MaterialData& translucentMaterial);
   void clearStartInMediumMaterial();
 

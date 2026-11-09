@@ -1117,8 +1117,8 @@ namespace dxvk {
     }
   }
 
-  void RtxContext::commitExternalGeometryToRT(std::unique_ptr<ExternalDrawState> state) {
-    getSceneManager().submitExternalDraw(this, std::move(state));
+  ReplacementInstance* RtxContext::commitExternalGeometryToRT(std::unique_ptr<ExternalDrawState> state) {
+    return getSceneManager().submitExternalDraw(this, std::move(state));
   }
 
   static uint32_t jenkinsHash(uint32_t a) {

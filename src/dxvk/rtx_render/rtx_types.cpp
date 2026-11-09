@@ -106,6 +106,9 @@ namespace dxvk {
   }
 
   ReplacementInstance::~ReplacementInstance() {
+    if (liveToken) {
+      *liveToken = false;
+    }
     clear();
   }
 

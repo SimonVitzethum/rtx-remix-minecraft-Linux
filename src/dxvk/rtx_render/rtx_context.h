@@ -41,6 +41,7 @@ namespace dxvk {
   class SceneManager;
   class TerrainBaker;
   struct ExternalDrawState;
+  struct ReplacementInstance;
 
   struct D3D9RtxVertexCaptureData;
   struct D3D9SharedPS;
@@ -115,7 +116,7 @@ namespace dxvk {
     void clearImageView(const Rc<DxvkImageView>& imageView, VkOffset3D offset, VkExtent3D extent, VkImageAspectFlags aspect, VkClearValue value);
 
     void commitGeometryToRT(const DrawParameters& params, DrawCallState& drawCallState);
-    void commitExternalGeometryToRT(std::unique_ptr<ExternalDrawState> state);
+    ReplacementInstance* commitExternalGeometryToRT(std::unique_ptr<ExternalDrawState> state);
 
     static void blitImageHelper(Rc<DxvkContext> ctx, const Rc<DxvkImage>& srcImage, const Rc<DxvkImage>& dstImage, VkFilter filter);
 
