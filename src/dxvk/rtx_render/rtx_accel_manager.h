@@ -276,15 +276,11 @@ private:
   // Allows O(1) "is this instance in a clean bucket?" check in the main loop.
   std::unordered_map<RtInstance*, uint32_t> m_instanceBucketIndex;
 
-  // Set of BlasEntry* that went to the dynamic path on the last full rebuild.
-  // Used for quick O(1) per-instance classification on the dynamics-only path.
-  std::unordered_set<BlasEntry*> m_cachedDynamicBlasEntries;
-
   // Scratch containers for collecting dynamic BLAS groups during mergeInstancesIntoBlas().
   // The map is lookup-only; the vector preserves first-seen emission order.
   std::vector<UniqueBlasInstances> m_uniqueDynamicBlas;
   uint32_t m_uniqueDynamicBlasCount = 0;
-  std::unordered_map<BlasEntry*, uint32_t> m_uniqueDynamicBlasIndex;
+  uint64_t m_dynamicGroupStamp = 1; // BlasEntry::dynamicGroupStamp == this means "already grouped this frame" (index in dynamicGroupIndex)
 
   void resetUniqueDynamicBlasGroups();
 

@@ -74,7 +74,6 @@ namespace dxvk {
     // Invalidate incremental rebuild cache
     m_cachedBuckets.clear();
     m_instanceBucketIndex.clear();
-    m_cachedDynamicBlasEntries.clear();
     resetUniqueDynamicBlasGroups();
     m_lastProcessedGeneration = UINT64_MAX;
     m_ommBindPending = false;
@@ -86,7 +85,7 @@ namespace dxvk {
       m_uniqueDynamicBlas[i].instances.clear();
     }
     m_uniqueDynamicBlasCount = 0;
-    m_uniqueDynamicBlasIndex.clear();
+    m_dynamicGroupStamp++;
   }
 
   void AccelManager::removeInstanceFromBucketCache(RtInstance* instance) {
@@ -448,6 +447,11 @@ namespace dxvk {
     execBarriers.recordCommands(cb);
   }
 
+  // REMIX_NO_STATIC_BLAS_PATH=1: old behaviour (every dynamic BLAS goes through the size/select/track path every frame).
+  // REMIX_AB_BLAS=1 (with REMIX_PROFILE_BLAS): alternates the old and new behaviour every 120 calls, the profile lines carry the mode.
+  static bool g_noStaticBlasPath = std::getenv("REMIX_NO_STATIC_BLAS_PATH") != nullptr;
+  static const bool g_abBlas = std::getenv("REMIX_AB_BLAS") != nullptr;
+
   // REMIX_PROFILE_BLAS=1 (or ~/.remix_REMIX_PROFILE_BLAS): CPU phase times of AccelManager::mergeInstancesIntoBlas, logged every 120 calls.
   namespace {
     struct BlasPhaseProfile {
@@ -456,7 +460,11 @@ namespace dxvk {
       std::chrono::steady_clock::time_point last;
       double ms[kPhases] = {};
       uint32_t calls = 0, skipped = 0;
-      void begin() { last = std::chrono::steady_clock::now(); }
+      // Sub-phase TSC accumulators (inside buildBlases and the dynamic BLAS loop), converted with a TSC/steady_clock calibration per window.
+      static constexpr int kSub = 8;
+      uint64_t sub[kSub] = {}; uint64_t nBuckets = 0, nSurfaces = 0;
+      uint64_t tscStart = 0; std::chrono::steady_clock::time_point wallStart;
+      void begin() { last = std::chrono::steady_clock::now(); if (tscStart == 0) { tscStart = __builtin_ia32_rdtsc(); wallStart = last; } }
       void mark(int phase) {
         const auto now = std::chrono::steady_clock::now();
         ms[phase] += std::chrono::duration<double, std::milli>(now - last).count();
@@ -465,10 +473,21 @@ namespace dxvk {
       void end(bool wasSkipped) {
         calls++; if (wasSkipped) skipped++;
         if (calls % 120 == 0) {
-          Logger::info(str::format("[BlasProfile] per call ms: dirtyDetect=", ms[0] / calls, " allocAndPrep=", ms[1] / calls, " instanceLoop=", ms[2] / calls,
+          Logger::info(str::format("[BlasProfile] mode=", g_noStaticBlasPath ? "old" : "new", " per call ms: dirtyDetect=", ms[0] / calls, " allocAndPrep=", ms[1] / calls, " instanceLoop=", ms[2] / calls,
             " dynamicBlas=", ms[3] / calls, " transformUpload=", ms[4] / calls, " restoreCollect=", ms[5] / calls, " prefixSum=", ms[6] / calls,
             " buildBlasesAndCache=", ms[7] / calls, " (calls=", calls, " skippedFast=", skipped, ")"));
+          {
+            const double wallMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wallStart).count();
+            const double tpm = double(__builtin_ia32_rdtsc() - tscStart) / wallMs;
+            Logger::info(str::format("[BlasProfile] sub ms per call: omm=", sub[0] / tpm / calls, " sizeInfo=", sub[1] / tpm / calls, " select=", sub[2] / tpm / calls,
+              " addBlas=", sub[3] / tpm / calls, " track=", sub[4] / tpm / calls, " upload=", sub[5] / tpm / calls, " createBuffers=", sub[6] / tpm / calls,
+              " cacheSave=", sub[7] / tpm / calls, " buckets=", double(nBuckets) / calls, " surfaces=", double(nSurfaces) / calls));
+          }
           for (auto& m : ms) m = 0;
+          for (auto& m : sub) m = 0;
+          nBuckets = 0; nSurfaces = 0;
+          if (g_abBlas) g_noStaticBlasPath = !g_noStaticBlasPath;
+          tscStart = 0;
           calls = 0; skipped = 0;
         }
       }
@@ -640,14 +659,14 @@ namespace dxvk {
       Logger::debug("DxvkRaytrace: Vulkan Transform Buffer Realloc");
     }
 
-    std::vector<VkTransformMatrixKHR> instanceTransforms;
-    instanceTransforms.reserve(instances.size());
-
-    std::vector<VkAccelerationStructureBuildGeometryInfoKHR> blasToBuild;
-    std::vector<VkAccelerationStructureBuildRangeInfoKHR*> blasRangesToBuild;
-
-    blasToBuild.reserve(instances.size());
-    blasRangesToBuild.reserve(instances.size());
+    // NV-DXVK: persistent scratch vectors (this runs on the single CS thread). Reserving instances.size() entries of three of
+    // them per frame was a 0.5-1 MB malloc/page-fault round trip per frame although only a few BLAS are built per frame.
+    static std::vector<VkTransformMatrixKHR> instanceTransforms;
+    static std::vector<VkAccelerationStructureBuildGeometryInfoKHR> blasToBuild;
+    static std::vector<VkAccelerationStructureBuildRangeInfoKHR*> blasRangesToBuild;
+    instanceTransforms.clear();
+    blasToBuild.clear();
+    blasRangesToBuild.clear();
 
     m_reorderedSurfaces.clear();
     m_reorderedSurfacesFirstIndexOffset.clear();
@@ -682,7 +701,7 @@ namespace dxvk {
     }
 
     std::vector<std::unique_ptr<BlasBucket>> blasBuckets;
-    blasBuckets.reserve(instances.size());
+    blasBuckets.reserve(256);
 
     size_t totalScratchMemory = 0;
 
@@ -692,15 +711,23 @@ namespace dxvk {
     if (m_uniqueDynamicBlas.capacity() < instances.size()) {
       m_uniqueDynamicBlas.reserve(instances.size());
     }
-    if (m_uniqueDynamicBlasIndex.bucket_count() < instances.size()) {
-      m_uniqueDynamicBlasIndex.reserve(instances.size());
-    }
 
     // Hash map for O(1) bucket lookup instead of O(buckets) linear search per instance
     std::unordered_map<BlasBucketKey, BlasBucket*, BlasBucketKeyHash> bucketMap;
 
     if (prof.enabled) prof.mark(1);
-    for (RtInstance* instance : instances) {
+    const size_t numInstances = instances.size();
+    for (size_t instanceIdx = 0; instanceIdx < numInstances; ++instanceIdx) {
+      // NV-DXVK: the instance table is a list of pointers into scattered heap objects (instance -> BlasEntry -> geometry vectors),
+      // this loop is bound by cache misses: prefetch a few instances ahead, and the BlasEntry of an instance that was prefetched earlier.
+      if (instanceIdx + 8 < numInstances) __builtin_prefetch(instances[instanceIdx + 8]);
+      if (instanceIdx + 4 < numInstances) {
+        const BlasEntry* const nextBlas = instances[instanceIdx + 4]->getBlas();
+        __builtin_prefetch(nextBlas);
+        __builtin_prefetch(reinterpret_cast<const char*>(nextBlas) + 64);
+        __builtin_prefetch(reinterpret_cast<const char*>(nextBlas) + 128);
+      }
+      RtInstance* instance = instances[instanceIdx];
       if (instance->isHidden()) {
         continue;
       }
@@ -787,10 +814,10 @@ namespace dxvk {
 
       if (requestDynamicBlas && !forceMergedBlas) {
         // Since this loop is iterating over instances, and instances can share BLAS, we will build these later after identifying unique ones.
-        auto uniqueBlasIter = m_uniqueDynamicBlasIndex.find(blasEntry);
-        if (uniqueBlasIter == m_uniqueDynamicBlasIndex.end()) {
+        if (blasEntry->dynamicGroupStamp != m_dynamicGroupStamp) {
           const uint32_t uniqueBlasIdx = m_uniqueDynamicBlasCount++;
-          uniqueBlasIter = m_uniqueDynamicBlasIndex.emplace(blasEntry, uniqueBlasIdx).first;
+          blasEntry->dynamicGroupStamp = m_dynamicGroupStamp;
+          blasEntry->dynamicGroupIndex = uniqueBlasIdx;
 
           if (uniqueBlasIdx == m_uniqueDynamicBlas.size()) {
             m_uniqueDynamicBlas.push_back({});
@@ -799,11 +826,11 @@ namespace dxvk {
           m_uniqueDynamicBlas[uniqueBlasIdx].blasEntry = blasEntry;
         }
 
-        m_uniqueDynamicBlas[uniqueBlasIter->second].instances.push_back(instance);
+        m_uniqueDynamicBlas[blasEntry->dynamicGroupIndex].instances.push_back(instance);
       } else {
         // Make sure we don't double up on blas entries, this should only happen if theres a bug
         // TODO (REMIX-3996) will break the assumptions we make here about all instances in a BlasEntry having the same instancesToObject array
-        assert(m_uniqueDynamicBlasIndex.find(blasEntry) == m_uniqueDynamicBlasIndex.end());
+        assert(blasEntry->dynamicGroupStamp != m_dynamicGroupStamp);
 
         if (blasEntry->dynamicBlas != nullptr) {
           // Move the BLAS used by this geometry to the common pool.
@@ -853,7 +880,24 @@ namespace dxvk {
 
     if (prof.enabled) prof.mark(2);
     // Build/Update the dynamic BLAS
+    const uint32_t dynamicBlasBuildFlags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | additionalAccelerationStructureFlags();
+    uint64_t subTsc = prof.enabled ? __builtin_ia32_rdtsc() : 0;
+    auto subLap = [&](int i) { if (prof.enabled) { const uint64_t n = __builtin_ia32_rdtsc(); prof.sub[i] += n - subTsc; subTsc = n; } };
     for (uint32_t uniqueBlasIdx = 0; uniqueBlasIdx < m_uniqueDynamicBlasCount; ++uniqueBlasIdx) {
+      if (uniqueBlasIdx + 6 < m_uniqueDynamicBlasCount) {
+        __builtin_prefetch(m_uniqueDynamicBlas[uniqueBlasIdx + 6].blasEntry);
+      }
+      if (uniqueBlasIdx + 3 < m_uniqueDynamicBlasCount) {
+        const BlasEntry* const nb = m_uniqueDynamicBlas[uniqueBlasIdx + 3].blasEntry;
+        __builtin_prefetch(nb->dynamicBlas.ptr());
+        __builtin_prefetch(nb->buildGeometries.data());
+        __builtin_prefetch(nb->buildRanges.data());
+        __builtin_prefetch(m_uniqueDynamicBlas[uniqueBlasIdx + 3].instances.data());
+      }
+      if (uniqueBlasIdx + 1 < m_uniqueDynamicBlasCount && !m_uniqueDynamicBlas[uniqueBlasIdx + 1].instances.empty()) {
+        const char* const ni = reinterpret_cast<const char*>(m_uniqueDynamicBlas[uniqueBlasIdx + 1].instances[0]);
+        __builtin_prefetch(ni); __builtin_prefetch(ni + 64); __builtin_prefetch(ni + 128); __builtin_prefetch(ni + 192);
+      }
       const UniqueBlasInstances& uniqueBlasEntry = m_uniqueDynamicBlas[uniqueBlasIdx];
       BlasEntry* blasEntry = uniqueBlasEntry.blasEntry;
       if (uniqueBlasEntry.instances.size() == 0) {
@@ -902,6 +946,30 @@ namespace dxvk {
         blasEntry->buildGeometries[0].geometry.triangles.pNext = nullptr;
       }
 
+      subLap(0);
+
+      // NV-DXVK: a dynamic BLAS whose geometry was not updated this frame, whose sizes/flags/OMM binding are unchanged and whose
+      // acceleration structure still has the right size needs no build and no update: only touch it (this is every static
+      // terrain page in a Minecraft scene, thousands per frame). The old code re-derived all of that, re-tracked the source buffers
+      // and re-recorded the barriers for each of them every frame.
+      bool staticDynamicBlas = false;
+      if (blasEntry->dynamicBlas.ptr() && !forceRebuild && blasEntry->hasDynamicSizeInfo && blasEntry->frameLastUpdated != currentFrame && !g_noStaticBlasPath) {
+        const auto& tri = blasEntry->buildGeometries[0].geometry.triangles;
+        staticDynamicBlas =
+          blasEntry->dynamicSizeKey[0] == blasEntry->buildRanges[0].primitiveCount &&
+          blasEntry->dynamicSizeKey[1] == ((uint64_t(tri.maxVertex) << 32) | uint64_t(tri.vertexFormat)) &&
+          blasEntry->dynamicSizeKey[2] == ((uint64_t(tri.indexType) << 32) | uint64_t(blasEntry->buildGeometries[0].flags)) &&
+          blasEntry->dynamicSizeKey[3] == uint64_t(dynamicBlasBuildFlags) &&
+          blasEntry->dynamicSizeKey[4] == uint64_t(boundOpacityMicromapHash) &&
+          blasEntry->dynamicSizeKey[5] == (tri.pNext != nullptr ? 1ull : 0ull) &&
+          blasEntry->dynamicBlas->accelStructure->info().size == blasEntry->dynamicSizeInfo.accelerationStructureSize;
+      }
+
+      if (staticDynamicBlas) {
+        blasEntry->dynamicBlas->frameLastTouched = currentFrame;
+        blasEntry->dynamicBlas->opacityMicromapSourceHash = boundOpacityMicromapHash;
+        subLap(2);
+      } else {
       VkAccelerationStructureBuildGeometryInfoKHR buildInfo {};
       buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
       buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
@@ -935,6 +1003,7 @@ namespace dxvk {
         }
       }
 
+      subLap(1);
       // Try to reuse our dynamic BLAS if it exists
       Rc<PooledBlas>& selectedBlas = blasEntry->dynamicBlas;
 
@@ -987,6 +1056,8 @@ namespace dxvk {
         copyAccelerationStructureBuildGeometryInfo(buildInfo, selectedBlas->buildInfo);
         selectedBlas->hasOmmAttachments = boundOpacityMicromapHash != kEmptyHash;
       }
+      subLap(2);
+      } // !staticDynamicBlas
 
       for (RtInstance* rtInstance : uniqueBlasEntry.instances) {
         // Append an instance of this merged BLAS to the merged instance list
@@ -997,13 +1068,18 @@ namespace dxvk {
         }
       }
 
-      ctx->getCommandList()->trackResource<DxvkAccess::Read>(blasEntry->dynamicBlas->accelStructure);
-
+      subLap(3);
       // Record this dynamic BLAS so the full-skip cache path can touch it to prevent GC
       m_activeDynamicBlases.push_back(blasEntry->dynamicBlas);
 
-      // Track the lifetime and states of the source geometry buffers
-      trackBlasBuildResources(ctx, execBarriers, blasEntry);
+      // Track the lifetime and states of the source geometry buffers. A static BLAS is not built this frame, so there is
+      // nothing to barrier; lifetime tracking is only refreshed every 16th frame per BLAS (staggered): the entry owns the
+      // buffers and is only released numFramesToKeep* frames after its last use, far later than the GPU latency.
+      if (!staticDynamicBlas || ((currentFrame + uint32_t(reinterpret_cast<uintptr_t>(blasEntry) >> 6)) & 15u) == 0) {
+        ctx->getCommandList()->trackResource<DxvkAccess::Read>(blasEntry->dynamicBlas->accelStructure);
+        trackBlasBuildResources(ctx, execBarriers, blasEntry);
+      }
+      subLap(4);
     }
 
     if (prof.enabled) prof.mark(3);
@@ -1123,6 +1199,7 @@ namespace dxvk {
       m_mergedInstancesBaselineCount[t] = m_mergedInstances[t].size();
     }
 
+    const uint64_t subT2 = prof.enabled ? __builtin_ia32_rdtsc() : 0;
     // --- Cache per-bucket state for future incremental rebuilds ---
     // Rebuild the cached bucket list: keep clean buckets as-is, replace dirty
     // buckets with fresh data from this frame's blasBuckets.
@@ -1197,14 +1274,8 @@ namespace dxvk {
 
       m_cachedBuckets = std::move(newCachedBuckets);
 
-      // Update the dynamic BlasEntry set for the full-skip path
-      m_cachedDynamicBlasEntries.clear();
-      for (uint32_t uniqueBlasIdx = 0; uniqueBlasIdx < m_uniqueDynamicBlasCount; ++uniqueBlasIdx) {
-        const UniqueBlasInstances& uniqueBlasEntry = m_uniqueDynamicBlas[uniqueBlasIdx];
-        m_cachedDynamicBlasEntries.insert(uniqueBlasEntry.blasEntry);
-      }
     }
-    if (prof.enabled) { prof.mark(7); prof.end(false); }
+    if (prof.enabled) { prof.nBuckets += blasBuckets.size(); prof.nSurfaces += m_reorderedSurfaces.size(); prof.sub[7] += __builtin_ia32_rdtsc() - subT2; prof.mark(7); prof.end(false); }
   }
 
   void AccelManager::addBlas(RtInstance* instance, BlasEntry* blasEntry, const Matrix4* instanceToObject) {
@@ -1730,6 +1801,10 @@ namespace dxvk {
     const uint64_t timeUs = GlobalTime::get().absoluteTimeUs();
 
     for (uint32_t i = 0; i < m_reorderedSurfaces.size(); ++i) {
+      if (i + 6 < m_reorderedSurfaces.size()) {
+        const char* const ns = reinterpret_cast<const char*>(m_reorderedSurfaces[i + 6]);
+        __builtin_prefetch(ns); __builtin_prefetch(ns + 64); __builtin_prefetch(ns + 128); __builtin_prefetch(ns + 192);
+      }
       const auto& currentInstance = *m_reorderedSurfaces[i];
       RtSurface& currentSurface = m_reorderedSurfaces[i]->surface;
 
@@ -1852,7 +1927,9 @@ namespace dxvk {
                                  size_t& totalScratchMemory) {
     ScopedGpuProfileZone(ctx, "buildBLAS");
     // Upload surfaces before opacity micromap generation which reads the surface data on the GPU
+    const uint64_t subT0 = g_blasPhaseProfile.enabled ? __builtin_ia32_rdtsc() : 0;
     uploadSurfaceData(ctx);
+    if (g_blasPhaseProfile.enabled) g_blasPhaseProfile.sub[5] += __builtin_ia32_rdtsc() - subT0;
 
     // Clear any stale OMM bindings from cached geometry data.  This must happen
     // unconditionally because buildGeometries are cached across frames and the
@@ -1883,7 +1960,9 @@ namespace dxvk {
     }
 
     // Blas buffers must be created after opacity micromaps were generated to calculate correct acceleration structure sizes
+    const uint64_t subT1 = g_blasPhaseProfile.enabled ? __builtin_ia32_rdtsc() : 0;
     createBlasBuffersAndInstances(ctx, blasBuckets, blasToBuild, blasRangesToBuild, totalScratchMemory);
+    if (g_blasPhaseProfile.enabled) g_blasPhaseProfile.sub[6] += __builtin_ia32_rdtsc() - subT1;
 
     // Make sure we have enough scratch memory for this build job
     if (totalScratchMemory > 0) {

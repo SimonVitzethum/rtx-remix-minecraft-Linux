@@ -982,6 +982,10 @@ struct BlasEntry {
   VkAccelerationStructureBuildSizesInfoKHR dynamicSizeInfo {};
   bool hasDynamicSizeInfo = false;
 
+  // NV-DXVK: per-frame grouping stamp of AccelManager::mergeInstancesIntoBlas (replaces a per-frame hash map from BlasEntry to group index)
+  uint64_t dynamicGroupStamp = 0;
+  uint32_t dynamicGroupIndex = 0;
+
   std::vector<VkAccelerationStructureGeometryKHR> buildGeometries;
   std::vector<VkAccelerationStructureBuildRangeInfoKHR> buildRanges;
 
