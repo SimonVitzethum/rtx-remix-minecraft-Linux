@@ -1805,6 +1805,7 @@ namespace {
     size_t csPrims = 0;
     uint32_t csNextFull = 0;                           // frame id after which the instance is submitted in full again
     uint64_t csGeneration = 0;
+    uint32_t csTouchedFrame = ~0u;                     // frame id of the early touch (emitRetainedTouchEarly), the end-of-frame pass skips such entries
   };
 
   struct SceneInstanceRegistry {
@@ -1843,6 +1844,48 @@ namespace {
     return enabled;
   }
 
+  // REMIX_NO_RETAINED_EARLY=1: no early touch pass (everything happens in the end-of-frame emission, as before).
+  bool retainedEarlyEnabled() {
+    static const bool enabled = retainedTouchEnabled() && !std::getenv("REMIX_NO_RETAINED_EARLY");
+    return enabled;
+  }
+
+  // Early touch pass, emitted right after a frame was presented: the CS thread keeps the unchanged retained instances alive while the
+  // client is busy building the next frame, instead of doing it after the client's Submit (where the CS thread work is serial with the
+  // render thread). Only instances that pass exactly the touch conditions are handled here; everything else (changed state, full
+  // refresh due, material update) is left to the end-of-frame pass of emitRetainedInstances, which also skips the entries touched here
+  // as long as their state pointer did not change in between.
+  void emitRetainedTouchEarly(dxvk::D3D9DeviceEx* remixDevice) {
+    std::vector<std::pair<std::shared_ptr<RetainedEntry>, std::shared_ptr<dxvk::ExternalDrawState>>> states;
+    {
+      auto& registry = sceneInstances();
+      std::lock_guard lock { registry.mutex };
+      states.reserve(registry.instances.size());
+      for (const auto& [handle, entry] : registry.instances) {
+        states.emplace_back(entry, entry->state);
+      }
+    }
+    if (states.empty()) {
+      return;
+    }
+
+    std::lock_guard lock { s_mutex };
+    remixDevice->EmitCs<false>([cStates = std::move(states)](dxvk::DxvkContext* dxvkCtx) mutable {
+      auto* ctx = static_cast<dxvk::RtxContext*>(dxvkCtx);
+      auto& sceneManager = ctx->getCommonObjects()->getSceneManager();
+      const uint32_t frameId = ctx->getDevice()->getCurrentFrameId();
+      const uint64_t generation = g_retainedGeneration.load();
+      for (size_t entryIdx = 0; entryIdx < cStates.size(); ++entryIdx) {
+        if (entryIdx + 8 < cStates.size()) __builtin_prefetch(cStates[entryIdx + 8].first.get());
+        auto& [entry, state] = cStates[entryIdx];
+        if (entry->csState == state && entry->csGeneration == generation && entry->csAlive && *entry->csAlive &&
+            frameId < entry->csNextFull && sceneManager.touchExternalDraw(entry->csRI, *state, entry->csPrims)) {
+          entry->csTouchedFrame = frameId;
+        }
+      }
+    });
+  }
+
   // Draws every retained instance once. Called at the end of each frame, before the frame is rendered.
   // One CS command carries the whole list. Instances whose state did not change since their last full submission are only
   // kept alive (SceneManager::touchExternalDraw) instead of being copied, hashed, looked up and processed again; every
@@ -1869,8 +1912,14 @@ namespace {
       const uint64_t generation = g_retainedGeneration.load();
       const bool fastPath = retainedTouchEnabled();
       const auto tStart = std::chrono::steady_clock::now();
-      uint32_t touched = 0, full = 0;
-      for (auto& [entry, state] : cStates) {
+      uint32_t touched = 0, full = 0, early = 0;
+      for (size_t entryIdx = 0; entryIdx < cStates.size(); ++entryIdx) {
+        if (entryIdx + 8 < cStates.size()) __builtin_prefetch(cStates[entryIdx + 8].first.get());
+        auto& [entry, state] = cStates[entryIdx];
+        if (fastPath && entry->csTouchedFrame == frameId && entry->csState == state && entry->csGeneration == generation) {
+          touched++; early++; // already touched by the early pass of this frame
+          continue;
+        }
         if (fastPath && entry->csState == state && entry->csGeneration == generation && entry->csAlive && *entry->csAlive &&
             frameId < entry->csNextFull &&
             sceneManager.touchExternalDraw(entry->csRI, *state, entry->csPrims)) {
@@ -1897,16 +1946,16 @@ namespace {
         }
       }
       if (retainedProfileEnabled()) {
-        static double sMs = 0; static uint64_t sTouched = 0, sFull = 0, sFrames = 0;
+        static double sMs = 0; static uint64_t sTouched = 0, sFull = 0, sFrames = 0, sEarly = 0;
         static auto sLast = std::chrono::steady_clock::now();
         sMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count();
-        sTouched += touched; sFull += full;
+        sTouched += touched; sFull += full; sEarly += early;
         if (++sFrames % 120 == 0) {
           const auto now = std::chrono::steady_clock::now();
           dxvk::Logger::info(dxvk::str::format("[RetainedProfile] per emit call: wall ms=", std::chrono::duration<double, std::milli>(now - sLast).count() / 120,
-            " emit ms=", sMs / 120, " touched=", sTouched / 120, " full=", sFull / 120));
+            " emit ms=", sMs / 120, " touched=", sTouched / 120, " (early ", sEarly / 120, ") full=", sFull / 120));
           sLast = now;
-          sMs = 0; sTouched = 0; sFull = 0;
+          sMs = 0; sTouched = 0; sFull = 0; sEarly = 0;
         }
       }
     });
@@ -2287,6 +2336,9 @@ namespace {
     HRESULT hr = remixDevice->Present(NULL, NULL, info ? info->hwndOverride : NULL, NULL);
     if (FAILED(hr)) {
       return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+    }
+    if (retainedEarlyEnabled()) {
+      emitRetainedTouchEarly(remixDevice);
     }
 
     UINT windowWidth = 0, windowHeight = 0;
