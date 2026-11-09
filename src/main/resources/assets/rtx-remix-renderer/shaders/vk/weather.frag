@@ -46,6 +46,8 @@ void main() {
 
     if (Params.x < 0.5) {
         vec4 lightColor = texture(Lightmap, clamp(lightUv + 0.5 / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+        // Remix lights the scene, so only the brightness of vanilla's lightmap is used (its colour cast would tint the flakes).
+        lightColor = vec4(vec3(dot(lightColor.rgb, vec3(1.0 / 3.0))), 1.0);
         vec4 color = texture(Sampler0, texCoord) * vertexColor * lightColor;
         if (color.a < 0.1) {
             discard;
