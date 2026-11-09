@@ -1,0 +1,14 @@
+# Heavy-scene performance run (S15): copy to <game dir>/rtxremix-test-script.txt of an instance with renderDistance 32, simulationDistance 32,
+# graphicsPreset "custom" (a preset overrides the distances), join TestWorld, run with REMIX_PROFILE_BLAS=1 REMIX_PROFILE_CS=1 and read
+# [RetainedProfile] / [CsProfile] / DLFG lines of rtx-remix/logs/remix-dxvk.log after the last 'look 0 0' (steady state from t=85).
+2 conf rtx.qualityDLSS 3
+2 conf rtx.enableRayReconstruction True
+2 conf rtx.dlfg.enable True
+2 conf rtx.dlfg.maxInterpolatedFrames 5
+20 look 0 0
+20 diag
+35 look 90 0
+50 look 180 0
+65 look 270 0
+80 look 0 0
+95 diag
