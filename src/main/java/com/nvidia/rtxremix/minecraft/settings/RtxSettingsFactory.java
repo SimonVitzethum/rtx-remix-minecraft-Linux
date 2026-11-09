@@ -101,7 +101,12 @@ public final class RtxSettingsFactory {
         // --- DLSS upscaling and frame generation (Remix options; hidden when the runtime lacks one) ---
         RemixAPI dlssRemix = renderer.getRemixApi();
         remixInt("upscaling.mode", SettingGroup.UPSCALING, "rtxremix.setting.upscaling.mode",
-                "rtx.qualityDLSS", 0, 5, dlssRemix::getConfigVariableResolved, dlssRemix::setConfigVariable)
+                "rtx.qualityDLSS", 0, 5, dlssRemix::getConfigVariableResolved,
+                // The DLSS preset On forces the Auto mode; a chosen mode needs the Custom preset.
+                (key, value) -> {
+                    dlssRemix.setConfigVariable("rtx.dlssPreset", "2");
+                    dlssRemix.setConfigVariable(key, value);
+                })
                 .ifPresent(list::add);
         remixBool("upscaling.rayReconstruction", SettingGroup.UPSCALING,
                 "rtxremix.setting.upscaling.rayReconstruction", "rtx.enableRayReconstruction",
