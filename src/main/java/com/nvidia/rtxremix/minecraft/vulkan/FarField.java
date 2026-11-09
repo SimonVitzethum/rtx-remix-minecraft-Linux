@@ -172,6 +172,7 @@ public final class FarField {
             MapColor c = MapColor.byId(id);
             palette[id + 1] = c == null ? 0 : (c.col & 0xFFFFFF);
         }
+        palette[MapColor.WATER.id + 1] = 0x2F5F80; // the saturated map blue looks wrong as environment radiance
         patch.width = width;
         patch.height = width / 2;
         patch.rowPitch = width * 8;
@@ -190,6 +191,8 @@ public final class FarField {
     public void offerSky(ByteBuffer pixels) {
         ByteBuffer src = pixels.duplicate();
         src.position(0).limit(Math.min(src.capacity(), skyCopy.capacity()));
+        boolean same = hasSky && skyCopy.limit() == src.remaining() && skyCopy.mismatch(src.duplicate()) < 0;
+        if (same) return;
         skyCopy.clear();
         skyCopy.put(src).flip();
         hasSky = true;
