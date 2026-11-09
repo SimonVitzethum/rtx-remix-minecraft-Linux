@@ -53,6 +53,7 @@
         "ParticleResourcesAccessor",
         "ParticleStateMixin",
         "QuadParticleRenderStateMixin",
+        "PreferredGraphicsApiMixin",
         "RebuildTaskMixin",
         "RenderSystemMixin",
         "GlBackendMixin",
@@ -69,6 +70,7 @@
         "TorchBlockAccessor",
         "UnfocusedFramerateMixin",
         "WindowMixin",
+        "WeatherEffectRendererMixin",
         "WorldChunkMixin",
         "WorldRendererMixin"
     ],

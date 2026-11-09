@@ -406,7 +406,8 @@ public class RemixRenderer {
             blockDamagePass = new RemixBlockDamagePass();
 
             particleRenderer = new RemixParticleRenderer(this, particleAtlasManager, itemParticleAtlasManager);
-            weatherRenderer = new RemixWeatherRenderer();
+            // The OpenGL weather renderer only exists on the OpenGL backend; Vulkan draws weather in VulkanWeatherPass.
+            weatherRenderer = interopVk == null ? new RemixWeatherRenderer() : null;
             
             perfCamera = perfTimer.registerSection("Camera");
             perfLights = perfTimer.registerSection("Lights");
@@ -1326,6 +1327,11 @@ public class RemixRenderer {
                         camera,
                         worldFov,
                         aspect);
+            }
+            com.nvidia.rtxremix.minecraft.vulkan.VulkanWeatherPass vulkanWeather =
+                    com.nvidia.rtxremix.minecraft.vulkan.VulkanWeatherPass.get();
+            if (vulkanWeather != null) {
+                vulkanWeather.updateCamera(camera, worldFov, aspect);
             }
     
             CameraInfoParameterizedEXT worldCameraParams = CameraInfoParameterizedEXT.builder()

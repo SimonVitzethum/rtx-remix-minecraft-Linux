@@ -498,7 +498,10 @@ public class RtxRemixMod implements ClientModInitializer {
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
             LOGGER.info("Minecraft client started");
             
-            textureOverlay = new TextureOverlay();
+            // The OpenGL blit overlay only exists on the OpenGL backend (Vulkan composites in VulkanInterop).
+            if (!com.nvidia.rtxremix.minecraft.vulkan.VulkanBackendSupport.isActive()) {
+                textureOverlay = new TextureOverlay();
+            }
             
             if (remixAvailable) {
                 LOGGER.info("Initializing RTX Remix renderer...");

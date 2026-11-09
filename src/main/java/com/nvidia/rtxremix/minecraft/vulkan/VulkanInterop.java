@@ -25,6 +25,7 @@ import org.lwjgl.vulkan.VkImageBlit;
 import org.lwjgl.vulkan.VkImageCopy;
 import org.lwjgl.vulkan.VkImageCreateInfo;
 import org.lwjgl.vulkan.VkImageMemoryBarrier;
+import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkImportMemoryFdInfoKHR;
 import org.lwjgl.vulkan.VkImportSemaphoreFdInfoKHR;
 import org.lwjgl.vulkan.VkMemoryAllocateInfo;
@@ -80,6 +81,7 @@ public final class VulkanInterop implements AutoCloseable {
     private final InteropTracker colorTracker = new InteropTracker();
     private final InteropTracker depthTracker = new InteropTracker();
     private final InteropTracker clientTracker = new InteropTracker();
+    private final VulkanWeatherPass weatherPass = VulkanWeatherPass.create();
     private ImportedImage color;
     private ImportedImage depth;
 
@@ -223,7 +225,11 @@ public final class VulkanInterop implements AutoCloseable {
                 memory = out.get(0);
                 check(VK12.vkBindImageMemory(vk, image, memory, 0L), "vkBindImageMemory(" + name + ")");
                 transitionToGeneral(image);
-                return new ImportedImage(image, memory, width, height);
+                VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack).sType$Default().image(image)
+                        .viewType(VK12.VK_IMAGE_VIEW_TYPE_2D).format(format);
+                viewInfo.subresourceRange().aspectMask(VK12.VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+                check(VK12.vkCreateImageView(vk, viewInfo, null, out), "vkCreateImageView(" + name + ")");
+                return new ImportedImage(image, memory, width, height, out.get(0));
             } catch (RuntimeException e) {
                 VK12.vkDestroyImage(vk, image, null);
                 if (memory != 0) {
@@ -306,6 +312,9 @@ public final class VulkanInterop implements AutoCloseable {
             externalOwnershipTransfer(cb, stack, color.image, false);
             // Remix's image has Vulkan row order (row 0 on top), Minecraft's Vulkan render target keeps GL's bottom-up rows.
             recordCopy(cb, stack, color.image, color.width, color.height, targetImage, target.width, target.height, true);
+            if (weatherPass != null && depth != null) {
+                weatherPass.record(cb, stack, target, this, color.image, depth.image);
+            }
         }
         check(VK12.vkEndCommandBuffer(cb), "vkEndCommandBuffer(composite)");
         encoder.execute(cb);
@@ -468,6 +477,16 @@ public final class VulkanInterop implements AutoCloseable {
         return depth == null ? 0L : depth.image;
     }
 
+    /** The sampled view of the imported color image (RGBA8), or 0. */
+    public long colorView() {
+        return color == null ? 0L : color.view;
+    }
+
+    /** The sampled view of the imported primary-depth image (R32F), or 0. */
+    public long depthView() {
+        return depth == null ? 0L : depth.view;
+    }
+
     /** The imported color VkImage, or 0. */
     public long colorImage() {
         return color == null ? 0L : color.image;
@@ -478,7 +497,7 @@ public final class VulkanInterop implements AutoCloseable {
      * transfer with VK_QUEUE_FAMILY_EXTERNAL, which also makes the driver flush or decompress what the copy wrote,
      * so the runtime's device sees the pixels (without it Remix kept reading its own previous output).
      */
-    private void externalOwnershipTransfer(VkCommandBuffer cb, MemoryStack stack, long image, boolean release) {
+    void externalOwnershipTransfer(VkCommandBuffer cb, MemoryStack stack, long image, boolean release) {
         int family = device.graphicsQueue().queueFamilyIndex();
         VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
                 .srcAccessMask(release ? VK12.VK_ACCESS_MEMORY_WRITE_BIT : 0)
@@ -590,6 +609,7 @@ public final class VulkanInterop implements AutoCloseable {
             return;
         }
         device.graphicsQueue().waitIdle();
+        VK12.vkDestroyImageView(vk, image.view, null);
         VK12.vkDestroyImage(vk, image.image, null);
         VK12.vkFreeMemory(vk, image.memory, null);
         if (isColor) {
@@ -604,6 +624,9 @@ public final class VulkanInterop implements AutoCloseable {
         device.graphicsQueue().waitIdle();
         destroyImage(true);
         destroyImage(false);
+        if (weatherPass != null) {
+            weatherPass.close();
+        }
         colorTracker.released();
         depthTracker.released();
         VK12.vkDestroySemaphore(vk, dxvkDoneSemaphore, null);
@@ -626,6 +649,6 @@ public final class VulkanInterop implements AutoCloseable {
         }
     }
 
-    private record ImportedImage(long image, long memory, int width, int height) {
+    private record ImportedImage(long image, long memory, int width, int height, long view) {
     }
 }

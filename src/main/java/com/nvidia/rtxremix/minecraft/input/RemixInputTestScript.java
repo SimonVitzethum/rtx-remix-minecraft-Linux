@@ -159,6 +159,8 @@ public final class RemixInputTestScript {
             }
             case "diag" -> {
                 var srv = mc.getSingleplayerServer();
+                LOGGER.info("diag: clockTime={} rain={} thunder={}", mc.level.getDefaultClockTime(),
+                        mc.level.getRainLevel(1.0f), mc.level.getThunderLevel(1.0f));
                 LOGGER.info("diag: client loaded chunks={} effectiveRD={} optionRD={} serverViewDistance={} serverLoaded={}",
                         mc.level.getChunkSource().getLoadedChunksCount(), mc.options.getEffectiveRenderDistance(),
                         mc.options.renderDistance().get(),
