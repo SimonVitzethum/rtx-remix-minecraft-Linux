@@ -377,8 +377,6 @@ public class RemixRenderer {
 
             if (VulkanBackendSupport.isActive()) {
                 interopVk = new VulkanInterop(interopInfo);
-                // The procedural sky is OpenGL compute code: give it a private GL context.
-                com.nvidia.rtxremix.minecraft.vulkan.SideGlContext.ensure();
                 LOGGER.info("Vulkan interop created");
             } else {
                 interopGlVk = new GlInterop(interopInfo);

@@ -33,13 +33,9 @@ import org.lwjgl.opengl.GL44;
  * <p>Render thread only: it owns GL programs, textures and a readback buffer,
  * and every entry point assumes the GL context is current.
  */
-final class AtmosphericSkyGenerator {
+final class AtmosphericSkyGenerator implements SkyGenerator {
 
-    static final int WIDTH = 256;
-    static final int HEIGHT = 128;
     static final int UPPER_HEIGHT = HEIGHT / 2;
-    static final int OUTPUT_BYTES =
-            WIDTH * HEIGHT * 4 * Short.BYTES;
     static final int READBACK_BYTES =
             WIDTH * (HEIGHT + 1) * 4 * Short.BYTES;
 
@@ -165,7 +161,8 @@ final class AtmosphericSkyGenerator {
      *     would stay black.
      * @return the completed readback, or null when there is nothing new to publish
      */
-    ByteBuffer generate(
+    @Override
+    public ByteBuffer generate(
             SkyLightState lightState,
             float[] upperMean,
             float mieScatteringAnisotropy,
@@ -289,7 +286,8 @@ final class AtmosphericSkyGenerator {
         }
     }
 
-    void destroy() {
+    @Override
+    public void destroy() {
         deleteTexture(transmittanceLut);
         deleteTexture(upperSingleTexture);
         deleteTexture(upperViewTexture);

@@ -6,8 +6,6 @@ package com.nvidia.rtxremix.minecraft.mixin;
 
 import com.mojang.blaze3d.platform.Window;
 import com.nvidia.rtxremix.minecraft.RtxRemixMod;
-import com.nvidia.rtxremix.minecraft.vulkan.SideGlContext;
-import org.lwjgl.sdl.SDL_Event;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -28,17 +26,5 @@ public abstract class WindowMixin {
     )
     private void rtxremix$onWindowCreated(CallbackInfo ci) {
         RtxRemixMod.LOGGER.info("Window created with SDL handle: {}", ((Window) (Object) this).handle());
-    }
-
-    /**
-     * Window events (SDL 514..536) of the mod's hidden side GL window (Vulkan backend) must not resize or
-     * unfocus Minecraft's window: the handler does not check the window id.
-     */
-    @Inject(method = "handleEvent", at = @At("HEAD"), cancellable = true)
-    private void rtxremix$ignoreSideWindowEvents(SDL_Event event, CallbackInfo ci) {
-        int type = event.type();
-        if (type >= 514 && type <= 536 && SideGlContext.isSideWindow(event.window().windowID())) {
-            ci.cancel();
-        }
     }
 }

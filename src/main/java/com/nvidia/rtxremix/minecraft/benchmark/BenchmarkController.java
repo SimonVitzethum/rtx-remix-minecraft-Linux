@@ -31,7 +31,6 @@ import net.minecraft.world.level.saveddata.WeatherData;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.storage.LevelResource;
-import org.lwjgl.opengl.GL11;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1427,9 +1426,11 @@ public class BenchmarkController {
         // System info
         JsonObject system = new JsonObject();
         try {
-            system.addProperty("gpu", GL11.glGetString(GL11.GL_RENDERER));
-            system.addProperty("gpuVendor", GL11.glGetString(GL11.GL_VENDOR));
-            system.addProperty("glVersion", GL11.glGetString(GL11.GL_VERSION));
+            // Backend neutral: Minecraft's device info (OpenGL or Vulkan), no GL query.
+            com.mojang.renderpearl.api.device.DeviceInfo info = com.mojang.blaze3d.systems.RenderSystem.getDevice().getDeviceInfo();
+            system.addProperty("gpu", info.name());
+            system.addProperty("gpuVendor", info.vendorName());
+            system.addProperty("glVersion", info.backendName() + " " + info.driverInfo());
         } catch (Exception e) {
             system.addProperty("gpu", "unknown");
         }
@@ -1524,7 +1525,7 @@ public class BenchmarkController {
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("\n=== Benchmark Complete (%d frames) ===\n", recordFrames));
         sb.append(String.format("  Branch:   %s (%s)\n", gitBranch, gitCommit));
-        sb.append(String.format("  GPU:      %s\n", GL11.glGetString(GL11.GL_RENDERER)));
+        sb.append(String.format("  GPU:      %s\n", com.mojang.blaze3d.systems.RenderSystem.getDevice().getDeviceInfo().name()));
         sb.append(String.format("  CPU:      %s\n", getCpuName()));
         sb.append(String.format("  Memory:   %d MB | Heap: %d MB\n", getSystemMemoryMb(), Runtime.getRuntime().maxMemory() / (1024 * 1024)));
         sb.append(String.format("  World:    %s | Path: %s | Warmup: %d frames\n",

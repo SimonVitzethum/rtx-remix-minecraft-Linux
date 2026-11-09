@@ -66,8 +66,8 @@ public class SkyRenderer {
     private static final Logger LOGGER = LoggerFactory.getLogger(SkyRenderer.class);
 
     /** Equirectangular sky texture resolution. */
-    private static final int SKY_W = AtmosphericSkyGenerator.WIDTH;
-    private static final int SKY_H = AtmosphericSkyGenerator.HEIGHT;
+    private static final int SKY_W = SkyGenerator.WIDTH;
+    private static final int SKY_H = SkyGenerator.HEIGHT;
     private static final String OVERCAST_TEXTURE_DDS = "textures/overcast_thunderstorm_bc6u.dds";
     private static final float RAIN_DOME_MIN_INTENSITY = 0.02f;
     private static final float OVERCAST_MEAN_R = 0.2393801f;
@@ -160,7 +160,7 @@ public class SkyRenderer {
     private final RemixMesh[] moonMeshAssets = new RemixMesh[8];
     private RemixMesh starMeshAsset;
     private long celestialBlendPNext;
-    private final AtmosphericSkyGenerator atmosphericGenerator;
+    private final SkyGenerator atmosphericGenerator;
     private final TexturePatch atmosphericTexturePatch = new TexturePatch();
     private final TextureBatchEntry atmosphericTextureEntry = new TextureBatchEntry();
     private final TexturePatchInfo atmosphericTextureUpdate = new TexturePatchInfo();
@@ -187,7 +187,7 @@ public class SkyRenderer {
 
     public SkyRenderer(RemixRenderer renderer) {
         this.renderer = renderer;
-        atmosphericGenerator = new AtmosphericSkyGenerator();
+        atmosphericGenerator = SkyGenerator.create();
         atmosphericTexturePatch.width = SKY_W;
         atmosphericTexturePatch.height = SKY_H;
         atmosphericTexturePatch.rowPitch = SKY_W * 4 * Short.BYTES;
@@ -324,7 +324,7 @@ public class SkyRenderer {
     private void renderFixedSky(RemixAPI api, float[] radiance) {
         if (skyTextureAsset == null || !skyTextureAsset.isAlive()) {
             destroyAsset(skyTextureAsset);
-            ByteBuffer pixels = DirectBufferPool.acquire(AtmosphericSkyGenerator.OUTPUT_BYTES);
+            ByteBuffer pixels = DirectBufferPool.acquire(SkyGenerator.OUTPUT_BYTES);
             fillFixedDome(pixels, radiance);
             skyTextureAsset = createSkyTexture(pixels);
         }
@@ -339,9 +339,9 @@ public class SkyRenderer {
      * @throws IllegalArgumentException when the buffer cannot hold the whole dome
      */
     static void fillFixedDome(ByteBuffer pixels, float[] radiance) {
-        if (pixels.capacity() < AtmosphericSkyGenerator.OUTPUT_BYTES) {
+        if (pixels.capacity() < SkyGenerator.OUTPUT_BYTES) {
             throw new IllegalArgumentException(
-                    "Dome buffer is smaller than " + AtmosphericSkyGenerator.OUTPUT_BYTES);
+                    "Dome buffer is smaller than " + SkyGenerator.OUTPUT_BYTES);
         }
         short r = Float.floatToFloat16(radiance[0]);
         short g = Float.floatToFloat16(radiance[1]);
@@ -349,7 +349,7 @@ public class SkyRenderer {
         short a = Float.floatToFloat16(1.0f);
         pixels.clear();
         pixels.order(ByteOrder.nativeOrder());
-        pixels.limit(AtmosphericSkyGenerator.OUTPUT_BYTES);
+        pixels.limit(SkyGenerator.OUTPUT_BYTES);
         for (int texel = 0; texel < SKY_W * SKY_H; texel++) {
             pixels.putShort(r).putShort(g).putShort(b).putShort(a);
         }
@@ -516,12 +516,12 @@ public class SkyRenderer {
 
         try (ProfileScope ignored =
                 ProfileScope.begin("Sky.Atmosphere.Upload")
-                        .bytes(AtmosphericSkyGenerator.OUTPUT_BYTES)) {
+                        .bytes(SkyGenerator.OUTPUT_BYTES)) {
             if (skyTextureAsset == null || !skyTextureAsset.isAlive()) {
                 destroyAsset(skyTextureAsset);
                 ByteBuffer ownedPixels =
                         DirectBufferPool.acquire(
-                                AtmosphericSkyGenerator.OUTPUT_BYTES);
+                                SkyGenerator.OUTPUT_BYTES);
                 ownedPixels.put(pixelBuf);
                 ownedPixels.flip();
                 pixelBuf.position(0);
