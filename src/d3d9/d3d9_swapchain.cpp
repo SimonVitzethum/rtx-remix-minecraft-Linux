@@ -61,6 +61,10 @@ static bool remixProfileFlag(const char* name) {
 #endif
 }
 
+#ifdef REMIX_LINUX_NATIVE
+extern "C" void rtxLinuxStatsOnPresent(int dlfgEnabled);
+#endif
+
 namespace dxvk {
   // NV-DXVK start: App Controlled FSE
   enum FSEState {
@@ -1218,6 +1222,9 @@ namespace dxvk {
 
   void D3D9SwapChainEx::PresentImage(UINT SyncInterval) {
     ScopedCpuProfileZone();
+#ifdef REMIX_LINUX_NATIVE
+    rtxLinuxStatsOnPresent(m_context->isDLFGEnabled() ? 1 : 0);
+#endif
     D3D9_DLFG_TRACE("PresentImage begin frame ", m_frameId);
     m_parent->Flush();
     D3D9_DLFG_TRACE("flushed");

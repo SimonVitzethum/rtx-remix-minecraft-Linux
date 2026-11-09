@@ -78,6 +78,10 @@
 // Destructor requires the struct definitions
 #include "rtx_sky.h"
 
+#ifdef REMIX_LINUX_NATIVE
+extern "C" void rtxLinuxStatsSetResolution(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, uint32_t upscaler);
+#endif
+
 namespace dxvk {
 
   Metrics Metrics::s_instance;
@@ -420,6 +424,9 @@ namespace dxvk {
           s_lastOutW != upscaledExtent.width || s_lastOutH != upscaledExtent.height || s_lastUpscaler != upscalerNow) {
         s_lastRenderW = downscaledExtent.width; s_lastRenderH = downscaledExtent.height;
         s_lastOutW = upscaledExtent.width; s_lastOutH = upscaledExtent.height; s_lastUpscaler = upscalerNow;
+#ifdef REMIX_LINUX_NATIVE
+        rtxLinuxStatsSetResolution(downscaledExtent.width, downscaledExtent.height, upscaledExtent.width, upscaledExtent.height, upscalerNow);
+#endif
         Logger::info(str::format("Render resolution: ", downscaledExtent.width, "x", downscaledExtent.height, " -> output ",
           upscaledExtent.width, "x", upscaledExtent.height, " upscaler=", upscalerNow,
           " qualityDLSS=", uint32_t(RtxOptions::qualityDLSS()), " rayReconstruction=", RtxOptions::enableRayReconstruction()));

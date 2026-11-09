@@ -45,6 +45,21 @@ namespace {
 // NV-DXVK: bring-up trace for the Linux frame generation path (first 60 messages), see PORT_KNOWLEDGE.md
 static std::atomic<int> g_dlfgTraceCount{0};
 static std::atomic<int> g_dlfgValidJobs{0};
+// NV-DXVK: frame statistics exported to the client (F3 overlay): remixapi_linux_GetFrameStats
+// out[0] rendered frames, [1] presented frames (incl. interpolated), [2] last multiplier, [3,4] render w,h, [5,6] output w,h, [7] upscaler id
+static std::atomic<uint64_t> g_rtxStat[8];
+extern "C" {
+  __attribute__((visibility("default"))) void remixapi_linux_GetFrameStats(uint64_t* out) {
+    for (int i = 0; i < 8; i++) out[i] = g_rtxStat[i].load(std::memory_order_relaxed);
+  }
+  __attribute__((visibility("default"))) void rtxLinuxStatsOnPresent(int dlfgEnabled) {
+    g_rtxStat[0].fetch_add(1, std::memory_order_relaxed);
+    if (!dlfgEnabled) { g_rtxStat[1].fetch_add(1, std::memory_order_relaxed); g_rtxStat[2].store(1, std::memory_order_relaxed); }
+  }
+  __attribute__((visibility("default"))) void rtxLinuxStatsSetResolution(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, uint32_t upscaler) {
+    g_rtxStat[3] = rw; g_rtxStat[4] = rh; g_rtxStat[5] = ow; g_rtxStat[6] = oh; g_rtxStat[7] = upscaler;
+  }
+}
 #define DLFG_TRACE(...) do { if ((g_dlfgValidJobs.load() > 0 || g_dlfgTraceCount.load() < 40) && g_dlfgTraceCount.fetch_add(1) < 300) Logger::info(str::format("DLFG trace: ", __VA_ARGS__)); } while (0)
 #else
 #define DLFG_TRACE(...) do {} while (0)
@@ -666,6 +681,8 @@ namespace dxvk {
         static uint32_t statJobs = 0, statPresented = 0;
         statJobs++;
         statPresented += present.frameInterpolation.valid() ? present.frameInterpolation.interpolatedFrameCount + 1 : 1;
+        g_rtxStat[1].fetch_add(present.frameInterpolation.valid() ? present.frameInterpolation.interpolatedFrameCount + 1 : 1, std::memory_order_relaxed);
+        g_rtxStat[2].store(present.frameInterpolation.valid() ? present.frameInterpolation.interpolatedFrameCount + 1 : 1, std::memory_order_relaxed);
         if (statJobs % 120 == 0) {
           Logger::info(str::format("DLFG: ", statJobs, " rendered frames, ", statPresented, " presented frames, last multiplier x",
             present.frameInterpolation.valid() ? present.frameInterpolation.interpolatedFrameCount + 1 : 1));
