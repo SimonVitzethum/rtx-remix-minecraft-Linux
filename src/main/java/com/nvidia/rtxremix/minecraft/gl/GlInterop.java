@@ -362,6 +362,9 @@ public final class GlInterop {
             try {
                 drainStaleGlErrors();
                 memoryObject = glCreateMemoryObjectsEXT();
+                // The runtime allocates the image as a dedicated allocation; the driver only maps larger
+                // images correctly (otherwise they read and write as zeros) when GL is told so before the import.
+                glMemoryObjectParameteriEXT(memoryObject, GL_DEDICATED_MEMORY_OBJECT_EXT, GL_TRUE);
                 importMemory(memoryObject, allocationSize, newMemoryHandle);
                 checkGlError("glImportMemoryEXT(" + debugName + ")");
 

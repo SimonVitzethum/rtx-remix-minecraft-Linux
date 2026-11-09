@@ -53,6 +53,7 @@ public final class RemixInputTestScript {
 
     private static List<Step> steps;
     private static boolean loaded;
+    private static boolean menuMode;
     private static int next;
     private static long startNanos = -1L;
     private static double cursorX;
@@ -77,6 +78,9 @@ public final class RemixInputTestScript {
         try {
             for (String line : Files.readAllLines(Path.of(path.trim()))) {
                 line = line.strip();
+                if (line.equals("# menu")) {
+                    menuMode = true;
+                }
                 if (line.isEmpty() || line.startsWith("#")) {
                     continue;
                 }
@@ -99,7 +103,8 @@ public final class RemixInputTestScript {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || mc.player == null) {
+        // Steps named "@menu" in the script file header (first line "# menu") may run before a world exists.
+        if (!menuMode && (mc.level == null || mc.player == null)) {
             return;
         }
         long now = System.nanoTime();
@@ -130,6 +135,7 @@ public final class RemixInputTestScript {
             }
             case "get" -> LOGGER.info("get {} = {}", w[1],
                     RtxRemixMod.renderer.getRemixApi().getConfigVariableResolved(w[1]));
+            case "shot" -> LOGGER.info("shot marker {}", w.length > 1 ? w[1] : "");
             case "cmd" -> mc.player.connection.sendCommand(String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length)));
             case "look" -> {
                 float yaw = Float.parseFloat(w[1]);
