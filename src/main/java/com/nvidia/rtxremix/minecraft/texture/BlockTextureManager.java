@@ -272,6 +272,9 @@ public class BlockTextureManager {
                 appliedTerrainEmissionMultiplier = terrainEmissionMultiplier;
             }
             buildAtlasMaterials(api, labPBRVariants);
+            if (System.getenv("RTXREMIX_DUMP_ATLAS") != null) {
+                dumpAtlasCrops(System.getenv("RTXREMIX_DUMP_ATLAS"));
+            }
             buildWaterMaterials(api);
             Map<String, AnimatedSpriteLabPBR> labPBRMap =
                 buildAnimatedSpriteLabPBRMap(labPBRVariants, spriteAtlas);
@@ -282,6 +285,56 @@ public class BlockTextureManager {
         } catch (Exception e) {
             LOGGER.error("Init failed", e);
             initFailed = true;
+        }
+    }
+
+    private static final int ATLAS_PAD_TEXELS = 4;
+
+    /**
+     * Fills the empty texels within {@link #ATLAS_PAD_TEXELS} of every sprite rectangle with the nearest edge texel of that
+     * sprite. Only texels outside all sprite rectangles are written, and each is written once, so no sprite is overwritten.
+     */
+    private void padSpriteEdges(byte[] data, int bytesPerTexel) {
+        java.util.BitSet occupied = new java.util.BitSet(atlasW * atlasH);
+        for (SpriteEntry se : sprites)
+            for (int y = 0; y < se.pixH; y++)
+                occupied.set((se.pixY + y) * atlasW + se.pixX, (se.pixY + y) * atlasW + se.pixX + se.pixW);
+        for (SpriteEntry se : sprites) {
+            int x0 = Math.max(0, se.pixX - ATLAS_PAD_TEXELS), x1 = Math.min(atlasW - 1, se.pixX + se.pixW - 1 + ATLAS_PAD_TEXELS);
+            int y0 = Math.max(0, se.pixY - ATLAS_PAD_TEXELS), y1 = Math.min(atlasH - 1, se.pixY + se.pixH - 1 + ATLAS_PAD_TEXELS);
+            for (int y = y0; y <= y1; y++) {
+                int sy = Math.max(se.pixY, Math.min(se.pixY + se.pixH - 1, y));
+                for (int x = x0; x <= x1; x++) {
+                    int dst = y * atlasW + x;
+                    if (occupied.get(dst)) continue;
+                    int sx = Math.max(se.pixX, Math.min(se.pixX + se.pixW - 1, x));
+                    System.arraycopy(data, (sy * atlasW + sx) * bytesPerTexel, data, dst * bytesPerTexel, bytesPerTexel);
+                    occupied.set(dst);
+                }
+            }
+        }
+    }
+
+    /** Debug: writes the albedo atlas around a few sprites (with 12 texels of surroundings) as PNG, alpha included. */
+    private void dumpAtlasCrops(String dir) {
+        try {
+            for (String name : new String[] {"block/spruce_planks", "block/bricks", "block/stone", "block/dirt"}) {
+                SpriteEntry se = spriteById.get(Identifier.withDefaultNamespace(name));
+                if (se == null) continue;
+                int pad = 12, x0 = Math.max(0, se.pixX - pad), y0 = Math.max(0, se.pixY - pad);
+                int w = Math.min(atlasW - x0, se.pixW + 2 * pad), h = Math.min(atlasH - y0, se.pixH + 2 * pad);
+                java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++) {
+                        int i = ((y0 + y) * atlasW + (x0 + x)) * 4;
+                        img.setRGB(x, y, ((albedoRGBA[i + 3] & 0xFF) << 24) | ((albedoRGBA[i] & 0xFF) << 16)
+                                | ((albedoRGBA[i + 1] & 0xFF) << 8) | (albedoRGBA[i + 2] & 0xFF));
+                    }
+                javax.imageio.ImageIO.write(img, "png", new java.io.File(dir, name.replace('/', '_') + ".png"));
+                LOGGER.info("dumpAtlas {} at {},{} size {}x{} atlas {}x{}", name, se.pixX, se.pixY, se.pixW, se.pixH, atlasW, atlasH);
+            }
+        } catch (Exception e) {
+            LOGGER.error("dumpAtlas failed", e);
         }
     }
 
@@ -524,6 +577,20 @@ public class BlockTextureManager {
                 if (sI != null) sI.close();
                 if (sssI != null) sssI.close();
             }
+        }
+
+        // The stitcher leaves a few empty (transparent black) texels between sprites. Bilinear filtering and the mip chain
+        // blend them into the sprite edges, which showed up as dark, half transparent seams between blocks. Replicate each
+        // sprite's edge texels into the empty ring around it, in every channel, before the mips are built.
+        try (ProfileScope ignored = ProfileScope.begin("Atlas.padding")) {
+            padSpriteEdges(albedoRGBA, 4);
+            padSpriteEdges(normalAtlas, 4);
+            padSpriteEdges(heightAtlas, 1);
+            padSpriteEdges(roughnessAtlas, 1);
+            padSpriteEdges(metallicAtlas, 1);
+            padSpriteEdges(emissiveAtlas, 4);
+            padSpriteEdges(sssThicknessAtlas, 4);
+            padSpriteEdges(sssAlbedoAtlas, 4);
         }
 
         atlasAlbedo = upload(api, "atlas_albedo", albedoRGBA, atlasW, atlasH,
