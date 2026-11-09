@@ -111,6 +111,10 @@ public final class RemixInputTestScript {
         if (!menuMode && (mc.level == null || mc.player == null)) {
             return;
         }
+        if (mc.player != null && mc.gui.screen() instanceof net.minecraft.client.gui.screens.DeathScreen) {
+            mc.player.respawn(); // a world saved while dead (test damage) must not block the script
+            return;
+        }
         if (!menuMode && startNanos < 0 && mc.gui.screen() != null) {
             return; // the clock starts once the world is playable (loading screen gone)
         }
