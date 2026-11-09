@@ -125,6 +125,8 @@ public final class RemixInputTestScript {
                 RtxRemixMod.renderer.getRemixApi().setConfigVariable(w[1], w[2]);
                 LOGGER.info("conf {} = {}", w[1], w[2]);
             }
+            case "get" -> LOGGER.info("get {} = {}", w[1],
+                    RtxRemixMod.renderer.getRemixApi().getConfigVariableResolved(w[1]));
             case "close" -> {
                 if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
                     RtxRemixMod.toggleRemixMenu();
