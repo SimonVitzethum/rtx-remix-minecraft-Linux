@@ -390,6 +390,9 @@ public class RtxRemixMod implements ClientModInitializer {
             )
         );
 
+        com.nvidia.rtxremix.minecraft.camera.Freecam.register(KEY_CATEGORY);
+        com.nvidia.rtxremix.minecraft.light.Fullbright.registerKey(KEY_CATEGORY);
+
         ScreenEvents.AFTER_INIT.register(
                 (client, screen, scaledWidth, scaledHeight) -> {
                     if (!(screen instanceof OptionsScreen)) {

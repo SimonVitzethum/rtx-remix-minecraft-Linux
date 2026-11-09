@@ -31,6 +31,10 @@ import java.util.List;
  * conf KEY VALUE          Remix config variable (SetConfigVariable), e.g. conf rtx.qualityDLSS 2
  * cmd TEXT...             chat command without the slash (sendCommand), e.g. cmd tp @s 0 100 0 90 0
  * look YAW PITCH          set the local player's view direction (degrees)
+ * freecam                  toggle the freecam (like the key; the real key is tested with "key f4")
+ * fcaim DIST UP ANGLE  freecam DIST blocks from the player (ANGLE degrees around, UP higher) looking at it
+ * fcpose X Y Z YAW PITCH  place the freecam
+ * fb on|off [VARIANT [KEYRAD BACKRAD EVDROP]]   fullbright (variant 1..3) and tunables
  * diag                     log client/server loaded chunk counts and view distances
  * close                    close the menu like Alt+X does
  * altx                     Alt+X chord through KeyboardHandler.keyPress (toggles the developer menu)
@@ -107,6 +111,9 @@ public final class RemixInputTestScript {
         if (!menuMode && (mc.level == null || mc.player == null)) {
             return;
         }
+        if (!menuMode && startNanos < 0 && mc.gui.screen() != null) {
+            return; // the clock starts once the world is playable (loading screen gone)
+        }
         long now = System.nanoTime();
         if (startNanos < 0) {
             startNanos = now;
@@ -139,6 +146,32 @@ public final class RemixInputTestScript {
             case "dumpblocks" -> BlockGridTest.dump(net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve(w[1]));
             case "grid" -> BlockGridTest.grid(mc, net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve(w[1]),
                     Integer.parseInt(w[2]), Integer.parseInt(w[3]), Integer.parseInt(w[4]), Integer.parseInt(w[5]));
+            case "freecam" -> com.nvidia.rtxremix.minecraft.camera.Freecam.toggleForTest(mc);
+            case "fcpose" -> com.nvidia.rtxremix.minecraft.camera.Freecam.setPose(Double.parseDouble(w[1]),
+                    Double.parseDouble(w[2]), Double.parseDouble(w[3]), Float.parseFloat(w[4]), Float.parseFloat(w[5]));
+            case "fcaim" -> {
+                // freecam DIST blocks away from the player at ANGLE degrees around it, UP blocks higher, looking at the player
+                double dist = Double.parseDouble(w[1]);
+                double up = Double.parseDouble(w[2]);
+                double ang = Math.toRadians(Double.parseDouble(w[3]));
+                net.minecraft.world.phys.Vec3 pe = mc.player.getEyePosition();
+                double cx = pe.x + Math.sin(ang) * dist;
+                double cz = pe.z + Math.cos(ang) * dist;
+                double cy = pe.y + up;
+                double dx = pe.x - cx;
+                double dz = pe.z - cz;
+                double dy = pe.y - 0.5 - cy;
+                float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+                float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+                com.nvidia.rtxremix.minecraft.camera.Freecam.setPose(cx, cy, cz, yaw, pitch);
+            }
+            case "fb" -> {
+                com.nvidia.rtxremix.minecraft.light.Fullbright.setEnabled(w[1].equals("on"));
+                if (w.length > 2) com.nvidia.rtxremix.minecraft.light.Fullbright.variant = Integer.parseInt(w[2]);
+                if (w.length > 3) com.nvidia.rtxremix.minecraft.light.Fullbright.keyRadiance = Float.parseFloat(w[3]);
+                if (w.length > 4) com.nvidia.rtxremix.minecraft.light.Fullbright.backRadiance = Float.parseFloat(w[4]);
+                if (w.length > 5) com.nvidia.rtxremix.minecraft.light.Fullbright.evMinDrop = Float.parseFloat(w[5]);
+            }
             case "shot" -> LOGGER.info("shot marker {}", w.length > 1 ? w[1] : "");
             case "cmd" -> mc.player.connection.sendCommand(String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length)));
             case "scmd" -> {
@@ -190,6 +223,8 @@ public final class RemixInputTestScript {
             case "up" -> mc.mouseHandler.onButton(h, new MouseButtonInfo(button(w), 0), 0);
             case "scroll" -> mc.mouseHandler.onScroll(h, 0.0, Double.parseDouble(w[1]));
             case "char" -> mc.keyboardHandler.charTyped(h, new CharacterEvent(w[1].codePointAt(0)));
+            case "kdown" -> mc.keyboardHandler.keyPress(h, 1, new KeyEvent(scancode(w[1]), 0, 0));
+            case "kup" -> mc.keyboardHandler.keyPress(h, 0, new KeyEvent(scancode(w[1]), 0, 0));
             case "key" -> {
                 int sc = scancode(w[1]);
                 mc.keyboardHandler.keyPress(h, 1, new KeyEvent(sc, 0, 0));

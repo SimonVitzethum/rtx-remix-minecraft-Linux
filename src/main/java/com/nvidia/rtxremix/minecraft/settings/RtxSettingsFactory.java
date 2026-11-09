@@ -244,6 +244,17 @@ public final class RtxSettingsFactory {
                 0.0, 10.0,
                 SkyRenderer::getNightAmbientBoost, SkyRenderer::setNightAmbientBoost));
 
+        list.add(RtxSetting.ofBool("fullbright.enabled", SettingGroup.FULLBRIGHT,
+                "rtxremix.setting.fullbright.enabled", "rtxremix.setting.fullbright.enabled.tip",
+                false, com.nvidia.rtxremix.minecraft.light.Fullbright::isEnabled,
+                com.nvidia.rtxremix.minecraft.light.Fullbright::setEnabled));
+        list.add(RtxSetting.ofFloat("fullbright.intensity", SettingGroup.FULLBRIGHT,
+                "rtxremix.setting.fullbright.intensity", "rtxremix.setting.fullbright.intensity.tip",
+                0.0, com.nvidia.rtxremix.minecraft.light.Fullbright.MAX_INTENSITY,
+                com.nvidia.rtxremix.minecraft.light.Fullbright.DEFAULT_INTENSITY,
+                () -> (double) com.nvidia.rtxremix.minecraft.light.Fullbright.getIntensity(),
+                v -> com.nvidia.rtxremix.minecraft.light.Fullbright.setIntensity(v.floatValue())));
+
         for (BlockLightIntensityControls.Control control
                 : BlockLightIntensityControls.controls()) {
             list.add(RtxSetting.ofFloat(

@@ -12,6 +12,7 @@ public enum SettingGroup {
     UPSCALING(SettingCategory.PERFORMANCE, "rtxremix.settings.group.upscaling"),
     SKY(SettingCategory.LIGHTING, "rtxremix.settings.group.sky"),
     CLOUDS(SettingCategory.LIGHTING, "rtxremix.settings.group.clouds"),
+    FULLBRIGHT(SettingCategory.LIGHTING, "rtxremix.settings.group.fullbright"),
     BLOCK_LIGHTS(SettingCategory.LIGHTING, "rtxremix.settings.group.blockLights"),
     TONEMAPPING(SettingCategory.IMAGE, "rtxremix.settings.group.tonemapping"),
     EYE_ADAPTATION(SettingCategory.IMAGE, "rtxremix.settings.group.eyeAdaptation"),
