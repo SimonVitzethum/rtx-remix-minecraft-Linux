@@ -671,6 +671,22 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreateImpl<let 
 
     opaqueSurfaceMaterialInteraction.flags |= OPAQUE_SURFACE_MATERIAL_INTERACTION_FLAG_HAS_HEIGHT_TEXTURE;
   }
+
+  // Linux port: keep every material sample one texel inside the sprite's atlas tile. Neighbouring sprites of the atlas are
+  // unrelated (and the mod's atlas has no padding), so a bilinear footprint that crosses the tile edge shows up as dark or
+  // wrongly coloured seams along the block edges.
+  if (any(surfaceInteraction.texcoordBoundsPacked != 0u) && opaqueSurfaceMaterial.albedoOpacityTextureIndex != BINDING_INDEX_INVALID)
+  {
+    uint clampWidth, clampHeight, clampLevels = 0;
+    textures[nonuniformEXT(uint(opaqueSurfaceMaterial.albedoOpacityTextureIndex))].GetDimensions(0, clampWidth, clampHeight, clampLevels);
+    const float2 clampAtlasSize = float2(clampWidth, clampHeight);
+    const float2 clampMin = round(pomUnpackUnorm16x2(surfaceInteraction.texcoordBoundsPacked.x) * clampAtlasSize);
+    const float2 clampMax = round(pomUnpackUnorm16x2(surfaceInteraction.texcoordBoundsPacked.y) * clampAtlasSize);
+    if (all(clampMax > clampMin + 2.0f))
+    {
+      surfaceInteraction.textureCoordinates = clamp(surfaceInteraction.textureCoordinates * clampAtlasSize, clampMin + 1.0f, clampMax - 1.0f) / clampAtlasSize;
+    }
+  }
 #endif
 
   // Sample from each Opaque Surface Material texture
