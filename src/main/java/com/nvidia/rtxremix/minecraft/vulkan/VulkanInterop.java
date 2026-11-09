@@ -67,6 +67,10 @@ public final class VulkanInterop implements AutoCloseable {
     /** Command buffers of the present-time submission; one is reused every third frame. */
     private static final int PRESENT_RING = 3;
 
+    /** Debug aid: -Drtxremix.vk.debug=readback|clear, or the same word in the file rtxremix-vk-debug in the game directory. */
+    private static final String DEBUG_MODE = debugMode();
+    private static final boolean DEBUG_CLEAR = "clear".equals(DEBUG_MODE);
+
     private final VulkanDevice device;
     private final VkDevice vk;
     private final long dxvkDoneSemaphore;
@@ -100,6 +104,9 @@ public final class VulkanInterop implements AutoCloseable {
         dxvkDoneSemaphore = importTimelineSemaphore(dxvkDoneHandle, "dxvkDone");
         clientDoneSemaphore = importTimelineSemaphore(clientDoneHandle, "clientDone");
         createPresentRing();
+        if (!DEBUG_MODE.isEmpty()) {
+            LOGGER.warn("VulkanInterop debug mode: {}", DEBUG_MODE);
+        }
         LOGGER.info("VulkanInterop: imported semaphores dxvkDone=0x{} clientDone=0x{}",
                 Long.toHexString(dxvkDoneSemaphore), Long.toHexString(clientDoneSemaphore));
     }
@@ -203,12 +210,15 @@ public final class VulkanInterop implements AutoCloseable {
                         .handleType(VK12.VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
                         .fd((int) fd);
                 VkMemoryDedicatedAllocateInfo dedicated = VkMemoryDedicatedAllocateInfo.calloc(stack).sType$Default()
-                        .pNext(importInfo.address())
                         .image(image);
+                // LWJGL's typed pNext(struct) PREPENDS: it overwrites the struct's own pNext with the chain so far.
+                // Chaining the dedicated struct by hand first would silently drop the import (a fresh, unshared
+                // allocation that looks fine in isolation). Prepend one by one: allocate -> dedicated -> import.
                 VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                        .pNext(dedicated)
                         .allocationSize(allocationSize)
                         .memoryTypeIndex(memoryType);
+                allocate.pNext(importInfo);
+                allocate.pNext(dedicated);
                 check(VK12.vkAllocateMemory(vk, allocate, null, out), "vkAllocateMemory(import " + name + ")");
                 memory = out.get(0);
                 check(VK12.vkBindImageMemory(vk, image, memory, 0L), "vkBindImageMemory(" + name + ")");
@@ -277,12 +287,25 @@ public final class VulkanInterop implements AutoCloseable {
             return;
         }
         colorTracker.registerWait(info.dxvkDoneSemaphore_ValueToWait);
+        if (DEBUG_READBACK && debugFrame % 60 == 0) {
+            // Needs the Remix frame finished: wait on the CPU for the done value.
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                org.lwjgl.vulkan.VkSemaphoreWaitInfo wait = org.lwjgl.vulkan.VkSemaphoreWaitInfo.calloc(stack).sType$Default()
+                        .semaphoreCount(1).pSemaphores(stack.longs(dxvkDoneSemaphore))
+                        .pValues(stack.longs(info.dxvkDoneSemaphore_ValueToWait));
+                VK12.vkWaitSemaphores(vk, wait, 5_000_000_000L);
+            }
+            debugReadback("remixImage@composite", color.image, color.width, color.height);
+            debugFrame--;
+        }
         VulkanCommandEncoder encoder = VulkanBackendSupport.encoder();
         long targetImage = VulkanBackendSupport.colorImage(target);
         encoder.waitSemaphore(dxvkDoneSemaphore, info.dxvkDoneSemaphore_ValueToWait, STAGE_ALL_COMMANDS);
         VkCommandBuffer cb = encoder.allocateAndBeginTransientCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            recordCopy(cb, stack, color.image, color.width, color.height, targetImage, target.width, target.height);
+            externalOwnershipTransfer(cb, stack, color.image, false);
+            // Remix's image has Vulkan row order (row 0 on top), Minecraft's Vulkan render target keeps GL's bottom-up rows.
+            recordCopy(cb, stack, color.image, color.width, color.height, targetImage, target.width, target.height, true);
         }
         check(VK12.vkEndCommandBuffer(cb), "vkEndCommandBuffer(composite)");
         encoder.execute(cb);
@@ -300,12 +323,22 @@ public final class VulkanInterop implements AutoCloseable {
             signalOnly();
             return;
         }
+        long targetImage = VulkanBackendSupport.colorImage(target);
+        debugReadback("mainRT@present", targetImage, target.width, target.height);
         long value = clientTracker.nextClientDone();
         VkCommandBuffer cb = nextPresentBuffer(value);
-        long targetImage = VulkanBackendSupport.colorImage(target);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             beginOneTime(cb, stack);
-            recordCopy(cb, stack, targetImage, target.width, target.height, color.image, color.width, color.height);
+            if (DEBUG_CLEAR) {
+                org.lwjgl.vulkan.VkClearColorValue magenta = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
+                magenta.float32(0, 1f).float32(1, 0f).float32(2, 1f).float32(3, 1f);
+                org.lwjgl.vulkan.VkImageSubresourceRange.Buffer range = org.lwjgl.vulkan.VkImageSubresourceRange.calloc(1, stack);
+                range.aspectMask(VK12.VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+                VK12.vkCmdClearColorImage(cb, color.image, VK12.VK_IMAGE_LAYOUT_GENERAL, magenta, range);
+            } else {
+                recordCopy(cb, stack, targetImage, target.width, target.height, color.image, color.width, color.height, false);
+            }
+            externalOwnershipTransfer(cb, stack, color.image, true);
             check(VK12.vkEndCommandBuffer(cb), "vkEndCommandBuffer(present copy)");
         }
         try (VulkanQueue.Submission submission = device.graphicsQueue().beginSubmit()) {
@@ -313,6 +346,109 @@ public final class VulkanInterop implements AutoCloseable {
             submission.executeCommands(cb);
             submission.signalSemaphore(clientDoneSemaphore, value, STAGE_ALL_COMMANDS);
         }
+        if ("sync".equals(DEBUG_MODE) || DEBUG_CLEAR) {
+            device.graphicsQueue().waitIdle();
+        }
+    }
+
+    private static final boolean DEBUG_READBACK = "readback".equals(DEBUG_MODE);
+
+    private static String debugMode() {
+        String mode = System.getProperty("rtxremix.vk.debug");
+        if (mode == null) {
+            try {
+                java.nio.file.Path file = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("rtxremix-vk-debug");
+                if (java.nio.file.Files.isRegularFile(file)) {
+                    mode = java.nio.file.Files.readString(file).strip();
+                }
+            } catch (java.io.IOException | RuntimeException e) {
+                // no debug file
+            }
+        }
+        return mode == null ? "" : mode;
+    }
+    private int debugFrame;
+
+    /** Debug aid (-Drtxremix.vk.debug=readback): logs mean colour and a few pixels of an image, synchronously. */
+    public void debugReadback(String label, long image, int w, int h) {
+        if (!DEBUG_READBACK || (debugFrame++ % 60) != 0) {
+            return;
+        }
+        VulkanQueue queue = device.graphicsQueue();
+        queue.waitIdle();
+        long size = (long) w * h * 4;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkBufferCreateInfo bi = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack).sType$Default()
+                    .size(size).usage(VK12.VK_BUFFER_USAGE_TRANSFER_DST_BIT).sharingMode(VK12.VK_SHARING_MODE_EXCLUSIVE);
+            LongBuffer out = stack.mallocLong(1);
+            check(VK12.vkCreateBuffer(vk, bi, null, out), "debug vkCreateBuffer");
+            long buffer = out.get(0);
+            VkMemoryRequirements req = VkMemoryRequirements.malloc(stack);
+            VK12.vkGetBufferMemoryRequirements(vk, buffer, req);
+            int type = InteropTracker.pickMemoryType(req.memoryTypeBits(), memoryFlags(stack),
+                    VK12.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK12.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VkMemoryAllocateInfo ai = VkMemoryAllocateInfo.calloc(stack).sType$Default()
+                    .allocationSize(req.size()).memoryTypeIndex(type);
+            check(VK12.vkAllocateMemory(vk, ai, null, out), "debug vkAllocateMemory");
+            long memory = out.get(0);
+            VK12.vkBindBufferMemory(vk, buffer, memory, 0L);
+            VkCommandBuffer cb = presentBuffers[0];
+            VK12.vkResetCommandBuffer(cb, 0);
+            beginOneTime(cb, stack);
+            VulkanCommandEncoder.memoryBarrier(cb, stack);
+            org.lwjgl.vulkan.VkBufferImageCopy.Buffer region = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+            region.imageSubresource().aspectMask(VK12.VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
+            region.imageExtent().set(w, h, 1);
+            VK12.vkCmdCopyImageToBuffer(cb, image, VK12.VK_IMAGE_LAYOUT_GENERAL, buffer, region);
+            VulkanCommandEncoder.memoryBarrier(cb, stack);
+            check(VK12.vkEndCommandBuffer(cb), "debug end");
+            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default().pCommandBuffers(stack.pointers(cb));
+            check(VK12.vkQueueSubmit(queue.vkQueue(), submit, 0L), "debug submit");
+            queue.waitIdle();
+            PointerBuffer ptr = stack.mallocPointer(1);
+            check(VK12.vkMapMemory(vk, memory, 0L, size, 0, ptr), "debug map");
+            java.nio.ByteBuffer data = org.lwjgl.system.MemoryUtil.memByteBuffer(ptr.get(0), (int) size);
+            long r = 0, g = 0, b = 0;
+            for (int i = 0; i < size; i += 4) {
+                r += data.get(i) & 255; g += data.get(i + 1) & 255; b += data.get(i + 2) & 255;
+            }
+            long n = (long) w * h;
+            StringBuilder px = new StringBuilder();
+            int[][] pts = {{w / 2, h - 12}, {w / 2, h / 2}, {w / 10, h / 10}, {w - 10, 10}};
+            for (int[] pt : pts) {
+                int o = (pt[1] * w + pt[0]) * 4;
+                px.append(String.format(" (%d,%d)=%02x%02x%02x%02x", pt[0], pt[1], data.get(o) & 255, data.get(o + 1) & 255,
+                        data.get(o + 2) & 255, data.get(o + 3) & 255));
+            }
+            if (true) {
+                try {
+                    java.awt.image.BufferedImage png = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                    for (int y = 0; y < h; y++) {
+                        for (int x = 0; x < w; x++) {
+                            int o = (y * w + x) * 4;
+                            png.setRGB(x, y, ((data.get(o) & 255) << 16) | ((data.get(o + 1) & 255) << 8) | (data.get(o + 2) & 255));
+                        }
+                    }
+                    javax.imageio.ImageIO.write(png, "png", new java.io.File("/tmp/s14-" + label.replace('@', '-') + ".png"));
+                } catch (java.io.IOException e) {
+                    LOGGER.warn("debug png failed", e);
+                }
+            }
+            VK12.vkUnmapMemory(vk, memory);
+            LOGGER.info("VK debug readback {} {}x{}: mean rgb=({}, {}, {}){}", label, w, h, r / n, g / n, b / n, px);
+            VK12.vkDestroyBuffer(vk, buffer, null);
+            VK12.vkFreeMemory(vk, memory, null);
+        }
+    }
+
+    private int[] memoryFlags(MemoryStack stack) {
+        VkPhysicalDeviceMemoryProperties props = VkPhysicalDeviceMemoryProperties.malloc(stack);
+        VK12.vkGetPhysicalDeviceMemoryProperties(vk.getPhysicalDevice(), props);
+        int[] flags = new int[props.memoryTypeCount()];
+        for (int i = 0; i < flags.length; i++) {
+            flags[i] = props.memoryTypes(i).propertyFlags();
+        }
+        return flags;
     }
 
     private void signalOnly() {
@@ -337,16 +473,43 @@ public final class VulkanInterop implements AutoCloseable {
         return color == null ? 0L : color.image;
     }
 
+    /**
+     * Hands a shared image to (release) or takes it back from (acquire) the other device: a queue family ownership
+     * transfer with VK_QUEUE_FAMILY_EXTERNAL, which also makes the driver flush or decompress what the copy wrote,
+     * so the runtime's device sees the pixels (without it Remix kept reading its own previous output).
+     */
+    private void externalOwnershipTransfer(VkCommandBuffer cb, MemoryStack stack, long image, boolean release) {
+        int family = device.graphicsQueue().queueFamilyIndex();
+        VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
+                .srcAccessMask(release ? VK12.VK_ACCESS_MEMORY_WRITE_BIT : 0)
+                .dstAccessMask(release ? 0 : VK12.VK_ACCESS_MEMORY_READ_BIT | VK12.VK_ACCESS_MEMORY_WRITE_BIT)
+                .oldLayout(VK12.VK_IMAGE_LAYOUT_GENERAL)
+                .newLayout(VK12.VK_IMAGE_LAYOUT_GENERAL)
+                .srcQueueFamilyIndex(release ? family : VK_QUEUE_FAMILY_EXTERNAL)
+                .dstQueueFamilyIndex(release ? VK_QUEUE_FAMILY_EXTERNAL : family)
+                .image(image);
+        barrier.subresourceRange().aspectMask(VK12.VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+        VK12.vkCmdPipelineBarrier(cb, VK12.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK12.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                0, null, null, barrier);
+    }
+
+    private static final int VK_QUEUE_FAMILY_EXTERNAL = ~1; // VK_QUEUE_FAMILY_EXTERNAL = (~0U - 1)
+
     private void recordCopy(VkCommandBuffer cb, MemoryStack stack, long src, int srcW, int srcH,
-                            long dst, int dstW, int dstH) {
+                            long dst, int dstW, int dstH, boolean flipY) {
         // Everything submitted before this point (render passes, uploads) has to be visible to the copy.
         VulkanCommandEncoder.memoryBarrier(cb, stack);
-        if (InteropTracker.needsBlit(srcW, srcH, dstW, dstH)) {
+        if (flipY || InteropTracker.needsBlit(srcW, srcH, dstW, dstH)) {
             VkImageBlit.Buffer region = VkImageBlit.calloc(1, stack);
             region.srcSubresource().aspectMask(VK12.VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
             region.dstSubresource().aspectMask(VK12.VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
             region.srcOffsets(1).set(srcW, srcH, 1);
-            region.dstOffsets(1).set(dstW, dstH, 1);
+            if (flipY) {
+                region.dstOffsets(0).set(0, dstH, 0);
+                region.dstOffsets(1).set(dstW, 0, 1);
+            } else {
+                region.dstOffsets(1).set(dstW, dstH, 1);
+            }
             VK12.vkCmdBlitImage(cb, src, VK12.VK_IMAGE_LAYOUT_GENERAL, dst, VK12.VK_IMAGE_LAYOUT_GENERAL,
                     region, VK12.VK_FILTER_NEAREST);
         } else {

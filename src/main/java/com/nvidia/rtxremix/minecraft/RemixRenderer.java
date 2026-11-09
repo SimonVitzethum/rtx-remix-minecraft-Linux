@@ -344,7 +344,9 @@ public class RemixRenderer {
             }
 
             {
-                if (checkExternalMemorySupport()){
+                if (VulkanBackendSupport.isActive()) {
+                    LOGGER.info("Minecraft runs on its Vulkan backend: using the Vulkan interop, no GL extension check");
+                } else if (checkExternalMemorySupport()){
                     LOGGER.info("GL interop: required GL extensions are supported");
                 } else {
                     LOGGER.error("GL interop: required GL extensions are not supported. Remix present via GL-VK interop will not work.");
@@ -375,6 +377,8 @@ public class RemixRenderer {
 
             if (VulkanBackendSupport.isActive()) {
                 interopVk = new VulkanInterop(interopInfo);
+                // The procedural sky is OpenGL compute code: give it a private GL context.
+                com.nvidia.rtxremix.minecraft.vulkan.SideGlContext.ensure();
                 LOGGER.info("Vulkan interop created");
             } else {
                 interopGlVk = new GlInterop(interopInfo);
@@ -1456,8 +1460,8 @@ public class RemixRenderer {
             PresentInfo presentInfo = new PresentInfo();
             presentInfo.hwndOverride = 0;
             presentInfo.skipVulkanSwapchain = 0;
-            // Minecraft's Vulkan render target has the same row order as the Remix image, GL's is bottom-up.
-            presentInfo.interopFlipY = interopVk != null ? 0 : 1;
+            // Minecraft's Vulkan render target is bottom-up like GL's (its swapchain blit flips it), so Remix flips it too.
+            presentInfo.interopFlipY = 1;
             presentInfo.clientDoneSemaphore_ValueToWait = interopVk != null
                     ? interopVk.clientDoneValue()
                     : interop.getClientDoneSemaphoreValue();
