@@ -218,6 +218,7 @@ public final class FarField {
     private long lastMergeMs, lastPlanMs, lastStatMs;
 
     private Object levelKey;
+    private int lastFakeCount;
     private FarTileSource source;
     /** Loaded real chunks handed to the multiplayer cache (render thread): position -> chunk object recorded last. */
     private final HashMap<Long, LevelChunk> tracked = new HashMap<>();
@@ -420,7 +421,12 @@ public final class FarField {
             }
         }
         if (BobbyCompat.isPresent()) {
-            for (LevelChunk c : BobbyCompat.fakeChunks(level)) {
+            List<LevelChunk> fakes = BobbyCompat.fakeChunks(level);
+            if (Math.abs(fakes.size() - lastFakeCount) >= 25) {
+                lastFakeCount = fakes.size();
+                LOGGER.info("FarField: {} Bobby fake chunks", fakes.size());
+            }
+            for (LevelChunk c : fakes) {
                 int cx = c.getPos().x(), cz = c.getPos().z();
                 if (!seen.add(((long) cx << 32) | (cz & 0xFFFFFFFFL))) continue;
                 addLoaded(loaded, seen, c, cx, cz, R, recordBudget);
