@@ -21,6 +21,7 @@
 */
 #pragma once
 
+#include <array>
 #include "rtx_constants.h"
 #include "rtx_utils.h"
 #include "rtx_materials.h"
@@ -970,6 +971,12 @@ struct BlasEntry {
   uint32_t frameLastUpdated = kInvalidFrameIndex;
 
   Rc<PooledBlas> dynamicBlas = nullptr;
+
+  // NV-DXVK: cached result of vkGetAccelerationStructureBuildSizesKHR for the dynamic BLAS path. The driver call costs ~1 us
+  // and ran for every dynamic BLAS every frame (thousands in a Minecraft scene); the sizes only depend on the key below.
+  std::array<uint64_t, 6> dynamicSizeKey {};
+  VkAccelerationStructureBuildSizesInfoKHR dynamicSizeInfo {};
+  bool hasDynamicSizeInfo = false;
 
   std::vector<VkAccelerationStructureGeometryKHR> buildGeometries;
   std::vector<VkAccelerationStructureBuildRangeInfoKHR> buildRanges;

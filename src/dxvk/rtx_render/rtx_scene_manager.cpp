@@ -19,6 +19,9 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <unistd.h>
+#include <cstdlib>
+#include <chrono>
 #include <limits>
 #include <mutex>
 #include <vector>
@@ -2572,8 +2575,36 @@ namespace dxvk {
 
   static_assert(std::is_same_v< decltype(RtSurface::objectPickingValue), ObjectPickingValue>);
 
+  // REMIX_PROFILE_BLAS=1 (or ~/.remix_REMIX_PROFILE_BLAS): phase times of SceneManager::submitExternalDraw (CS thread), logged every 20000 calls.
+  namespace {
+    struct ExternalDrawProfile {
+      bool enabled = [] { if (std::getenv("REMIX_PROFILE_BLAS")) return true; const char* h = std::getenv("HOME"); return h && access((std::string(h) + "/.remix_REMIX_PROFILE_BLAS").c_str(), F_OK) == 0; }();
+      std::chrono::steady_clock::time_point last;
+      double ms[4] = {};
+      uint32_t calls = 0, prims = 0;
+      void begin() { last = std::chrono::steady_clock::now(); }
+      void mark(int phase) {
+        const auto now = std::chrono::steady_clock::now();
+        ms[phase] += std::chrono::duration<double, std::milli>(now - last).count();
+        last = now;
+      }
+      void end(size_t primCount) {
+        calls++; prims += uint32_t(primCount);
+        if (calls % 20000 == 0) {
+          Logger::info(str::format("[ExternalDrawProfile] us per call: setup=", ms[0] * 1000 / calls, " hashAndLookup=", ms[1] * 1000 / calls,
+            " processDrawCallState=", ms[2] * 1000 / calls, " finish=", ms[3] * 1000 / calls, " (submeshes/call=", double(prims) / calls, ")"));
+          for (auto& m : ms) m = 0;
+          calls = 0; prims = 0;
+        }
+      }
+    };
+    ExternalDrawProfile g_externalDrawProfile;
+  }
+
   void SceneManager::submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> pstate) {
     ScopedCpuProfileZone();
+    auto& prof = g_externalDrawProfile;
+    if (prof.enabled) prof.begin();
 
     Rc<DxvkSampler> externalSampler = getOrCreateExternalSampler();
 
@@ -2597,6 +2628,7 @@ namespace dxvk {
         std::make_shared<const std::vector<Matrix4>>(std::move(state.gpuInstancingTransforms));
     }
 
+    if (prof.enabled) prof.mark(0);
     const auto submeshesRef = m_pReplacer->accessExternalMesh(state.mesh);
     const auto& submeshes = *submeshesRef;
 
@@ -2612,6 +2644,7 @@ namespace dxvk {
 
     AxisAlignedBoundingBox geometryBBox;
 
+    if (prof.enabled) prof.mark(1);
     for (size_t i = 0; i < submeshes.size(); i++) {
       // submeshes[i] is an element of the vector owned by submeshesRef, not separately
       // allocated. The aliasing ctor shares submeshesRef's ref-count while pointing at
@@ -2653,12 +2686,14 @@ namespace dxvk {
       geometryBBox.unionWith(submeshes[i].boundingBox);
     }
 
+    if (prof.enabled) prof.mark(2);
     replacementInstance->frameLastSeen = m_device->getCurrentFrameId();
 
     if (geometryBBox.isValid()) {
       replacementInstance->geometryBoundingBox = geometryBBox;
       replacementInstance->objectToWorld = xform;
     }
+    if (prof.enabled) { prof.mark(3); prof.end(submeshes.size()); }
   }
 
   // Set from remixapi_dxvk_CreateD3D9() when the client is an editor/DCC host (HdRemix).

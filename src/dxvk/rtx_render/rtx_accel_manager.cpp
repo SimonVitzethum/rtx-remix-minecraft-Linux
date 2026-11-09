@@ -20,6 +20,10 @@
 * DEALINGS IN THE SOFTWARE.
 */
 #include <assert.h>
+#include <array>
+#include <chrono>
+#include <cstdlib>
+#include <unistd.h>
 #include <cstring>
 #include <mutex>
 #include <vector>
@@ -444,6 +448,34 @@ namespace dxvk {
     execBarriers.recordCommands(cb);
   }
 
+  // REMIX_PROFILE_BLAS=1 (or ~/.remix_REMIX_PROFILE_BLAS): CPU phase times of AccelManager::mergeInstancesIntoBlas, logged every 120 calls.
+  namespace {
+    struct BlasPhaseProfile {
+      bool enabled = [] { if (std::getenv("REMIX_PROFILE_BLAS")) return true; const char* h = std::getenv("HOME"); return h && access((std::string(h) + "/.remix_REMIX_PROFILE_BLAS").c_str(), F_OK) == 0; }();
+      static constexpr int kPhases = 8;
+      std::chrono::steady_clock::time_point last;
+      double ms[kPhases] = {};
+      uint32_t calls = 0, skipped = 0;
+      void begin() { last = std::chrono::steady_clock::now(); }
+      void mark(int phase) {
+        const auto now = std::chrono::steady_clock::now();
+        ms[phase] += std::chrono::duration<double, std::milli>(now - last).count();
+        last = now;
+      }
+      void end(bool wasSkipped) {
+        calls++; if (wasSkipped) skipped++;
+        if (calls % 120 == 0) {
+          Logger::info(str::format("[BlasProfile] per call ms: dirtyDetect=", ms[0] / calls, " allocAndPrep=", ms[1] / calls, " instanceLoop=", ms[2] / calls,
+            " dynamicBlas=", ms[3] / calls, " transformUpload=", ms[4] / calls, " restoreCollect=", ms[5] / calls, " prefixSum=", ms[6] / calls,
+            " buildBlasesAndCache=", ms[7] / calls, " (calls=", calls, " skippedFast=", skipped, ")"));
+          for (auto& m : ms) m = 0;
+          calls = 0; skipped = 0;
+        }
+      }
+    };
+    BlasPhaseProfile g_blasPhaseProfile;
+  }
+
   void AccelManager::mergeInstancesIntoBlas(Rc<DxvkContext> ctx, 
                                             DxvkBarrierSet& execBarriers, 
                                             const std::vector<TextureRef>& textures,
@@ -451,6 +483,8 @@ namespace dxvk {
                                             InstanceManager& instanceManager,
                                             OpacityMicromapManager* opacityMicromapManager) {
     ScopedGpuProfileZone(ctx, "buildBLAS");
+    auto& prof = g_blasPhaseProfile;
+    if (prof.enabled) prof.begin();
 
     auto& instances = instanceManager.getInstanceTable();
     const uint32_t currentFrame = m_device->getCurrentFrameId();
@@ -508,6 +542,7 @@ namespace dxvk {
           m_ommBindPending = true;
           instanceManager.notifySceneChanged();
         }
+        if (prof.enabled) { prof.mark(0); prof.end(true); }
         return;
       }
 
@@ -590,6 +625,7 @@ namespace dxvk {
       m_ommBindPending = false;
     }
 
+    if (prof.enabled) prof.mark(0);
     // Allocate the transform buffer
     DxvkBufferCreateInfo info;
     info.usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
@@ -663,6 +699,7 @@ namespace dxvk {
     // Hash map for O(1) bucket lookup instead of O(buckets) linear search per instance
     std::unordered_map<BlasBucketKey, BlasBucket*, BlasBucketKeyHash> bucketMap;
 
+    if (prof.enabled) prof.mark(1);
     for (RtInstance* instance : instances) {
       if (instance->isHidden()) {
         continue;
@@ -814,6 +851,7 @@ namespace dxvk {
       }
     }
 
+    if (prof.enabled) prof.mark(2);
     // Build/Update the dynamic BLAS
     for (uint32_t uniqueBlasIdx = 0; uniqueBlasIdx < m_uniqueDynamicBlasCount; ++uniqueBlasIdx) {
       const UniqueBlasInstances& uniqueBlasEntry = m_uniqueDynamicBlas[uniqueBlasIdx];
@@ -875,8 +913,27 @@ namespace dxvk {
       // Calculate the build sizes for this bucket
       VkAccelerationStructureBuildSizesInfoKHR sizeInfo {};
       sizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-      m_device->vkd()->vkGetAccelerationStructureBuildSizesKHR(m_device->handle(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-                                                               &buildInfo, &blasEntry->buildRanges[0].primitiveCount, &sizeInfo);
+      {
+        // NV-DXVK: the build sizes depend only on the geometry description, the primitive count, the build flags and the
+        // bound opacity micromap; reuse the previous answer while none of them changed and the vertex data was not updated.
+        const auto& tri = blasEntry->buildGeometries[0].geometry.triangles;
+        const std::array<uint64_t, 6> sizeKey = {
+          blasEntry->buildRanges[0].primitiveCount,
+          (uint64_t(tri.maxVertex) << 32) | uint64_t(tri.vertexFormat),
+          (uint64_t(tri.indexType) << 32) | uint64_t(blasEntry->buildGeometries[0].flags),
+          uint64_t(buildInfo.flags),
+          uint64_t(boundOpacityMicromapHash),
+          tri.pNext != nullptr ? 1ull : 0ull };
+        if (blasEntry->hasDynamicSizeInfo && blasEntry->frameLastUpdated != currentFrame && blasEntry->dynamicSizeKey == sizeKey) {
+          sizeInfo = blasEntry->dynamicSizeInfo;
+        } else {
+          m_device->vkd()->vkGetAccelerationStructureBuildSizesKHR(m_device->handle(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                                                                   &buildInfo, &blasEntry->buildRanges[0].primitiveCount, &sizeInfo);
+          blasEntry->dynamicSizeKey = sizeKey;
+          blasEntry->dynamicSizeInfo = sizeInfo;
+          blasEntry->hasDynamicSizeInfo = true;
+        }
+      }
 
       // Try to reuse our dynamic BLAS if it exists
       Rc<PooledBlas>& selectedBlas = blasEntry->dynamicBlas;
@@ -949,6 +1006,7 @@ namespace dxvk {
       trackBlasBuildResources(ctx, execBarriers, blasEntry);
     }
 
+    if (prof.enabled) prof.mark(3);
     // Copy the instance transform data to the device (only needed on full rebuild path;
     // dynamics-only path doesn't populate instanceTransforms for merged instances)
     if (instanceTransforms.size() > 0) {
@@ -968,6 +1026,7 @@ namespace dxvk {
         VK_ACCESS_SHADER_READ_BIT);
     }
 
+    if (prof.enabled) prof.mark(4);
     // --- Restore clean cached buckets and collect surfaces ---
     // Clean cached buckets: restore surfaces + TLAS instances directly, touch BLAS.
     // Dirty/new buckets: their surfaces were already added by the main loop via
@@ -1013,6 +1072,7 @@ namespace dxvk {
       m_reorderedSurfacesFirstIndexOffset.insert(m_reorderedSurfacesFirstIndexOffset.end(), blasBucket->indexOffsets.begin(), blasBucket->indexOffsets.end());
     }
 
+    if (prof.enabled) prof.mark(5);
     // Build prefix sum array
     // Collect primitive count for each surface object
     // Because we use exclusive prefix sum here, we add one more element to record the scene's total primitive count
@@ -1044,6 +1104,7 @@ namespace dxvk {
         "Downstream systems (NEE cache, prefix-sum lookups) may produce incorrect results.")));
     }
 
+    if (prof.enabled) prof.mark(6);
     buildBlases(ctx, execBarriers, cameraManager, opacityMicromapManager, instanceManager, 
                 textures, instances, blasBuckets, blasToBuild, blasRangesToBuild,
                 instanceTransforms, totalScratchMemory);
@@ -1143,6 +1204,7 @@ namespace dxvk {
         m_cachedDynamicBlasEntries.insert(uniqueBlasEntry.blasEntry);
       }
     }
+    if (prof.enabled) { prof.mark(7); prof.end(false); }
   }
 
   void AccelManager::addBlas(RtInstance* instance, BlasEntry* blasEntry, const Matrix4* instanceToObject) {
