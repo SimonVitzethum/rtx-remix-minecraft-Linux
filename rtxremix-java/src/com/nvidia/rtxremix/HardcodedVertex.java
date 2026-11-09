@@ -35,6 +35,18 @@ public class HardcodedVertex {
         return (floatToHalf(x) & 0xFFFF) | ((floatToHalf(y) & 0xFFFF) << 16);
     }
 
+    /**
+     * Packs two floats in [0,1] into a single int as two UNORM16 values (x in the low half). Used for atlas tile bounds:
+     * binary16 has only 11 bits of mantissa, which is 6 texels of a 12288 texel wide atlas near uv 1.
+     */
+    public static int packUnorm2x16(float x, float y) {
+        return unorm16(x) | (unorm16(y) << 16);
+    }
+
+    private static int unorm16(float f) {
+        return Math.max(0, Math.min(65535, Math.round(f * 65535.0f)));
+    }
+
     private static int floatToHalf(float f) {
         int bits = Float.floatToRawIntBits(f);
         int sign = (bits >>> 16) & 0x8000;
@@ -79,8 +91,8 @@ public class HardcodedVertex {
     }
 
     public void setTexcoordBounds(float minU, float minV, float maxU, float maxV) {
-        this.texcoordBoundsMin = packHalf2x16(minU, minV);
-        this.texcoordBoundsMax = packHalf2x16(maxU, maxV);
+        this.texcoordBoundsMin = packUnorm2x16(minU, minV);
+        this.texcoordBoundsMax = packUnorm2x16(maxU, maxV);
     }
 
     public static HardcodedVertex create(float x, float y, float z) {

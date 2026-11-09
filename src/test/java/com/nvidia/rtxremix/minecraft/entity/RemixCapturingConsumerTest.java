@@ -589,8 +589,8 @@ class RemixCapturingConsumerTest {
             assertTrue(minU < maxU && minV < maxV, "the quad must have a UV rectangle");
             assertTrue(minU >= sprite.getU0() && maxU <= sprite.getU1());
             assertTrue(minV >= sprite.getV0() && maxV <= sprite.getV1());
-            int expectedMin = HardcodedVertex.packHalf2x16(minU, minV);
-            int expectedMax = HardcodedVertex.packHalf2x16(maxU, maxV);
+            int expectedMin = HardcodedVertex.packUnorm2x16(minU, minV);
+            int expectedMax = HardcodedVertex.packUnorm2x16(maxU, maxV);
             for (int k = i - 4; k < i; k++) {
                 assertEquals(expectedMin, scratch.getTexcoordBoundsMin()[k], "bounds min of vertex " + k);
                 assertEquals(expectedMax, scratch.getTexcoordBoundsMax()[k], "bounds max of vertex " + k);

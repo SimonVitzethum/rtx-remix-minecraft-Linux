@@ -443,7 +443,9 @@ extern "C" {
     float    normal[3];
     float    texcoord[2];
     uint32_t color;
-    // Optional texture atlas region for UV wrapping: min.u, min.v, max.u, max.v as IEEE 754 half-floats.
+    // Optional texture atlas region: min.u, min.v, max.u, max.v. The original API documents IEEE 754 half-floats; the Linux
+    // port reads them as UNORM16 (value / 65535) because half precision is far too coarse for a 12288 texel atlas. The POM
+    // path uses them to march inside the sprite tile (64 byte vertices, bounds at byte offsets 36 and 40).
     // Enabled if remixapi_MeshInfoSurfaceTriangles sets REMIXAPI_MESH_INFO_SURFACE_TRIANGLES_BIT_TEXCOORD_BOUNDS.
     uint16_t texcoordBounds[4];
     uint32_t _pad0;

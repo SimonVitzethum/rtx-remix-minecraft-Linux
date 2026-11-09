@@ -27,7 +27,7 @@ import java.util.Map;
  * the bounds.
  *
  * <p>Vertices are 64-byte {@code HardcodedVertex} records: position at 0, normal at 12,
- * texcoord at 24, colour at 32, bounds min and max at 36 and 40.
+ * texcoord at 24, colour at 32, bounds min and max at 36 and 40 (UNORM16 uv pairs, the runtime's POM reads them).
  */
 public final class TerrainQuadMerger {
     public static final int STRIDE = 64;
@@ -155,10 +155,10 @@ public final class TerrainQuadMerger {
             }
         }
 
-        float uLo = Float.float16ToFloat((short) (bMin & 0xFFFF));
-        float vLo = Float.float16ToFloat((short) (bMin >>> 16));
-        float uHi = Float.float16ToFloat((short) (bMax & 0xFFFF));
-        float vHi = Float.float16ToFloat((short) (bMax >>> 16));
+        float uLo = (bMin & 0xFFFF) / 65535.0f;
+        float vLo = (bMin >>> 16) / 65535.0f;
+        float uHi = (bMax & 0xFFFF) / 65535.0f;
+        float vHi = (bMax >>> 16) / 65535.0f;
         float uEps = Math.abs(uHi - uLo) * UV_EPSILON_FRACTION + 1.0e-6f;
         float vEps = Math.abs(vHi - vLo) * UV_EPSILON_FRACTION + 1.0e-6f;
 
