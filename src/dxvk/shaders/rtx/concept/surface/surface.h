@@ -541,6 +541,9 @@ struct SurfaceInteraction : MinimalSurfaceInteraction
 
   vec3 motion = 0..xxx;
   vec2 textureCoordinates = 0..xx;
+  // Linux port: atlas tile of the hit sprite as two packed UNORM16 uv pairs (min, max), read from the vertex data (the 64 byte
+  // remixapi_HardcodedVertex layout: texcoord at 24, bounds at 36 and 40). Zero when the surface has none or POM is not compiled in.
+  uint2 texcoordBoundsPacked = uint2(0u, 0u);
   vec2 textureGradientX = 0..xx;
   vec2 textureGradientY = 0..xx;
   vec3 rawTangent = 0.f;
