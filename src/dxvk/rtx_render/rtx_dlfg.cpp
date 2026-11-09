@@ -173,6 +173,7 @@ namespace dxvk {
     m_device->vkd()->vkQueueSubmit(m_device->queues().__DLFG_QUEUE.queueHandle, 1, &submitInfo, m_signalFence);
     // assert(m_device->vkd()->vkQueueWaitIdle(m_device->queues().__DLFG_QUEUE.queueHandle) == VK_SUCCESS);
 
+    m_fencePending = m_signalFence != nullptr;
     m_numWaitSemaphores = 0;
     m_numSignalSemaphores = 0;
     m_signalFence = nullptr;
@@ -1256,9 +1257,13 @@ namespace dxvk {
     DxvkDLFGCommandList *ret = m_commandLists[m_currentCommandListIndex].ptr();
     VkFence fence = m_fences[m_currentCommandListIndex]->handle();
     assert(fence);
-    VkResult res = m_device->vkd()->vkWaitForFences(m_device->handle(), 1, &fence, VK_TRUE, 1'000'000'000ull);
-    if (res != VK_SUCCESS) {
-      ONCE(Logger::err("DxvkDLFGCommandListArray::nextCmdList: vkWaitForFences failed"));
+    VkResult res = VK_SUCCESS;
+    if (ret->isFencePending()) {
+      res = m_device->vkd()->vkWaitForFences(m_device->handle(), 1, &fence, VK_TRUE, 1'000'000'000ull);
+      if (res != VK_SUCCESS) {
+        ONCE(Logger::err("DxvkDLFGCommandListArray::nextCmdList: vkWaitForFences failed"));
+      }
+      ret->clearFencePending();
     }
 
     res = m_device->vkd()->vkResetFences(m_device->handle(), 1, &fence);

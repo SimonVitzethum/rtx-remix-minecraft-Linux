@@ -76,6 +76,10 @@ namespace dxvk {
     void addWaitSemaphore(VkSemaphore sem, uint64_t value = uint64_t(-1));
     void addSignalSemaphore(VkSemaphore sem, uint64_t value = uint64_t(-1));
     void setSignalFence(VkFence fence);
+    // true if the command list was submitted with its fence since the fence was last waited on; a list that was
+    // abandoned without a submit (error paths) never signals its fence
+    bool isFencePending() const { return m_fencePending; }
+    void clearFencePending() { m_fencePending = false; }
     VkFence getSignalFence() {
       assert(m_signalFence != nullptr);
       return m_signalFence;
@@ -107,6 +111,7 @@ namespace dxvk {
     std::array<VkSemaphore, kMaxSemaphores> m_signalSemaphores;
     std::array<uint64_t, kMaxSemaphores> m_signalSemaphoreValues;
     VkFence m_signalFence = nullptr;
+    bool m_fencePending = false;
     DxvkLifetimeTracker m_resources;
   };
 
