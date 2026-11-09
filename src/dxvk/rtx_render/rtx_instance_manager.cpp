@@ -636,6 +636,7 @@ namespace dxvk {
     // All instance lifetimes are managed externally: tracked instances are marked
     // for GC by ReplacementInstance::clear(), ephemeral copies are marked on creation.
     for (uint32_t i = 0; i < m_instances.size();) {
+      if (i + 8 < m_instances.size()) __builtin_prefetch(m_instances[i + 8]);
       RtInstance*& pInstance = m_instances[i];
       assert(pInstance != nullptr);
 

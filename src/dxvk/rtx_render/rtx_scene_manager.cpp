@@ -371,7 +371,9 @@ namespace dxvk {
     // BlasEntry GC: remove entries not touched recently.
     // Only GC entries with no linked instances -- instances still reference the BlasEntry
     // for TLAS build, and destroying it would cause a one-frame visibility gap.
-    if (m_device->getCurrentFrameId() > RtxOptions::numFramesToKeepGeometryData()) {
+    // NV-DXVK: walking every cache entry (a node-based map with thousands of entries) costs ~0.3 ms; entries are only dropped
+    // numFramesToKeepGeometryData frames after their last use, so running the scan every 4th frame only delays the release.
+    if (m_device->getCurrentFrameId() > RtxOptions::numFramesToKeepGeometryData() && (m_device->getCurrentFrameId() & 3u) == 0) {
       const size_t oldestFrame = m_device->getCurrentFrameId() - RtxOptions::numFramesToKeepGeometryData();
       auto& entries = m_drawCallCache.getEntries();
       for (auto iter = entries.begin(); iter != entries.end(); ) {
@@ -2218,8 +2220,33 @@ namespace dxvk {
     }
   }
 
+  // REMIX_PROFILE_BLAS=1: CPU time of the phases of SceneManager::prepareSceneData, logged every 120 frames.
+  namespace {
+    struct PrepareSceneProfile {
+      bool enabled = [] { if (std::getenv("REMIX_PROFILE_BLAS")) return true; const char* h = std::getenv("HOME"); return h && access((std::string(h) + "/.remix_REMIX_PROFILE_BLAS").c_str(), F_OK) == 0; }();
+      static constexpr int kPhases = 7;
+      uint64_t ticks[kPhases] = {};
+      uint64_t last = 0, tscStart = 0; uint32_t frames = 0;
+      std::chrono::steady_clock::time_point wallStart;
+      void begin() { last = __builtin_ia32_rdtsc(); if (tscStart == 0) { tscStart = last; wallStart = std::chrono::steady_clock::now(); } }
+      void mark(int p) { const uint64_t n = __builtin_ia32_rdtsc(); ticks[p] += n - last; last = n; }
+      void end() {
+        if (++frames % 120 != 0) return;
+        const double wallMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wallStart).count();
+        const double tpm = double(__builtin_ia32_rdtsc() - tscStart) / wallMs;
+        Logger::info(str::format("[PrepareProfile] ms per frame: lightsAndGC=", ticks[0] / tpm / 120, " repairAndAntiCull=", ticks[1] / tpm / 120, " graphTerrainOmm=", ticks[2] / tpm / 120,
+          " mergeBlas=", ticks[3] / tpm / 120, " accelAndLightPrep=", ticks[4] / tpm / 120, " materials=", ticks[5] / tpm / 120, " cullTlasRest=", ticks[6] / tpm / 120));
+        for (auto& t : ticks) t = 0;
+        tscStart = 0;
+      }
+    };
+    PrepareSceneProfile g_prepareProfile;
+  }
+
   void SceneManager::prepareSceneData(Rc<RtxContext> ctx, DxvkBarrierSet& execBarriers) {
     ScopedGpuProfileZone(ctx, "Build Scene");
+    auto& prepProf = g_prepareProfile;
+    if (prepProf.enabled) prepProf.begin();
 
   #ifdef REMIX_DEVELOPMENT
     if (m_device->getCurrentFrameId() == RtxOptions::dumpAllInstancesOnFrame()) {
@@ -2232,6 +2259,7 @@ namespace dxvk {
     m_lightManager.dynamicLightMatching();
 
     garbageCollection();
+    if (prepProf.enabled) prepProf.mark(0);
 
     // Correct instance identification within clusters of interchangeable
     // instances now that every draw call for the frame has been submitted.
@@ -2256,6 +2284,7 @@ namespace dxvk {
       }
     }
 
+    if (prepProf.enabled) prepProf.mark(1);
     m_graphManager.applySceneOverrides(ctx);
 
     m_terrainBaker->prepareSceneData(ctx);
@@ -2378,11 +2407,14 @@ namespace dxvk {
     m_instanceManager.createViewModelInstances(ctx, m_cameraManager, m_rayPortalManager);
     m_instanceManager.createPlayerModelVirtualInstances(ctx, m_cameraManager, m_rayPortalManager);
 
+    if (prepProf.enabled) prepProf.mark(2);
     m_accelManager.mergeInstancesIntoBlas(ctx, execBarriers, textureManager.getTextureTable(), m_cameraManager, m_instanceManager, m_opacityMicromapManager.get());
+    if (prepProf.enabled) prepProf.mark(3);
 
     // Call on the other managers to prepare their GPU data for the current scene
     m_accelManager.prepareSceneData(ctx, execBarriers, m_instanceManager);
     m_lightManager.prepareSceneData(ctx, m_cameraManager);
+    if (prepProf.enabled) prepProf.mark(4);
 
     // PointInstancer duplicate material entries are unused because their copied
     // surfaces reference the template material slot.
@@ -2425,7 +2457,10 @@ namespace dxvk {
         uint32_t surfaceIndex = 0;
         std::vector<unsigned char>& surfaceMaterialsGPUData = m_scratchSurfaceMaterialsGPUData;
         surfaceMaterialsGPUData.resize(surfaceMaterialsGPUSize);
-        for (auto&& pInstance : m_accelManager.getOrderedInstances()) {
+        const auto& orderedInstances = m_accelManager.getOrderedInstances();
+        for (size_t orderedIdx = 0; orderedIdx < orderedInstances.size(); ++orderedIdx) {
+          if (orderedIdx + 8 < orderedInstances.size()) __builtin_prefetch(&orderedInstances[orderedIdx + 8]->surface);
+          RtInstance* pInstance = orderedInstances[orderedIdx];
           // PointInstancer duplicates reference the template material slot.
           const auto& surf = pInstance->surface;
           if (surf.instancesToObject != nullptr &&
@@ -2473,6 +2508,7 @@ namespace dxvk {
     // in m_vkInstanceBuffer with proper transforms and masks, and copies per-instance
     // surface data from templates. Must run after prepareSceneData
     // (which uploads placeholders) and before buildTlas.
+    if (prepProf.enabled) prepProf.mark(5);
     m_accelManager.dispatchPointInstancerCulling(ctx, m_cameraManager);
 
     // Build the TLAS
@@ -2571,6 +2607,7 @@ namespace dxvk {
     // Check Anti-Culling Support:
     // When the game doesn't set up the View Matrix, we must disable Anti-Culling to prevent visual corruption.
     m_isAntiCullingSupported = (getCamera().getViewToWorld() != Matrix4d());
+    if (prepProf.enabled) { prepProf.mark(6); prepProf.end(); }
   }
 
   static_assert(std::is_same_v< decltype(RtSurface::objectPickingValue), ObjectPickingValue>);

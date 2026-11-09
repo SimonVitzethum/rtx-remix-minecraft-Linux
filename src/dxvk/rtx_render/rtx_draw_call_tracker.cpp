@@ -477,6 +477,7 @@ namespace dxvk {
         RtxOptions::AntiCulling::Object::numObjectsToKeep());
 
     for (size_t i = 0; i < m_replacementInstances.size();) {
+      if (i + 8 < m_replacementInstances.size()) __builtin_prefetch(m_replacementInstances[i + 8].get());
       ReplacementInstance* replacementInstance = m_replacementInstances[i].get();
 
       const bool hasLights = replacementInstance->lightBoundingBox.isValid();

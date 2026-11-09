@@ -497,7 +497,14 @@ namespace dxvk {
       rtOutput.onFrameEnd();
     }
 
+    static const bool profile = std::getenv("REMIX_PROFILE_BLAS") != nullptr;
+    const auto t0 = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
     getSceneManager().onFrameEnd(this, rayTracedThisFrame);
+    if (profile) {
+      static double sMs = 0; static uint32_t sN = 0;
+      sMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+      if (++sN % 120 == 0) { Logger::info(str::format("[PrepareProfile] SceneManager::onFrameEnd ms per frame: ", sMs / 120)); sMs = 0; }
+    }
   }
   
 #ifdef REMIX_DEVELOPMENT
