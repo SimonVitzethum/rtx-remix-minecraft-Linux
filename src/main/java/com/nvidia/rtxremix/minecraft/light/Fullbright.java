@@ -43,10 +43,10 @@ public final class Fullbright {
 
     // Tunables (test hook "fb" may change them).
     public static int variant = 3;
-    public static float keyRadiance = 90.0f;
+    public static float keyRadiance = 100.0f;
     public static float keyRadius = 0.9f;
     public static float keyUp = 1.4f;
-    public static float backRadiance = 40.0f;
+    public static float backRadiance = 50.0f;
     public static float backRadius = 1.2f;
     public static float backDistance = 4.0f;
     public static float evMinDrop = 2.0f;
@@ -173,9 +173,6 @@ public final class Fullbright {
             return;
         }
         float l = variant == 2 ? 0.0f : level;
-        {
-            LOGGER.info("level {} variant {}", level, variant);
-        }
         try {
             api.setConfigVariable("rtx.autoExposure.evMinValue", Float.toString(post.getLowLightAdaptation() - evMinDrop * l));
             api.setConfigVariable("rtx.localtonemap.exposure", Float.toString(post.getExposure() * (1.0f + exposureGain * l)));
