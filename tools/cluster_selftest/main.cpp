@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Standalone harness for the S17 cluster acceleration structure self-test. Build:
-//   g++ -O2 -std=c++17 -I<dxvk-remix>/include/vulkan/include -I<dxvk-remix>/src/dxvk/rtx_render/cluster_selftest main.cpp \
-//       <dxvk-remix>/src/dxvk/rtx_render/cluster_selftest/rtx_cluster_selftest.cpp -lvulkan -o cluster_selftest
+// Standalone CLAS/PTLAS regression. Build with build.py inside the shared resource wrapper.
 #include "rtx_cluster_selftest.h"
 #include <cstdio>
 #include <cstring>
