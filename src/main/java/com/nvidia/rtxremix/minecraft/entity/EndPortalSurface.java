@@ -14,6 +14,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import net.minecraft.resources.Identifier;
+import net.minecraft.client.renderer.blockentity.AbstractEndPortalRenderer;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
 
@@ -22,7 +23,7 @@ import net.minecraft.server.packs.resources.ResourceManager;
  *
  * <p>Vanilla draws both surfaces with position-only vertices and a shader
  * ({@code rendertype_end_portal.fsh}) that sums layers of
- * {@code textures/entity/end_portal.png}, each scaled, rotated and tinted, over
+ * {@code textures/entity/end_portal/end_portal.png}, each scaled, rotated and tinted, over
  * {@code textures/environment/end_sky.png}, projected in screen space: the pattern
  * stays put on screen while the camera moves. A path-traced hit has no screen
  * position to project from, and reflections and refractions see the surface from
@@ -103,10 +104,8 @@ final class EndPortalSurface {
      */
     static final float DESATURATION = 0.3f;
 
-    private static final Identifier SKY_TEXTURE =
-            Identifier.withDefaultNamespace("textures/environment/end_sky.png");
-    private static final Identifier PORTAL_TEXTURE_SOURCE =
-            Identifier.withDefaultNamespace("textures/entity/end_portal.png");
+    static final Identifier SKY_TEXTURE = AbstractEndPortalRenderer.END_SKY_LOCATION;
+    static final Identifier PORTAL_TEXTURE_SOURCE = AbstractEndPortalRenderer.END_PORTAL_LOCATION;
 
     /** {@code COLORS} in {@code rendertype_end_portal.fsh}, as RGB triples. */
     private static final float[] COLORS = {
