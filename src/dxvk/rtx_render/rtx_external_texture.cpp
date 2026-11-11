@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #include <remix/remix_c.h>
 
@@ -102,6 +103,10 @@ namespace dxvk {
                                    const uint8_t* pixels,
                                    bool useMaxFilter)
     : m_format(format), m_useMaxFilter(useMaxFilter) {
+    const auto layout = TextureUploadLayout::make(width, height, 1, 1, 1, 1, format.bytesPerPixel);
+    if (!pixels || layout.layerBytes > size_t(std::numeric_limits<ptrdiff_t>::max())) {
+      throw DxvkError("Invalid memory texture source range");
+    }
     uint32_t levels = 1;
     for (uint32_t dim = std::max(width, height); dim > 1; dim >>= 1) {
       ++levels;
@@ -110,7 +115,7 @@ namespace dxvk {
     m_levels.resize(levels);
     m_extents.resize(levels);
     m_extents[0] = { width, height };
-    m_levels[0].assign(pixels, pixels + static_cast<size_t>(width) * height * format.bytesPerPixel);
+    m_levels[0].assign(pixels, pixels + layout.layerBytes);
     generateMips();
 
     m_hash = hash;
