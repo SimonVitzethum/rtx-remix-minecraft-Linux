@@ -362,6 +362,9 @@ dxvk_src = files([
   'rtx_render/rtx_texture.h',
   'rtx_render/rtx_texture_manager.cpp',
   'rtx_render/rtx_texture_manager.h',
+  # NV-DXVK start: Bounded texture upload planning.
+  'rtx_render/rtx_texture_upload.h',
+  # NV-DXVK end
   'rtx_render/rtx_tone_mapping.cpp',
   'rtx_render/rtx_tone_mapping.h',
   'rtx_render/rtx_types.cpp',

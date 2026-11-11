@@ -65,6 +65,11 @@ exe = executable('test_render_target_motion_integration', files('test_render_tar
 test('test_render_target_motion_integration', exe, env : test_env)
 tests += exe
 
+exe = executable('test_texture_upload', files('test_texture_upload.cpp'),
+  override_options : ['cpp_std='+dxvk_cpp_std])
+test('test_texture_upload', exe, env : test_env)
+tests += exe
+
 exe = executable('fastop_minmax',  files('test_fastop_minmax.cpp'),  dependencies : test_unit_deps, win_subsystem : 'console', override_options: ['cpp_std='+dxvk_cpp_std])
 test('fastop_minmax', exe, env: test_env)
 tests += exe
