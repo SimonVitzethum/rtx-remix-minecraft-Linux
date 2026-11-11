@@ -24,6 +24,22 @@ ninja -j6
 - The output library is `_CompLinuxRelease/src/d3d9/libremixapi.so`: the
   d3d9 target names its shared library `remixapi` on Linux (d3d9 on Windows).
 
+Native ELF builds embed Slang SPIR-V through assembler `incbin` sections.
+The generated declarations retain the array extent and byte count, but GCC
+does not build syntax trees for millions of integer literals in shader variant
+matrices. Hidden COMDAT symbols deduplicate data included by multiple source
+files. The header includes a content digest so compiler caches invalidate when
+shader bytes change. Other targets use the generated integer arrays.
+
+After changing `scripts-common/shader_xxd.py`, refresh existing cached Slang
+headers without recompiling the shaders:
+
+```bash
+for shader in _CompLinuxRelease/src/dxvk/rtx_shaders/*.spv; do
+  python3 scripts-common/shader_xxd.py -i "$shader" -o "${shader%.spv}.h"
+done
+```
+
 ## Dependencies
 
 - OpenUSD built without Python and imaging (`dxvk-deps/usd-install`), with its
