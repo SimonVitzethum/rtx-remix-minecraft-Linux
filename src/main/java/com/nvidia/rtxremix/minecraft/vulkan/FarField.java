@@ -339,7 +339,7 @@ public final class FarField {
             publish(api, pixels);
             renders++;
             lastRenderGpuMs = gpu.lastGpuMs();
-            if (renders <= 5 || renders % 20 == 0) {
+            if (renders <= 5 || renders % 20 == 0 || Boolean.getBoolean("rtxremix.farfield.diagnostics")) {
                 LOGGER.info("FarField render #{}: session {} generation {}, gpu {} ms (wall to fence {} ms), dag {} KiB", renders,
                         renderedBuild.session, renderedBuild.generation, String.format("%.2f", lastRenderGpuMs),
                         String.format("%.2f", gpu.lastFlightMs()), gpu.dagBytes() >> 10);
@@ -371,7 +371,11 @@ public final class FarField {
             lastPlanMs = now;
             plan(level, cam);
         }
-        epoch += cache.drain();
+        int published = cache.drain();
+        epoch += published;
+        if (published > 0 && Boolean.getBoolean("rtxremix.farfield.diagnostics")) {
+            LOGGER.info("FarField publication: session {} generation {}, {} accepted subtrees", session, epoch, published);
+        }
         captureSlice(level);
         recordSlice(level);
         if (now - lastStatMs > 10_000 && source != null) {

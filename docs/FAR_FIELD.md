@@ -42,7 +42,9 @@ planning and merge have 500/400 ms cadence gates, image dispatch has a 1 s gate,
 capture, worker queues, upload and GPU completion add workload-dependent time. Continuous
 edits may supersede a build repeatedly. The published old subtree remains visible during
 that work. Logs distinguish observed-to-subtree-publication latency from GPU dispatch /
-fence time; neither alone is end-to-end edit-to-image latency.
+fence time; neither alone is end-to-end edit-to-image latency. Set
+`-Drtxremix.farfield.diagnostics=true` to log every accepted subtree batch and image
+publication with its session/generation during a controlled comparison.
 
 ## Surface sources and detail
 

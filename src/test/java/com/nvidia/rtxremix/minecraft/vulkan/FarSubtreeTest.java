@@ -75,6 +75,16 @@ class FarSubtreeTest {
     }
 
     @Test
+    void shutdownInterruptCancelsBeforePublishingPartialGeometry() {
+        Thread.currentThread().interrupt();
+        try {
+            assertThrows(java.util.concurrent.CancellationException.class, () -> FarSubtree.build(4, null, null, null, 2));
+        } finally {
+            assertTrue(Thread.interrupted());
+        }
+    }
+
+    @Test
     void flatTerrainStillSharesItsVolumeRatherThanRetainingFarVoxels() {
         short[] top = new short[128 * 128], rgb = new short[top.length];
         Arrays.fill(top, (short) 101);
