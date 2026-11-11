@@ -30,6 +30,8 @@
 #include "dxvk_context.h"
 #include "dxvk_device.h"
 #include "rtx_texture_manager.h"
+#include "rtx_texture_upload.h"
+#include "rtx_staging_ring.h"
 
 namespace dxvk {
 
@@ -197,6 +199,19 @@ namespace dxvk {
     return m_levels[level].data();
   }
 
+  bool MemoryAssetData::copyData(int layer, int level, size_t offset, size_t size, void* destination) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (layer != 0 || level < 0 || size_t(level) >= m_levels.size()) {
+      return false;
+    }
+    const auto& source = m_levels[level];
+    if (offset > source.size() || size > source.size() - offset) {
+      return false;
+    }
+    std::memcpy(destination, source.data() + offset, size);
+    return true;
+  }
+
   void MemoryAssetData::placement(int, int, int, uint64_t& offset, size_t& size) const {
     // Memory textures are never read through a file or package.
     offset = 0;
@@ -266,25 +281,53 @@ namespace dxvk {
     m_dirty.clear();
   }
 
-  bool MemoryAssetData::uploadDirty(DxvkContext* ctx, const Rc<DxvkImage>& image) {
+  MemoryAssetData::DirtyUploadResult MemoryAssetData::uploadDirty(DxvkContext* ctx, const Rc<DxvkImage>& image, size_t byteBudget, RtxStagingRing* staging) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (image == nullptr || image->info().mipLevels != m_levels.size() || image->info().format != m_info.format
         || image->info().extent.width != m_extents[0].width || image->info().extent.height != m_extents[0].height) {
-      return false;
+      return { false, false, 0 };
     }
+    size_t copied = 0;
     for (size_t level = 0; level < m_dirty.size(); ++level) {
-      for (const DirtyRect& d : m_dirty[level]) {
+      auto& rects = m_dirty[level];
+      while (!rects.empty()) {
+        auto& rect = rects.front();
+        const auto layout = TextureUploadLayout::make(rect.x1 - rect.x0, rect.y1 - rect.y0, 1,
+          1, 1, 1, m_format.bytesPerPixel);
+        const auto band = layout.band(0, 0, staging ? std::min(byteBudget - copied, size_t(staging->budget())) : byteBudget - copied);
+        if (!band.bytes) {
+          return { true, false, copied };
+        }
         const uint32_t levelWidth = m_extents[level].width;
-        const uint8_t* src = m_levels[level].data() + (static_cast<size_t>(d.y0) * levelWidth + d.x0) * m_format.bytesPerPixel;
-        VkImageSubresourceLayers layers = { VK_IMAGE_ASPECT_COLOR_BIT, static_cast<uint32_t>(level), 0, 1 };
-        ctx->updateImage(image, layers,
-          VkOffset3D{ static_cast<int32_t>(d.x0), static_cast<int32_t>(d.y0), 0 },
-          VkExtent3D{ d.x1 - d.x0, d.y1 - d.y0, 1 },
-          src, static_cast<VkDeviceSize>(levelWidth) * m_format.bytesPerPixel, 0);
+        const uint8_t* source = m_levels[level].data() + (size_t(rect.y0) * levelWidth + rect.x0) * m_format.bytesPerPixel;
+        VkImageSubresourceLayers layers = { VK_IMAGE_ASPECT_COLOR_BIT, uint32_t(level), 0, 1 };
+        const VkOffset3D offset{ int32_t(rect.x0), int32_t(rect.y0), 0 };
+        const VkExtent3D extent{ rect.x1 - rect.x0, band.rows, 1 };
+        if (staging) {
+          const auto allocation = staging->alloc(CACHE_LINE_SIZE, band.bytes);
+          if (!allocation.slice.defined()) {
+            return { true, false, copied };
+          }
+          auto* destination = static_cast<uint8_t*>(allocation.slice.mapPtr(0));
+          for (uint32_t row = 0; row < band.rows; ++row) {
+            std::memcpy(destination + size_t(row) * layout.rowBytes,
+              source + size_t(row) * levelWidth * m_format.bytesPerPixel, layout.rowBytes);
+          }
+          ctx->copyBufferToImage(image, layers, offset, extent,
+            allocation.slice.buffer(), allocation.slice.offset(), 1, 1);
+        } else {
+          ctx->updateImage(image, layers, offset, extent,
+            source, VkDeviceSize(levelWidth) * m_format.bytesPerPixel, 0);
+        }
+        copied += band.bytes;
+        rect.y0 += band.rows;
+        if (rect.y0 == rect.y1) {
+          rects.erase(rects.begin());
+        }
       }
     }
     m_dirty.clear();
-    return true;
+    return { true, true, copied };
   }
 
   ExternalTextureRegistry& ExternalTextureRegistry::get() {

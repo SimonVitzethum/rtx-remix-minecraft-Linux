@@ -94,6 +94,15 @@ namespace dxvk {
       return m_texture.data(layer, 0, level);
     }
 
+    bool copyData(int layer, int level, size_t offset, size_t size, void* destination) override {
+      if (layer < 0 || uint32_t(layer) >= m_info.numLayers || level < 0 || uint32_t(level) >= m_info.mipLevels) {
+        return false;
+      }
+      const size_t available = m_texture.size(level);
+      return offset <= available && size <= available - offset
+        && AssetData::copyData(layer, level, offset, size, destination);
+    }
+
     void evictCache(int, int) override { }
 
     void releaseSource() override { }
@@ -317,6 +326,18 @@ namespace dxvk {
       return m_lpBaseAddress + dataOffset;
     }
 
+    bool copyData(int layer, int level, size_t offset, size_t size, void* destination) override {
+      if (layer < 0 || uint32_t(layer) >= m_info.numLayers || level < 0 || uint32_t(level) >= m_info.mipLevels) {
+        return false;
+      }
+      long sourceOffset;
+      size_t available;
+      getDataPlacement(layer, 0, level, sourceOffset, available);
+      return sourceOffset >= 0 && size_t(sourceOffset) <= m_fileSize && available <= m_fileSize - size_t(sourceOffset)
+        && offset <= available && size <= available - offset
+        && AssetData::copyData(layer, level, offset, size, destination);
+    }
+
     void evictCache(int layer, int level) override {
     }
 
@@ -460,6 +481,16 @@ namespace dxvk {
       }
 
       return nullptr;
+    }
+
+    bool copyData(int layer, int level, size_t offset, size_t size, void* destination) override {
+      if (layer < 0 || uint32_t(layer) >= m_info.numLayers || level < 0 || uint32_t(level) >= m_info.mipLevels
+          || !data(layer, level)) {
+        return false;
+      }
+      const auto& source = m_data.at(getBlobIndex(layer, 0, level));
+      return offset <= source.size() && size <= source.size() - offset
+        && AssetData::copyData(layer, level, offset, size, destination);
     }
 
     void evictCache(int layer, int level) override {

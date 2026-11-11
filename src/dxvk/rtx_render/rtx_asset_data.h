@@ -21,6 +21,7 @@
 */
 #pragma once
 
+#include <cstring>
 #include <filesystem>
 #include <vulkan/vulkan.h>
 #include "../../util/util_error.h"
@@ -104,6 +105,18 @@ namespace dxvk {
      * \returns Pointer to data
      */
     virtual const void* data(int layer, int level) = 0;
+
+    // Copies a byte range from one tightly packed mip/layer. Callers validate the layout.
+    // Mutable assets override this to keep their storage locked throughout the copy.
+    virtual bool copyData(int layer, int level, size_t offset, size_t size, void* destination) {
+      const auto* source = static_cast<const uint8_t*>(data(layer, level));
+      if (!source || offset > SIZE_MAX - size) {
+        return false;
+      }
+      std::memcpy(destination, source + offset, size);
+      return true;
+    }
+
 
     /**
      * \brief Get asset data location in the source

@@ -38,6 +38,7 @@
 namespace dxvk {
 
   class DxvkContext;
+  class RtxStagingRing;
 
   // Pixel layouts that can be created from memory.
   struct ExternalTextureFormat {
@@ -63,6 +64,7 @@ namespace dxvk {
                     bool useMaxFilter);
 
     const void* data(int layer, int level) override;
+    bool copyData(int layer, int level, size_t offset, size_t size, void* destination) override;
     void placement(int layer, int face, int level, uint64_t& offset, size_t& size) const override;
     void evictCache(int, int) override { }
     void releaseSource() override { }
@@ -70,10 +72,14 @@ namespace dxvk {
     // Overwrites a rectangle of mip 0 and regenerates the mip chain. Pixel data must be in the texture's format.
     bool patch(uint32_t dstX, uint32_t dstY, uint32_t width, uint32_t height, const uint8_t* pixels, uint32_t rowPitch);
 
-    // Uploads only the regions changed by patch() since the last call (one copy per mip level) into an image that
-    // holds the full mip chain of this asset, then clears the dirty regions. Returns false (and leaves the dirty
-    // regions untouched) when the image does not match, in which case the caller has to upload the whole texture.
-    bool uploadDirty(DxvkContext* ctx, const Rc<DxvkImage>& image);
+    struct DirtyUploadResult {
+      bool compatible;
+      bool complete;
+      size_t bytes;
+    };
+
+    // Uploads changed regions in row bands. Pending regions remain queued when the byte budget is exhausted.
+    DirtyUploadResult uploadDirty(DxvkContext* ctx, const Rc<DxvkImage>& image, size_t byteBudget = SIZE_MAX, RtxStagingRing* staging = nullptr);
     // Forgets the dirty regions (a full upload makes them obsolete).
     void clearDirty();
 

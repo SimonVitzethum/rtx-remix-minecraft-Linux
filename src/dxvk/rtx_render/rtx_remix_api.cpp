@@ -1744,6 +1744,10 @@ namespace {
       auto& textureManager = ctx->getCommonObjects()->getTextureManager();
       for (const auto& texture : cUpdated) {
         if (texture->managed != nullptr) {
+          // The streaming upload reconciles these changes before publishing its private image.
+          if (texture->memory.ptr() && texture->managed->m_state.load() == dxvk::ManagedTexture::State::kQueuedForUpload) {
+            continue;
+          }
           // Animated atlases change a few tiles per frame: when the full mip chain is resident, copy only the
           // changed regions instead of reloading the whole texture (a full reload cost ~18 ms per atlas).
           const auto& managed = texture->managed;
@@ -1751,7 +1755,7 @@ namespace {
           const auto tStart = std::chrono::steady_clock::now();
           if (texture->memory.ptr() != nullptr && managed->m_state.load() == dxvk::ManagedTexture::State::kVidMem
               && managed->m_currentMipView.ptr() != nullptr && managed->m_currentMip_begin == 0
-              && texture->memory->uploadDirty(ctx, managed->m_currentMipView->image())) {
+              && texture->memory->uploadDirty(ctx, managed->m_currentMipView->image()).compatible) {
             s_partial++; s_partialMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count();
             if (s_partial % 5000 == 0) dxvk::Logger::info(dxvk::str::format("[TexUpdate] partial uploads=", s_partial, " avg ms=", s_partialMs / s_partial, " full reloads=", s_full, " avg ms=", s_full ? s_fullMs / s_full : 0.0));
             continue;

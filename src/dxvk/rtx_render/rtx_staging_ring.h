@@ -22,22 +22,36 @@
 
 #pragma once
 
+#include <algorithm>
+#include <memory>
+
 #include "dxvk_buffer.h"
 
 namespace dxvk {
 
-  // Allocates a fixed size buffer once, and returns slices from that buffer
-  // by a simple atomic increment. That offset is reset when the command lists
-  // used by returned slices become completed by GPU (which is detected on CPU by a fence).
+  // Allocates on demand within a fixed budget. Queued slices and GPU commands
+  // retain the buffer until their temporary references and fences retire.
   class RtxStagingRing {
   public:
+    struct Allocation {
+      struct Lease {
+        Rc<DxvkBuffer> buffer;
+        explicit Lease(const Rc<DxvkBuffer>& buffer) : buffer(buffer) { buffer->acquire(DxvkAccess::Write); }
+        Lease(const Lease&) = delete;
+        Lease& operator=(const Lease&) = delete;
+        ~Lease() { buffer->release(DxvkAccess::Write); }
+      };
+      DxvkBufferSlice slice;
+      std::shared_ptr<Lease> lease;
+    };
+
     RtxStagingRing(const RtxStagingRing&) = delete;
     RtxStagingRing(RtxStagingRing&&) noexcept = delete;
     RtxStagingRing& operator=(const RtxStagingRing&) = delete;
     RtxStagingRing& operator=(RtxStagingRing&&) noexcept = delete;
 
     RtxStagingRing(const Rc<DxvkDevice>& device, VkDeviceSize budget)
-      : m_buffer{ createBuffer(*device, budget) }
+      : m_device{ device }
       , m_budget{ budget }
       , m_offset{ 0 } { }
 
@@ -48,46 +62,45 @@ namespace dxvk {
     const VkDeviceSize budget() const { return m_budget; }
 
 
-    // Allocate a slice from a buffer. That slice needs to be submitted to a command list for a lifetime tracking.
-    // WARNING: After a submission of the slice into a command list, 'onSliceSubmitToCmd' must be called.
-    // If returns a null slice, then waiting for the GPU to complete the cmds
-    // that m_buffer was used. Can be called only on a producer thread.
-    DxvkBufferSlice alloc(VkDeviceSize align, VkDeviceSize size) {
-      // When cmds associated with the DxvkResource (buffer) are completed,
-      // GPU signals a fence, which is then picked up by the dxvk lifetime tracker
-      // which releases a DxvkResource, so 'isInUse()' will be false,
-      // which means that buffer is not used anywhere so we can safely reset.
-      if (!m_buffer->isInUse()) {
-        m_offset = 0;
+    // Producer only. The lease keeps queued slices alive until command tracking or cancellation.
+    Allocation alloc(VkDeviceSize align, VkDeviceSize size) {
+      if (!size || size > m_budget || !align || (align & (align - 1)) || align > kBufferAlignment) {
+        return {};
       }
-
-      size_t alignedSize = dxvk::align(size, align);
-      size_t alignedOffset = dxvk::align(m_offset, align);
-
+      const VkDeviceSize alignedSize = dxvk::align(size, align);
       if (alignedSize > m_budget) {
-        assert(0 && "always check budget() before alloc()");
-        return DxvkBufferSlice{}; // will never be able to alloc
+        return {};
+      }
+      if (!m_buffer.ptr() || !m_buffer->isInUse()) {
+        m_offset = 0;
+        const VkDeviceSize capacity = dxvk::align(std::max(std::min(m_budget, VkDeviceSize(1024 * 1024)), size), kBufferAlignment);
+        if (!m_buffer.ptr() || m_buffer->info().size != capacity) {
+          m_buffer = createBuffer(*m_device, capacity);
+          if (capacity >= 4 * 1024 * 1024) {
+            Logger::info(str::format("[TextureStaging] Pool allocated ", capacity, " bytes, ceiling ", m_budget));
+          }
+        }
+      }
+      const VkDeviceSize alignedOffset = dxvk::align(m_offset, align);
+      if (alignedOffset > m_buffer->info().size || alignedSize > m_buffer->info().size - alignedOffset) {
+        return {};
       }
 
-      if (alignedOffset + alignedSize > m_budget) {
-        return DxvkBufferSlice{}; // waiting for gpu
-      }
-
-      {
-        // add a temporary reference before the actual cmd will increase it by trackResource
-        m_buffer->acquire(DxvkAccess::Write);
-      }
+      auto lease = std::make_shared<Allocation::Lease>(m_buffer);
       m_offset = alignedOffset + alignedSize;
-      return DxvkBufferSlice{ m_buffer, alignedOffset, size };
+      return { DxvkBufferSlice{ m_buffer, alignedOffset, size }, std::move(lease) };
     }
 
 
-    // Call after a submission of the slice returned by alloc() to a cmd.
-    // Can be called on a consumer thread that owns cmd.
-    void onSliceSubmitToCmd() {
-      // we can release the temporary reference, now that ctx->cmd actually called trackResource
-      // (so GPU will signal to CPU [via a fence] that the resource is not in use anymore by GPU)
-      m_buffer->release(DxvkAccess::Write);
+    // Producer only. Queued slices hold a temporary write reference until submission or cancellation.
+    void trim() {
+      if (m_buffer.ptr() && !m_buffer->isInUse()) {
+        if (m_buffer->info().size >= 4 * 1024 * 1024) {
+          Logger::info(str::format("[TextureStaging] Pool released ", m_buffer->info().size, " bytes"));
+        }
+        m_buffer = nullptr;
+        m_offset = 0;
+      }
     }
 
 
@@ -110,7 +123,8 @@ namespace dxvk {
 
 
   private:
-    const Rc<DxvkBuffer> m_buffer;
+    const Rc<DxvkDevice> m_device;
+    Rc<DxvkBuffer> m_buffer;
     const VkDeviceSize m_budget;
     VkDeviceSize m_offset;
   };

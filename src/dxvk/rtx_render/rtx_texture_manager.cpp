@@ -20,13 +20,16 @@
 * DEALINGS IN THE SOFTWARE.
 */
 
+#include <chrono>
+#include <deque>
+#include <memory>
+
 #include "dxvk_device.h"
 #include "rtx_texture_manager.h"
 #include "../../util/thread.h"
 #include "../../util/rc/util_rc_ptr.h"
 #include "dxvk_context.h"
 #include "dxvk_scoped_annotation.h"
-#include <chrono>
 
 #include "rtx_asset_data_manager.h"
 #include "rtx_bindless_resource_manager.h"
@@ -34,6 +37,8 @@
 #include "rtx_texture.h"
 #include "rtx_io.h"
 #include "rtx_staging_ring.h"
+#include "rtx_texture_upload.h"
+#include "rtx_external_texture.h"
 
 
 namespace dxvk {
@@ -68,8 +73,12 @@ namespace dxvk {
     return calcCurrentTextureUsageBytes(device) > calcTextureMemoryBudgetBytes(device);
   }
 
+  // This byte limit bounds packing work and transfer traffic in one frame.
+  constexpr size_t kUploadBytesPerFrame = 8 * Megabytes;
+
   static size_t stagingBufferSize_Bytes() {
-    return std::max(32, RtxOptions::TextureManager::stagingBufferSizeMiB()) * 1024 * 1024;
+    return std::min(size_t(std::max(1, RtxOptions::TextureManager::stagingBufferSizeMiB())) * Megabytes,
+                    kUploadBytesPerFrame);
   }
 
 
@@ -78,158 +87,110 @@ namespace dxvk {
 
   namespace {
 
-    // A staging buffer slice that holds the data of a single mip.
+    // Remains private until all bands are recorded. The asset snapshot survives hot reload.
+    struct TextureUpload {
+      TextureUpload(const Rc<ManagedTexture>& texture, const Rc<AssetData>& asset,
+                    const DxvkImageCreateInfo& imageInfo, uint16_t begin, uint16_t end, size_t bytes)
+        : texture(texture), asset(asset), imageInfo(imageInfo), mipBegin(begin), mipEnd(end), bytes(bytes) { }
+      Rc<ManagedTexture> texture;
+      Rc<AssetData> asset;
+      DxvkImageCreateInfo imageInfo;
+      uint16_t mipBegin;
+      uint16_t mipEnd;
+      size_t bytes;
+      Rc<DxvkImageView> image;
+      size_t deviceBytes = 0; // Consumer thread only.
+      bool budgetWarning = false;
+      const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+      std::atomic<bool> cancelled{ false };
+    };
+
     struct ReadyToCopyMip {
       DxvkBufferSlice srcBuffer;
-      VkExtent3D      mipExtent;
-      uint32_t        mipLevel;
+      VkExtent3D mipExtent;
+      uint32_t mipLevel;
+      uint32_t layer;
+      VkOffset3D offset;
     };
 
-    // A range of mips to copy to the 'dstTexture'.
-    // So that the Vulkan thread would only call 'vkCmdCopyBufferToImage'.
     struct ReadyToCopy {
-      Rc<ManagedTexture>          dstTexture;
-      std::vector<ReadyToCopyMip> mips; // TODO: fixed size instead of dynamic std::vector
-      uint16_t                    mip_begin;
-      uint16_t                    mip_end;
-      RtxStagingRing*             stagingbuf;
+      std::shared_ptr<TextureUpload> upload;
+      std::vector<ReadyToCopyMip> mips;
+      std::shared_ptr<RtxStagingRing::Allocation::Lease> lease;
+      size_t bytes = 0;
+      bool complete = true;
     };
 
-    // A range of mips to copy to the 'dstTexture'.
-    // A specialization for RTXIO.
     struct ReadyToCopy_RTXIO {
-      Rc<ManagedTexture>  dstTexture;
-      Rc<DxvkImageView>   rtxioDst;
-      uint16_t            mip_begin;
-      uint16_t            mip_end;
+      Rc<ManagedTexture> dstTexture;
+      Rc<DxvkImageView> rtxioDst;
+      uint16_t mip_begin;
+      uint16_t mip_end;
     };
 
-
-    // Size in bytes required to upload a range of mips for the given asset.
-    size_t calcSizeForAsset(
-      const AssetData& asset,
-      const uint32_t mipLevels_begin,
-      const uint32_t mipLevels_end /* non-inclusive */ ) {
-      const DxvkFormatInfo* formatInfo = imageFormatInfo(asset.info().format);
-
-      size_t resultSize = 0;
-      for (uint32_t level = mipLevels_begin; level < mipLevels_end; ++level) {
-        const VkExtent3D levelExtent = util::computeMipLevelExtent(asset.info().extent, level);
-
-        // Align image extent to a full block. This is necessary in
-        // case the image size is not a multiple of the block size.
-        VkExtent3D elementCount = util::computeBlockCount(levelExtent, formatInfo->blockSize);
-        elementCount.depth *= asset.info().numLayers;
-
-        // Allocate staging buffer memory for the image data. The
-        // pixels or blocks will be tightly packed within the buffer.
-        resultSize += dxvk::align(
-          formatInfo->elementSize * util::flattenImageExtent(elementCount),
-          CACHE_LINE_SIZE);
+    TextureUploadLayout uploadLayout(const AssetData& asset, uint32_t level) {
+      const auto* format = imageFormatInfo(asset.info().format);
+      if (!format || !asset.info().numLayers) {
+        throw DxvkError("Invalid texture upload format or layers");
       }
-      return resultSize;
+      const auto extent = util::computeMipLevelExtent(asset.info().extent, level);
+      return TextureUploadLayout::make(extent.width, extent.height, extent.depth,
+        format->blockSize.width, format->blockSize.height, format->blockSize.depth, format->elementSize);
     }
 
-
-    // Fill staging buffer with the data from an asset.
-    std::vector<ReadyToCopyMip> dmaCopyDataToStaging(
-      const DxvkBufferSlice& stagingDst,
-      AssetData& asset,
-      const uint32_t mipLevels_begin,
-      const uint32_t mipLevels_end /* non-inclusive */) {
-
-      assert(mipLevels_begin < mipLevels_end);
-      assert(stagingDst.length() >= calcSizeForAsset(asset, mipLevels_begin, mipLevels_end));
-
-      auto readyMips = std::vector<ReadyToCopyMip>{};
-      readyMips.reserve(mipLevels_end - mipLevels_begin);
-
-      // Upload data through a staging buffer. Special care needs to
-      // be taken when dealing with compressed image formats: Rather
-      // than copying pixels, we'll be copying blocks of pixels.
-      const DxvkFormatInfo* formatInfo = imageFormatInfo(asset.info().format);
-
-      size_t levelByteOffset = 0;
-      for (uint32_t level = mipLevels_begin; level < mipLevels_end; ++level) {
-        const void* levelData = asset.data(0, level);
-        if (levelData == nullptr) {
-          return {};
-        }
-
-        const VkExtent3D levelExtent = util::computeMipLevelExtent(asset.info().extent, level);
-
-        // Align image extent to a full block. This is necessary in
-        // case the image size is not a multiple of the block size.
-        VkExtent3D elementCount = util::computeBlockCount(levelExtent, formatInfo->blockSize);
-        elementCount.depth *= asset.info().numLayers;
-
-        const uint32_t pitchPerRow   = elementCount.width * formatInfo->elementSize;
-        const uint32_t pitchPerLayer = pitchPerRow * elementCount.height;
-
-        // Allocate staging buffer memory for the image data. The
-        // pixels or blocks will be tightly packed within the buffer.
-        auto levelByteSize = dxvk::align(
-          formatInfo->elementSize * util::flattenImageExtent(elementCount),
-          CACHE_LINE_SIZE);
-
-        assert(levelByteOffset % CACHE_LINE_SIZE == 0);
-        auto dstSlice = stagingDst.subSlice(levelByteOffset, levelByteSize);
-
-
-        util::packImageData(
-         dstSlice.mapPtr(0),
-          levelData,
-          elementCount,
-          formatInfo->elementSize,
-          pitchPerRow,
-          pitchPerLayer);
-        levelByteOffset += levelByteSize;
-
-
-        asset.evictCache(0, level);
-
-        readyMips.push_back(ReadyToCopyMip{
-          /* .srcBuffer = */ dstSlice,
-          /* .mipExtent = */ levelExtent,
-          /* .mipLevel  = */ level - mipLevels_begin,
-        });
+    size_t calcSizeForAsset(const AssetData& asset, uint32_t begin, uint32_t end) {
+      if (begin > end || end > asset.info().mipLevels || end > MAX_MIPS) {
+        throw DxvkError("Invalid texture upload mip range");
       }
-
-      return readyMips;
+      size_t bytes = 0;
+      for (uint32_t level = begin; level < end; ++level) {
+        const auto layout = uploadLayout(asset, level);
+        const size_t aligned = TextureUploadLayout::add(layout.layerBytes, CACHE_LINE_SIZE - 1)
+          & ~(size_t(CACHE_LINE_SIZE) - 1);
+        bytes = TextureUploadLayout::add(bytes, TextureUploadLayout::multiply(aligned, asset.info().numLayers));
+      }
+      return bytes;
     }
 
+    std::shared_ptr<TextureUpload> planUpload(const Rc<ManagedTexture>& texture) {
+      const auto [begin, end] = texture->calcRequiredMips_BeginEnd();
+      return std::make_shared<TextureUpload>(
+        texture, texture->m_assetData, texture->imageCreateInfo(), begin, end,
+        calcSizeForAsset(*texture->m_assetData, begin, end));
+    }
 
-    template<
-      typename Allocator,
-      std::enable_if_t<std::is_same_v<Allocator, RtxStagingRing> || 
-                       std::is_same_v<Allocator, DxvkStagingBuffer>, int> = 0
-    >
-    ReadyToCopy makeStagingForTextureAsset(Allocator& allocator, const Rc<ManagedTexture>& tex) {
+    // Small mip chains share one slice. The same layouts drive the banded path.
+    ReadyToCopy makeStagingForTextureAsset(RtxStagingRing& allocator,
+                                           const std::shared_ptr<TextureUpload>& upload) {
       ScopedCpuProfileZone();
-
-      const auto [mip_begin, mip_end] = tex->calcRequiredMips_BeginEnd();
-
-      DxvkBufferSlice stagingDst = allocator.alloc(
-        CACHE_LINE_SIZE, 
-        calcSizeForAsset(*tex->m_assetData, mip_begin, mip_end)
-      );
-      if (!stagingDst.defined()) {
+      ReadyToCopy ready;
+      if (!upload->bytes) {
+        ready.upload = upload;
+        return ready;
+      }
+      const auto allocation = allocator.alloc(CACHE_LINE_SIZE, upload->bytes);
+      const auto& staging = allocation.slice;
+      if (!staging.defined()) {
         return {};
       }
-
-      auto ready = ReadyToCopy{
-        /* .dstTexture = */ tex,
-        /* .mips       = */ dmaCopyDataToStaging(stagingDst,
-                                                 *tex->m_assetData,
-                                                 mip_begin,
-                                                 mip_end),
-        /* .mip_begin  = */ mip_begin,
-        /* .mip_end    = */ mip_end,
-        /* .stagingbuf = */ (RtxStagingRing*)(std::is_same_v<Allocator, RtxStagingRing> ? (void*)&allocator : nullptr),
-      };
-
-      // Release asset source to keep the number of open file low
-      tex->m_assetData->releaseSource();
+      ready.lease = allocation.lease;
+      size_t offset = 0;
+      for (uint32_t level = upload->mipBegin; level < upload->mipEnd; ++level) {
+        const auto layout = uploadLayout(*upload->asset, level);
+        const auto extent = util::computeMipLevelExtent(upload->asset->info().extent, level);
+        for (uint32_t layer = 0; layer < upload->asset->info().numLayers; ++layer) {
+          const auto slice = staging.subSlice(offset, layout.layerBytes);
+          if (!upload->asset->copyData(layer, level, 0, layout.layerBytes, slice.mapPtr(0))) {
+            throw DxvkError("Cannot read texture upload data");
+          }
+          ready.mips.push_back({ slice, extent, level - upload->mipBegin, layer, { 0, 0, 0 } });
+          offset += dxvk::align(layout.layerBytes, size_t(CACHE_LINE_SIZE));
+          upload->asset->evictCache(layer, level);
+        }
+      }
+      upload->asset->releaseSource();
+      ready.upload = upload;
+      ready.bytes = upload->bytes;
       return ready;
     }
 
@@ -289,13 +250,45 @@ namespace dxvk {
     }
 
 
+    // Query the driver before committing VRAM, including tiling and allocation granularity.
+    size_t calcDeviceImageBytes(DxvkDevice* device, const TextureUpload& upload) {
+      const auto& desc = upload.imageInfo;
+      VkImageFormatListCreateInfo formats{ VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO };
+      formats.viewFormatCount = desc.viewFormatCount;
+      formats.pViewFormats = desc.viewFormats;
+      VkImageCreateInfo info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+      info.pNext = &formats;
+      info.flags = desc.flags;
+      info.imageType = desc.type;
+      info.format = desc.format;
+      info.extent = util::computeMipLevelExtent(upload.asset->info().extent, upload.mipBegin);
+      info.mipLevels = upload.mipEnd - upload.mipBegin;
+      info.arrayLayers = desc.numLayers;
+      info.samples = desc.sampleCount;
+      info.tiling = desc.tiling;
+      info.usage = desc.usage;
+      info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+      info.initialLayout = desc.initialLayout;
+      const auto vkd = device->vkd();
+      VkImage image = VK_NULL_HANDLE;
+      if (vkd->vkCreateImage(vkd->device(), &info, nullptr, &image) != VK_SUCCESS) {
+        throw DxvkError("Cannot query texture upload image memory requirements");
+      }
+      VkMemoryRequirements requirements;
+      vkd->vkGetImageMemoryRequirements(vkd->device(), image, &requirements);
+      vkd->vkDestroyImage(vkd->device(), image, nullptr);
+      const size_t granularity = device->properties().core.properties.limits.bufferImageGranularity;
+      return TextureUploadLayout::add(requirements.size, granularity - 1) & ~(granularity - 1);
+    }
+
+
     void copyStagingToDevice(DxvkContext* ctx,
                              DxvkBarrierSet& execBarriers,
                              DxvkBarrierSet& execAcquires,
                              const ReadyToCopy& ready) {
       Rc<DxvkCommandList> cmd = ctx->getCommandList();
 
-      const Rc<DxvkImage>& image = ready.dstTexture->m_currentMipView->image();
+      const Rc<DxvkImage>& image = ready.upload->image->image();
 
       if (image->info().layout == VK_IMAGE_LAYOUT_UNDEFINED) {
         ctx->changeImageLayout(image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -306,10 +299,9 @@ namespace dxvk {
         const auto subresources = VkImageSubresourceLayers{
           VK_IMAGE_ASPECT_COLOR_BIT,
           level.mipLevel,
-          0,
-          image->info().numLayers,
+          level.layer,
+          1,
         };
-        assert(image->info().numLayers == ready.dstTexture->m_assetData->info().numLayers); // paranoia
 
         const auto stagingHandle = level.srcBuffer.getSliceHandle();
 
@@ -332,7 +324,8 @@ namespace dxvk {
         VkImageLayout imageLayoutInitial = image->info().layout;
         VkImageLayout imageLayoutTransfer = image->pickLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-        if (image->isFullSubresource(subresources, level.mipExtent)) {
+        if (level.offset.x == 0 && level.offset.y == 0 && level.offset.z == 0
+            && image->isFullSubresource(subresources, level.mipExtent)) {
           imageLayoutInitial = VK_IMAGE_LAYOUT_UNDEFINED;
         }
 
@@ -359,7 +352,7 @@ namespace dxvk {
           region.bufferRowLength = 0;
           region.bufferImageHeight = 0;
           region.imageSubresource = subresources;
-          region.imageOffset = { 0, 0, 0 };
+          region.imageOffset = level.offset;
           region.imageExtent = level.mipExtent;
         }
 
@@ -385,7 +378,7 @@ namespace dxvk {
         cmd->trackResource<DxvkAccess::Read>(level.srcBuffer.buffer());
       }
 
-      cmd->trackResource<DxvkAccess::Write>(ready.dstTexture->m_currentMipView);
+      cmd->trackResource<DxvkAccess::Write>(ready.upload->image);
     }
 
 
@@ -410,14 +403,6 @@ namespace dxvk {
     }
 
 
-    template<typename T, typename Predicate>
-    void erase_ifv(std::vector<T>& target, Predicate eraseIfTrue) {
-      auto it = std::remove_if(target.begin(), target.end(), eraseIfTrue);
-      auto r = target.end() - it;
-      target.erase(it, target.end());
-    }
-
-    
     struct RcHasher { size_t operator()(const Rc<ManagedTexture>& s) const { return (size_t)s.ptr(); } };
 
   } // unnamed namespace
@@ -435,7 +420,7 @@ namespace dxvk {
 
     explicit AsyncRunner(const Rc<DxvkDevice>& device)
       : m_ringbuf{ device, stagingBufferSize_Bytes() }
-      , m_synchronousAlloc{ device, 4 * Megabytes }
+      , m_synchronousAlloc{ device, std::min(stagingBufferSize_Bytes(), 4 * Megabytes) }
       , m_requiresShutdown{ false }
       , m_thread{ dxvk::thread{ [this] { this->asyncLoop(); } } }
     {
@@ -470,6 +455,20 @@ namespace dxvk {
     void queueAdd(const Rc<ManagedTexture>& tex, bool allowAsync);
     std::vector<ReadyToCopy> retrieveReadyToUploadTextures();
 
+    void deferUploads(std::vector<ReadyToCopy> uploads);
+
+    bool hasPendingUploads() {
+      auto process = std::unique_lock{ m_texturesToProcess_mutex };
+      auto ready = std::unique_lock{ m_readyTextures_mutex };
+      return m_processing || !m_texturesToProcess.empty() || !m_readyTextures.empty();
+    }
+
+    MemoryAssetData::DirtyUploadResult reconcileDirty(DxvkContext* ctx, MemoryAssetData& memory,
+                                                     const Rc<DxvkImage>& image, size_t budget) {
+      m_synchronousAlloc.trim();
+      return memory.uploadDirty(ctx, image, budget, &m_synchronousAlloc);
+    }
+
     dxvk::mutex m_assetInfoMutex{};
 
   private:
@@ -479,133 +478,190 @@ namespace dxvk {
     // has a limited budget, returns nothing if fails
     RtxStagingRing            m_ringbuf;
 
-    // assumed to have an unlimited budget, never fails
-    DxvkStagingBuffer         m_synchronousAlloc;
+    // Small immediate requests have their own bounded pool so they cannot wait on the producer.
+    RtxStagingRing            m_synchronousAlloc;
 
     std::atomic<bool>         m_requiresShutdown { false };
-    dxvk::thread              m_thread;
-
+    std::atomic<bool>         m_processing { false };
     dxvk::mutex               m_texturesToProcess_mutex;
     dxvk::condition_variable  m_texturesToProcess_cond;
-    std::unordered_set<Rc<ManagedTexture>, RcHasher> m_texturesToProcess; // TODO: remove set?
+    std::deque<std::shared_ptr<TextureUpload>> m_texturesToProcess;
 
     dxvk::mutex               m_readyTextures_mutex;
     dxvk::condition_variable  m_readyTextures_cond;
     std::vector<ReadyToCopy>  m_readyTextures;
+    dxvk::thread              m_thread;
   };
 
 
   void AsyncRunner::queueAdd(const Rc<ManagedTexture>& tex, bool async) {
     assert(tex->m_state == ManagedTexture::State::kQueuedForUpload);
-    if (async) {
-      assert(!m_requiresShutdown.load());
-      auto l = std::unique_lock{ m_texturesToProcess_mutex };
-      m_texturesToProcess.emplace(tex);
-      m_texturesToProcess_cond.notify_one();
-    } else {
-      auto l = std::unique_lock{ m_readyTextures_mutex };
-      // In CI, we need to overwrite existing ready requests, never wait even a frame for textures that are kQueuedForUpload
-      if (!RtxOptions::asyncAssetLoading() && tex->m_state == ManagedTexture::State::kQueuedForUpload) {
-        erase_ifv(m_readyTextures, [&tex](const ReadyToCopy& r) { return r.dstTexture == tex; });
-        tex->m_state = ManagedTexture::State::kVidMem;
+    auto upload = planUpload(tex);
+    if (!async && upload->bytes <= m_synchronousAlloc.budget()) {
+      m_synchronousAlloc.trim();
+      auto ready = makeStagingForTextureAsset(m_synchronousAlloc, upload);
+      if (ready.upload) {
+        auto lock = std::unique_lock{ m_readyTextures_mutex };
+        m_readyTextures.push_back(std::move(ready));
+        return;
       }
-      m_readyTextures.push_back(makeStagingForTextureAsset(m_synchronousAlloc, tex));
-      assert(m_readyTextures.back().dstTexture.ptr());
     }
+    auto lock = std::unique_lock{ m_texturesToProcess_mutex };
+    m_texturesToProcess.push_back(std::move(upload));
+    m_texturesToProcess_cond.notify_one();
   }
 
 
   std::vector<ReadyToCopy> AsyncRunner::retrieveReadyToUploadTextures() {
-    auto l = std::unique_lock{ m_readyTextures_mutex };
-
-    std::vector<ReadyToCopy> c = std::move(m_readyTextures);
+    m_synchronousAlloc.trim();
+    auto lock = std::unique_lock{ m_readyTextures_mutex };
+    std::vector<ReadyToCopy> ready;
+    size_t bytes = 0;
+    auto end = m_readyTextures.begin();
+    for (; end != m_readyTextures.end() && ready.size() < MAX_TEXTURE_UPLOADS_PER_FRAME; ++end) {
+      if (end->bytes > kUploadBytesPerFrame - bytes) {
+        break;
+      }
+      bytes += end->bytes;
+      ready.push_back(std::move(*end));
+    }
+    m_readyTextures.erase(m_readyTextures.begin(), end);
     m_readyTextures_cond.notify_one();
-    return c;
+    return ready;
+  }
+
+
+  void AsyncRunner::deferUploads(std::vector<ReadyToCopy> uploads) {
+    auto lock = std::unique_lock{ m_readyTextures_mutex };
+    m_readyTextures.insert(m_readyTextures.begin(),
+      std::make_move_iterator(uploads.begin()), std::make_move_iterator(uploads.end()));
   }
 
 
   void AsyncRunner::asyncLoop() {
     env::setThreadName("rtx-texture-async");
-    try {
-      while (true) {
+    while (!m_requiresShutdown.load()) {
+      std::shared_ptr<TextureUpload> upload;
+      {
+        auto lock = std::unique_lock{ m_texturesToProcess_mutex };
+        // Periodically release retired staging even when no new assets arrive.
+        m_texturesToProcess_cond.wait_for(lock, std::chrono::milliseconds(10), [this]() {
+          return !m_texturesToProcess.empty() || m_requiresShutdown.load();
+        });
+        if (m_texturesToProcess.empty()) {
+          m_ringbuf.trim();
+        }
         if (m_requiresShutdown.load()) {
-          break;
+          return;
         }
-
-        Rc<ManagedTexture> itemToProcess{};
-        {
-          auto l = std::unique_lock{ m_texturesToProcess_mutex };
-
-          m_texturesToProcess_cond.wait(l, [this]() {
-            // proceed if non-empty, or if teardown has been requested
-            return !m_texturesToProcess.empty() || m_requiresShutdown.load();
-          });
-
-          if (m_requiresShutdown.load()) {
-            break;
-          }
-
-          if (!m_texturesToProcess.empty()) {
-            itemToProcess = std::move(*m_texturesToProcess.begin());
-            m_texturesToProcess.erase(m_texturesToProcess.begin());
-          }
-        }
-
-        if (!itemToProcess.ptr()) {
+        if (m_texturesToProcess.empty()) {
           continue;
         }
+        upload = std::move(m_texturesToProcess.front());
+        m_texturesToProcess.pop_front();
+        m_processing = true;
+      }
 
-        // wait a bit, to not over-commit texture uploads in a single frame
-        {
-          auto l = std::unique_lock{ m_readyTextures_mutex };
-          m_readyTextures_cond.wait(l, [this]() {
+      try {
+        const auto publish = [this](ReadyToCopy ready) {
+          auto lock = std::unique_lock{ m_readyTextures_mutex };
+          m_readyTextures_cond.wait(lock, [this]() {
             return m_readyTextures.size() < MAX_TEXTURE_UPLOADS_PER_FRAME || m_requiresShutdown.load();
           });
-        }
-
-        // Released by teardown rather than by the render thread draining uploads: drop the
-        // item, nothing will ever consume it.
-        if (m_requiresShutdown.load()) {
-          break;
-        }
-
-        ReadyToCopy ready;
-        {
-          {
-            // we need to lock, as 'makeStagingForTextureAsset' need to access 'ManagedTexture::m_assetData'
-            // which may be modified by other threads (e.g. file hot reload)
-            auto lockAssetInfo = std::unique_lock{ m_assetInfoMutex };
-
-            // NOTE: using a ring buffer to alloc staging memory;
-            //       it has a high chance of alloc fail -- until other threads return
-            //       memory back to the ring buffer (i.e. after finishing staging->vidmem copy)
-            ready = makeStagingForTextureAsset(m_ringbuf, itemToProcess);
+          if (!m_requiresShutdown.load()) {
+            m_readyTextures.push_back(std::move(ready));
           }
-
-          while (!ready.dstTexture.ptr()) {
-            // Ring memory is only recycled once submitted copies retire, which needs the
-            // render thread; during teardown that never happens, so bail out instead of
-            // spinning forever and wedging the join in ~AsyncRunner.
-            if (m_requiresShutdown.load()) {
-              return;
+        };
+        const auto allocate = [this, &upload](size_t bytes) {
+          RtxStagingRing::Allocation allocation;
+          while (!m_requiresShutdown.load() && !upload->cancelled.load()) {
+            allocation = m_ringbuf.alloc(CACHE_LINE_SIZE, bytes);
+            if (allocation.slice.defined()) {
+              break;
             }
-            // alloc failed, retry after wait
-            this_thread::yield();
-
-            // repeat
-            auto lockAssetInfo = std::unique_lock{ m_assetInfoMutex };
-            ready = makeStagingForTextureAsset(m_ringbuf, itemToProcess);
+            auto lock = std::unique_lock{ m_readyTextures_mutex };
+            m_readyTextures_cond.wait_for(lock, std::chrono::milliseconds(2));
           }
-        }
+          return allocation;
+        };
 
-        {
-          auto l = std::unique_lock{ m_readyTextures_mutex };
-          m_readyTextures.push_back(std::move(ready));
+        if (upload->bytes <= m_ringbuf.budget()) {
+          ReadyToCopy ready;
+          while (!m_requiresShutdown.load() && !upload->cancelled.load()) {
+            ready = makeStagingForTextureAsset(m_ringbuf, upload);
+            if (ready.upload) {
+              break;
+            }
+            auto lock = std::unique_lock{ m_readyTextures_mutex };
+            m_readyTextures_cond.wait_for(lock, std::chrono::milliseconds(2));
+          }
+          if (ready.upload) {
+            publish(std::move(ready));
+          }
+        } else {
+          const auto start = std::chrono::steady_clock::now();
+          size_t bandCount = 0;
+          size_t peakBytes = 0;
+          for (uint32_t level = upload->mipBegin; level < upload->mipEnd; ++level) {
+            const auto layout = uploadLayout(*upload->asset, level);
+            if (!layout.band(0, 0, m_ringbuf.budget()).bytes) {
+              throw DxvkError("Texture block row exceeds staging budget");
+            }
+            for (uint32_t layer = 0; layer < upload->asset->info().numLayers; ++layer) {
+              for (uint32_t z = 0; z < layout.slices; ++z) {
+                for (uint32_t row = 0; row < layout.rows;) {
+                  const auto band = layout.band(row, z, m_ringbuf.budget());
+                  const size_t bytes = band.bytes;
+                  const auto allocation = allocate(bytes);
+                  const auto& slice = allocation.slice;
+                  if (!slice.defined()) {
+                    throw DxvkError("Texture upload cancelled");
+                  }
+                  ReadyToCopy ready;
+                  ready.lease = allocation.lease;
+                  if (!upload->asset->copyData(layer, level, band.offset, bytes, slice.mapPtr(0))) {
+                    throw DxvkError("Cannot read texture upload band");
+                  }
+                  const VkExtent3D bandExtent = { util::computeMipLevelExtent(upload->asset->info().extent, level).width,
+                    band.height, band.depth };
+                  ready.upload = upload;
+                  ready.mips.push_back({ slice, bandExtent, level - upload->mipBegin, layer,
+                    { 0, int32_t(band.y), int32_t(band.z) } });
+                  ready.bytes = bytes;
+                  row += band.rows;
+                  ready.complete = level + 1 == upload->mipEnd && layer + 1 == upload->asset->info().numLayers
+                    && z + 1 == layout.slices && row == layout.rows;
+                  publish(std::move(ready));
+                  ++bandCount;
+                  peakBytes = std::max(peakBytes, bytes);
+                }
+              }
+              upload->asset->evictCache(layer, level);
+            }
+          }
+          Logger::info(str::format("[TextureStaging] ", upload->asset->info().extent.width, "x",
+            upload->asset->info().extent.height, ": packed ", upload->bytes, " bytes in ", bandCount,
+            " bands, peak slice ", peakBytes, " bytes, producer elapsed ",
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), " ms"));
+        }
+      } catch (const DxvkError& e) {
+        if (!upload->cancelled.load() && !m_requiresShutdown.load()) {
+          Logger::err(str::format("[TextureStaging] Upload failed: ", e.message()));
+          upload->texture->m_state = ManagedTexture::State::kFailed;
+        }
+      } catch (const std::exception& e) {
+        if (!upload->cancelled.load() && !m_requiresShutdown.load()) {
+          Logger::err(str::format("[TextureStaging] Upload failed: ", e.what()));
+          upload->texture->m_state = ManagedTexture::State::kFailed;
         }
       }
-    } catch (const DxvkError& e) {
-      Logger::err(str::format("Exception on rtx-texture-async thread!"));
-      Logger::err(e.message());
+      for (uint32_t level = upload->mipBegin; level < upload->mipEnd; ++level) {
+        for (uint32_t layer = 0; layer < upload->asset->info().numLayers; ++layer) {
+          upload->asset->evictCache(layer, level);
+        }
+      }
+      upload->asset->releaseSource();
+      m_processing = false;
     }
   }
 
@@ -935,24 +991,107 @@ namespace dxvk {
     ScopedCpuProfileZoneN("Textures: upload to device");
 
     if (m_asyncThread) {
-      for (const ReadyToCopy& ready : m_asyncThread->retrieveReadyToUploadTextures()) {
-        const Rc<ManagedTexture>& tex = ready.dstTexture;
-
-        tex->m_currentMipView = allocDeviceImage(m_device,
-                                                 tex->m_assetData,
-                                                 tex->imageCreateInfo(),
-                                                 ready.mip_begin,
-                                                 ready.mip_end);
-        tex->m_currentMip_begin = ready.mip_begin;
-        tex->m_currentMip_end   = ready.mip_end;
-
-        copyStagingToDevice(ctx, execBarriers, execAcquires, ready);
-        if (ready.stagingbuf) {
-          ready.stagingbuf->onSliceSubmitToCmd();
+      const bool forceWait = RtxOptions::alwaysWaitForAsyncTextures() || !RtxOptions::asyncAssetLoading();
+      do {
+        auto uploads = m_asyncThread->retrieveReadyToUploadTextures();
+        std::vector<ReadyToCopy> deferred;
+        size_t remainingBytes = kUploadBytesPerFrame;
+        const auto recordStart = std::chrono::steady_clock::now();
+        bool budgetBlocked = false;
+        for (auto& ready : uploads) {
+          auto& upload = *ready.upload;
+          const auto& tex = upload.texture;
+          const auto wanted = tex->calcRequiredMips_BeginEnd();
+          const bool demoted = wanted.first > upload.mipBegin;
+          if (upload.cancelled.load() || demoted || tex->m_state != ManagedTexture::State::kQueuedForUpload
+              || tex->m_assetData != upload.asset) {
+            upload.cancelled = true;
+            if (tex->m_state == ManagedTexture::State::kQueuedForUpload && (demoted || tex->m_assetData != upload.asset)) {
+              tex->m_state = ManagedTexture::State::kInitialized;
+            }
+            continue;
+          }
+          if (upload.mipBegin == upload.mipEnd) {
+            tex->m_currentMipView = nullptr;
+            tex->m_currentMip_begin = upload.mipBegin;
+            tex->m_currentMip_end = upload.mipEnd;
+            tex->m_state = ManagedTexture::State::kVidMem;
+            continue;
+          }
+          if (!upload.image.ptr()) {
+            if (!upload.deviceBytes) {
+              upload.deviceBytes = calcDeviceImageBytes(m_device, upload);
+            }
+            const size_t budget = calcTextureMemoryBudgetBytes(m_device);
+            const size_t used = calcCurrentTextureUsageBytes(m_device);
+            if (used > budget || upload.deviceBytes > budget - used) {
+              // Preserve the request and its staging lease until eviction creates room.
+              m_wasTextureBudgetPressure = true;
+              budgetBlocked = true;
+              if (tex->m_currentMipView.ptr() && upload.mipBegin >= tex->m_currentMip_begin) {
+                // A same-size replacement or demotion must be able to retire its old allocation.
+                tex->m_currentMipView = nullptr;
+                tex->m_currentMip_begin = 0;
+                tex->m_currentMip_end = 0;
+              }
+              if (!upload.budgetWarning) {
+                Logger::info(str::format("[TextureStaging] Deferring image: requires ", upload.deviceBytes,
+                  " bytes, texture budget ", budget, ", used ", used));
+                upload.budgetWarning = true;
+              }
+              deferred.push_back(std::move(ready));
+              continue;
+            }
+            upload.image = allocDeviceImage(m_device, upload.asset, upload.imageInfo, upload.mipBegin, upload.mipEnd);
+          }
+          if (ready.bytes > remainingBytes) {
+            deferred.push_back(std::move(ready));
+            continue;
+          }
+          if (!ready.mips.empty()) {
+            copyStagingToDevice(ctx, execBarriers, execAcquires, ready);
+          }
+          remainingBytes -= ready.bytes;
+          if (ready.complete) {
+            if (auto* memory = dynamic_cast<MemoryAssetData*>(upload.asset.ptr())) {
+              // Dirty writes may target bands already copied while this image was private.
+              execBarriers.recordCommands(ctx->getCommandList());
+              const auto dirty = m_asyncThread->reconcileDirty(ctx, *memory, upload.image->image(), remainingBytes);
+              remainingBytes -= dirty.bytes;
+              if (dirty.compatible && !dirty.complete) {
+                ready.mips.clear();
+                ready.lease.reset();
+                ready.bytes = 0;
+                deferred.push_back(std::move(ready));
+                continue;
+              }
+            }
+            tex->m_currentMipView = upload.image;
+            tex->m_currentMip_begin = upload.mipBegin;
+            tex->m_currentMip_end = upload.mipEnd;
+            tex->m_state = ManagedTexture::State::kVidMem;
+            if (upload.bytes > kUploadBytesPerFrame) {
+              Logger::info(str::format("[TextureStaging] Published ", upload.asset->info().extent.width, "x",
+                upload.asset->info().extent.height, " after ",
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - upload.started).count(),
+                " ms (queue, packing and recording, not GPU completion)"));
+            }
+          }
         }
-
-        tex->m_state = ManagedTexture::State::kVidMem;
-      }
+        if (kUploadBytesPerFrame - remainingBytes >= 4 * Megabytes) {
+          Logger::info(str::format("[TextureStaging] Frame ", m_device->getCurrentFrameId(), ": recorded ",
+            kUploadBytesPerFrame - remainingBytes, " bytes, CPU ",
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - recordStart).count(), " ms"));
+        }
+        m_asyncThread->deferUploads(std::move(deferred));
+        if (!forceWait || budgetBlocked || !m_asyncThread->hasPendingUploads()) {
+          break;
+        }
+        // Explicit deterministic capture mode retires bounded batches before producing the next one.
+        ctx->flushCommandList();
+        m_device->waitForIdle();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      } while (true);
     } else if (m_asyncThread_rtxio) {
       m_asyncThread_rtxio->syncPoint(RtxOptions::alwaysWaitForAsyncTextures());
       m_asyncThread_rtxio->finalizeReadyRtxioTextures(ctx);
@@ -1501,7 +1640,7 @@ namespace dxvk {
 
     // Large textures that have only a single mip level are considered suboptimal since they
     // may cause high pressure on memory and/or cause hitches when loaded at runtime.
-    const bool result = (assetData.info().mipLevels == 1) && (extent.width * extent.height >= 512 * 512);
+    const bool result = (assetData.info().mipLevels == 1) && (size_t(extent.width) * extent.height >= 512 * 512);
     if (result) {
       Logger::warn(str::format("A suboptimal replacement texture detected: ",
                                     assetData.info().filename,
@@ -1510,31 +1649,32 @@ namespace dxvk {
     return result;
   }
 
-  // TODO: handle large textures that exceed STAGING_BUDGET (e.g. 8k textures),
-  //       at the moment, if this function returns true, the texture will not be considered for texture streaming
-  bool WAR_doesAssetFitIntoFixedAllocator(const AssetData& assetData) {
-    size_t byteSize = calcSizeForAsset(assetData, 0, assetData.info().mipLevels);
-    if (byteSize <= stagingBufferSize_Bytes()) {
-      return true;
-    }
-    Logger::err(str::format(
-      "Texture (",
-      assetData.info().extent.width,
-      "x",
-      assetData.info().extent.height,
-      ") doesn't fit into STAGING memory for streaming (TEXTURE=",
-      byteSize / Megabytes,
-      "MB, but STAGING=",
-      stagingBufferSize_Bytes() / Megabytes,
-      "MB)"
-      ". Forcing synchronous upload, disabling texture streaming on: ",
-      assetData.info().filename));
-    return false;
+  static bool canStreamAsset(const AssetData& assetData) {
+    // Texture size does not constrain streaming. Only a complete block row must fit.
+    return uploadLayout(assetData, 0).rowBytes <= stagingBufferSize_Bytes();
   }
 
   Rc<ManagedTexture> RtxTextureManager::preloadTextureAsset(const Rc<AssetData>& assetData,
                                                             ColorSpace colorSpace,
                                                             bool forceLoad) {
+
+    const auto& assetInfo = assetData->info();
+    if (!assetInfo.mipLevels || assetInfo.mipLevels > MAX_MIPS || !assetInfo.numLayers
+        || !assetInfo.extent.width || !assetInfo.extent.height || !assetInfo.extent.depth) {
+      Logger::err("[TextureStaging] Invalid texture dimensions, layers or mip count");
+      return {};
+    }
+
+    const auto& limits = m_device->properties().core.properties.limits;
+    uint32_t maxMips = 0;
+    for (uint32_t dimension = std::max(assetInfo.extent.width, assetInfo.extent.height); dimension; dimension >>= 1) {
+      ++maxMips;
+    }
+    if (assetInfo.extent.width > limits.maxImageDimension2D || assetInfo.extent.height > limits.maxImageDimension2D
+        || assetInfo.extent.depth != 1 || assetInfo.numLayers > limits.maxImageArrayLayers || assetInfo.mipLevels > maxMips) {
+      Logger::err("[TextureStaging] Texture exceeds the supported 2D image limits");
+      return {};
+    }
 
     const XXH64_hash_t hash = assetData->hash();
 
@@ -1569,8 +1709,9 @@ namespace dxvk {
     }
 
     warnIfTextureSuboptimal(*assetData);
-    if (m_asyncThread && !WAR_doesAssetFitIntoFixedAllocator(*assetData)) {
-      forceLoad = true;
+    if (m_asyncThread && !canStreamAsset(*assetData)) {
+      Logger::err("[TextureStaging] Texture block row exceeds the staging budget");
+      return {};
     }
 
     Rc<ManagedTexture> texture = TextureUtils::createTexture(assetData, colorSpace);
