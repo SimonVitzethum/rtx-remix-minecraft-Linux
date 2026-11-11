@@ -43,7 +43,7 @@ namespace dxvk {
     ScopedCpuProfileZone();
     const auto old = entry.dynamicBlas;
     const auto& geo = entry.modifiedGeometryData;
-    bool eligible = entry.input.overrides.geometryData && entry.input.getSkinningState().numBones == 0 &&
+    bool eligible = entry.input.isExternalDraw && entry.input.getSkinningState().numBones == 0 &&
       entry.buildGeometries.size() == 1 && entry.buildRanges.size() == 1;
     for (const auto instance : instances) {
       eligible &= instance->surface.isStatic && !instance->isAnimated() && instance->isOpaque() &&
@@ -172,7 +172,7 @@ namespace dxvk {
       info.requiredAlignmentOverride = properties.clusterBottomLevelByteAlignment;
       result->accelStructure = device->createAccelStructure(info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, "Cluster BLAS");
     } catch (const DxvkError& error) {
-      ONCE(Logger::warn(str::format("Cluster AS allocation failed, using KHR: ", error.what())));
+      ONCE(Logger::warn(str::format("Cluster AS allocation failed, using KHR: ", error.message())));
       ++m_fallbacks;
       return false;
     }
