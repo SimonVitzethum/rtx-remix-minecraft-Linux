@@ -122,7 +122,7 @@ public final class RemixInputTestScript {
         }
     }
 
-    private static void run(Minecraft mc, String[] w) {
+    private static void run(Minecraft mc, String[] w) throws Exception {
         Window window = mc.getWindow();
         long h = window.handle();
         String desc = String.join(" ", w);
@@ -136,6 +136,9 @@ public final class RemixInputTestScript {
             case "get" -> LOGGER.info("get {} = {}", w[1],
                     RtxRemixMod.renderer.getRemixApi().getConfigVariableResolved(w[1]));
             case "size" -> org.lwjgl.sdl.SDLVideo.SDL_SetWindowSize(h, Integer.parseInt(w[1]), Integer.parseInt(w[2]));
+            case "dumpblocks" -> BlockGridTest.dump(net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve(w[1]));
+            case "grid" -> BlockGridTest.grid(mc, net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve(w[1]),
+                    Integer.parseInt(w[2]), Integer.parseInt(w[3]), Integer.parseInt(w[4]), Integer.parseInt(w[5]));
             case "shot" -> LOGGER.info("shot marker {}", w.length > 1 ? w[1] : "");
             case "cmd" -> mc.player.connection.sendCommand(String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length)));
             case "look" -> {
