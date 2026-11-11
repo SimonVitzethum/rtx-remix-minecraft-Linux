@@ -8,6 +8,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeResolver;
 import net.minecraft.world.level.biome.Biomes;
@@ -32,7 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Far terrain source for chunks the client does not have (integrated server only): one column (surface height + colour)
  * per 2^lg block cell, generated from the world generator's density noise ({@code ChunkGenerator.getBaseHeight}) and
  * the biome source, without ever generating or loading a chunk. Cells are grouped in tiles of 64 x 64 cells
- * (256 / 512 / 1024 blocks for lg = 2 / 3 / 4), generated asynchronously on low priority threads, nearest first, and
+ * (128 / 256 / 512 / 1024 blocks for lg = 1 / 2 / 3 / 4), generated asynchronously on low priority threads, nearest first, and
  * cached on disk (one small file per tile, ~16 KB), so a revisit costs a file read.
  *
  * <p>Colour is an approximation of the top block (biome grass / water colour, sand for beaches and deserts, snow when
@@ -58,7 +59,7 @@ final class FarLodSource implements FarTileSource {
 
     private final ChunkGenerator generator;
     private final RandomState random;
-    private final LevelHeightAccessorProxy heights;
+    private final LevelHeightAccessor heights;
     private final int seaLevel;
     private final Path dir;
     private final ConcurrentHashMap<Long, Tile> tiles = new ConcurrentHashMap<>();
@@ -66,7 +67,6 @@ final class FarLodSource implements FarTileSource {
     private final PriorityBlockingQueue<Job> queue = new PriorityBlockingQueue<>();
     private final Thread[] threads;
     private final ThreadLocal<BiomeResolver> resolvers;
-    private final ServerLevel level;
     private volatile boolean closed;
     private volatile int centerX, centerZ; // block coordinates of the player, for the priority of new jobs
 
@@ -77,8 +77,6 @@ final class FarLodSource implements FarTileSource {
     /** Increments whenever a tile became available. */
     final AtomicInteger epoch = new AtomicInteger();
 
-    private record LevelHeightAccessorProxy(int minY, int height) {}
-
     private record Job(long key, int lg, int tx, int tz, double priority) implements Comparable<Job> {
         @Override
         public int compareTo(Job o) {
@@ -88,10 +86,9 @@ final class FarLodSource implements FarTileSource {
     }
 
     FarLodSource(ServerLevel level, Path dir, int threadCount) {
-        this.level = level;
         this.generator = level.getChunkSource().getGenerator();
         this.random = level.getChunkSource().randomState();
-        this.heights = new LevelHeightAccessorProxy(level.getMinY(), level.getHeight());
+        this.heights = LevelHeightAccessor.create(level.getMinY(), level.getHeight());
         this.seaLevel = level.getSeaLevel();
         this.dir = dir;
         try {
@@ -252,8 +249,8 @@ final class FarLodSource implements FarTileSource {
                 int x = j.tx * TILE_CELLS * size + ci * size + size / 2;
                 int z = j.tz * TILE_CELLS * size + cj * size + size / 2;
                 int idx = cj * TILE_CELLS + ci;
-                int floor = generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, level, random);
-                if (floor <= heights.minY()) {
+                int floor = generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, heights, random);
+                if (floor <= heights.getMinY()) {
                     t.top[idx] = EMPTY;
                     continue;
                 }
