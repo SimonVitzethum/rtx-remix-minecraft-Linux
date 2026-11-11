@@ -221,8 +221,8 @@ bool run(const Env& env) {
   VkDescriptorPool dpool; f.vkCreateDescriptorPool(dev, &dpi, nullptr, &dpool);
 
   Pipe cullP = makePipe(s17_cull_spv, sizeof(s17_cull_spv), 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 36);
-  Pipe traceP = makePipe(s17_trace_spv, sizeof(s17_trace_spv), 3, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 24);
-  Pipe tracePt = env.hasPartitioned ? makePipe(s17_trace_spv, sizeof(s17_trace_spv), 3, VK_DESCRIPTOR_TYPE_PARTITIONED_ACCELERATION_STRUCTURE_NV, 24) : Pipe();
+  Pipe traceP = makePipe(s17_trace_spv, sizeof(s17_trace_spv), 4, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 24);
+  Pipe tracePt = env.hasPartitioned ? makePipe(s17_trace_spv, sizeof(s17_trace_spv), 4, VK_DESCRIPTOR_TYPE_PARTITIONED_ACCELERATION_STRUCTURE_NV, 24) : Pipe();
   if (!cullP.pipeline || !traceP.pipeline) return false;
   auto allocSet = [&](Pipe& p) { VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, dpool, 1, &p.dsl }; f.vkAllocateDescriptorSets(dev, &ai, &p.set); };
   allocSet(cullP); allocSet(traceP); if (env.hasPartitioned) allocSet(tracePt);
@@ -327,6 +327,7 @@ bool run(const Env& env) {
     in->transform.matrix[0][0] = in->transform.matrix[1][1] = in->transform.matrix[2][2] = 1.0f;
     in->mask = 0xFF;
     in->accelerationStructureReference = blas;
+    in->instanceCustomIndex = 0xc12345u;
   };
   struct Tlas { VkAccelerationStructureKHR as = VK_NULL_HANDLE; VkDeviceAddress addr = 0; Buf store, scratch; };
   auto makeTlas = [&](Tlas& t, uint32_t slot) {
@@ -390,7 +391,8 @@ bool run(const Env& env) {
   // ---- descriptors
   writeBuf(cullP.set, 0, clasAddrs); writeBuf(cullP.set, 1, refs); writeBuf(cullP.set, 2, counter); writeBuf(cullP.set, 3, blasSrc);
   Buf hits = c.make(kRays * kRays * 16, true), tbuf = c.make(kRays * kRays * 4, true);
-  writeBuf(traceP.set, 1, hits); writeBuf(traceP.set, 2, tbuf);
+  Buf identity = c.make(kRays * kRays * 16, true);
+  writeBuf(traceP.set, 1, hits); writeBuf(traceP.set, 2, tbuf); writeBuf(traceP.set, 3, identity);
   auto bindTlas = [&](const Tlas& t) {
     VkWriteDescriptorSetAccelerationStructureKHR as = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR, nullptr, 1, &t.as };
     VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, &as, traceP.set, 0, 0, 1, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, nullptr, nullptr, nullptr };
@@ -446,6 +448,10 @@ bool run(const Env& env) {
         maxDt = std::max(maxDt, double(std::fabs(t - et)));
         if (std::fabs(t - et) > 8e-3f) mism++;
         if (checkIds && (h[1] != ep + ec * kTrisPerCluster || h[2] != 0 || h[3] != ec)) idMism++;
+        if (std::string(name).rfind("PTLAS", 0) != 0) {
+          const auto* material = static_cast<const uint32_t*>(identity.map) + (size_t(z) * kRays + x) * 4;
+          if (material[0] != 0xc12345u || material[1] != 0x12345u || material[2] != 2 || material[3] != 1) { ++idMism; }
+        }
       }
     }
     log(std::string("selftest: trace[") + name + "] rays " + std::to_string(kRays * kRays) + ": expected hits " + std::to_string(expHits) + ", got " + std::to_string(gotHits) +
@@ -576,7 +582,7 @@ bool run(const Env& env) {
       VkWriteDescriptorSetPartitionedAccelerationStructureNV pw = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_PARTITIONED_ACCELERATION_STRUCTURE_NV, nullptr, 1, &a };
       VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, &pw, tracePt.set, 0, 0, 1, VK_DESCRIPTOR_TYPE_PARTITIONED_ACCELERATION_STRUCTURE_NV, nullptr, nullptr, nullptr };
       f.vkUpdateDescriptorSets(dev, 1, &w, 0, nullptr);
-      writeBuf(tracePt.set, 1, hits); writeBuf(tracePt.set, 2, tbuf);
+      writeBuf(tracePt.set, 1, hits); writeBuf(tracePt.set, 2, tbuf); writeBuf(tracePt.set, 3, identity);
       begin(); stamp(0);
       f.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tracePt.pipeline);
       f.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tracePt.layout, 0, 1, &tracePt.set, 0, nullptr);
@@ -695,13 +701,15 @@ bool run(const Env& env) {
       const bool expectedHit = triangle != degenerateTriangle;
       mismatches += bool(hit[0]) != expectedHit;
       if (expectedHit) {
+        const auto* material = static_cast<const uint32_t*>(identity.map) + triangle * 4;
+        mismatches += material[0] != 0xc12345u || material[1] != 0x12345u || material[2] != 2 || material[3] != 1;
         mismatches += hit[1] != triangle || hit[2] != 0 || hit[3] != (triangle / 64 * 64) ||
           std::fabs(static_cast<const float*>(tbuf.map)[triangle] - (kOriginY - triangle * 0.03125f)) > 1e-4f;
       }
     }
     log("selftest: production gather uint" + std::to_string(indexStride * 8) +
       " reverse-indexed/interleaved 65 triangles, partial CLAS and degenerate: gather mismatches " +
-      std::to_string(gatherMismatches) + ", normalized primitive/geometry/cluster/hit/t mismatches " + std::to_string(mismatches));
+      std::to_string(gatherMismatches) + ", normalized primitive/geometry/cluster/hit/t/material/surface/custom-index mismatches " + std::to_string(mismatches));
     ok &= gatherMismatches == 0 && mismatches == 0;
   }
   f.vkDestroyPipeline(dev, packP.pipeline, nullptr);
