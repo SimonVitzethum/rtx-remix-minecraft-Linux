@@ -24,6 +24,10 @@ import org.joml.Vector3fc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 /**
  * Fullbright: a path-traced night-vision / ambient fill, not a flat lightmap override.
  *
@@ -57,11 +61,17 @@ public final class Fullbright {
     private static boolean enabled;
     private static float intensity = DEFAULT_INTENSITY;
     private static float level;
+    private static float blend;
     private static long lastNanos;
 
     private RemixLight key;
     private RemixLight back;
-    private float appliedLevel = -1.0f;
+    private RemixAPI exposureApi;
+    private long exposureLayer;
+    private float appliedStrength = -1.0f;
+    private float appliedEv = Float.NaN;
+    private float appliedExposure = Float.NaN;
+    private float appliedShadows = Float.NaN;
 
     /**
      * Default key B: vanilla has no plain-B binding (only F3+B, hitboxes, which consumes its key press), and
@@ -75,7 +85,8 @@ public final class Fullbright {
             while (key.consumeClick()) {
                 presses++;
             }
-            if ((presses & 1) == 1 && !client.options.keyDebugModifier.isDown()) {
+            if ((presses & 1) == 1 && client.gui.screen() == null
+                    && !client.options.keyDebugModifier.isDown()) {
                 enabled = !enabled;
                 if (client.player != null) {
                     client.player.sendOverlayMessage(Component.translatable(
@@ -101,9 +112,8 @@ public final class Fullbright {
         long now = System.nanoTime();
         float dt = lastNanos == 0 ? 0.0f : Math.min(0.25f, (now - lastNanos) / 1.0e9f);
         lastNanos = now;
-        float target = enabled ? intensity : 0.0f;
-        float step = dt * Math.max(intensity, 1.0f) / FADE_SECONDS;
-        level = level < target ? Math.min(target, level + step) : Math.max(target, level - step);
+        blend = advanceBlend(blend, enabled, dt);
+        level = blend * blend * (3.0f - 2.0f * blend) * intensity;
         RemixAPI api = renderer.getRemixApi();
         if (api == null) {
             return;
@@ -123,9 +133,7 @@ public final class Fullbright {
     private void drawLights(RemixAPI api, Camera camera) throws RemixException {
         Vec3 p = camera.position();
         Vector3fc fwd = camera.forwardVector();
-        // Smoothstep makes the fade perceptually even.
-        float s = Math.min(level, 1.0f);
-        float e = s * s * (3.0f - 2.0f * s) * Math.max(level, 1.0f);
+        float e = level;
         key = put(key, p.x, p.y + keyUp, p.z, keyRadius, keyRadiance * e, api);
         back = put(back, p.x - fwd.x() * backDistance, p.y + 0.8 - fwd.y() * backDistance,
                 p.z - fwd.z() * backDistance, backRadius, backRadiance * e, api);
@@ -159,30 +167,65 @@ public final class Fullbright {
         back = null;
     }
 
+    /** Normalized enable transition: every intensity takes the same 0.8 seconds. */
+    static float advanceBlend(float current, boolean on, float seconds) {
+        float step = Math.max(0.0f, seconds) / FADE_SECONDS;
+        return on ? Math.min(1.0f, current + step) : Math.max(0.0f, current - step);
+    }
+
     private void applyExposure(RemixRenderer renderer, RemixAPI api) {
-        if (Math.abs(level - appliedLevel) < 0.004f) {
-            return;
-        }
-        boolean first = appliedLevel < 0.0f;
-        appliedLevel = level;
-        if (first && level == 0.0f) {
+        float strength = variant == 2 ? 0.0f : level / MAX_INTENSITY;
+        if (strength == 0.0f && exposureLayer == 0) {
             return;
         }
         PostProcessingSettings post = renderer.getPostProcessingSettings();
         if (post == null) {
             return;
         }
-        float l = variant == 2 ? 0.0f : level;
+        float ev = post.getLowLightAdaptation() - evMinDrop * MAX_INTENSITY;
+        float exposure = post.getExposure() * (1.0f + exposureGain * MAX_INTENSITY);
+        float shadows = post.getShadowLevel() + shadowLift * MAX_INTENSITY;
         try {
-            api.setConfigVariable("rtx.autoExposure.evMinValue", Float.toString(post.getLowLightAdaptation() - evMinDrop * l));
-            api.setConfigVariable("rtx.localtonemap.exposure", Float.toString(post.getExposure() * (1.0f + exposureGain * l)));
-            api.setConfigVariable("rtx.localtonemap.shadows", Float.toString(post.getShadowLevel() + shadowLift * l));
-        } catch (RemixException ex) {
+            if (exposureLayer == 0 || ev != appliedEv || exposure != appliedExposure || shadows != appliedShadows) {
+                // Dynamic effects belong to a blendable layer, below explicit user overrides.
+                // Acquire parses synchronously; the small generated file is not a shipped payload.
+                Path conf = Files.createTempFile("rtxremix-fullbright-", ".conf");
+                try {
+                    Files.writeString(conf, "rtx.autoExposure.evMinValue = " + ev
+                            + "\nrtx.localtonemap.exposure = " + exposure
+                            + "\nrtx.localtonemap.shadows = " + shadows + "\n");
+                    long replacement = api.acquireConfigLayer(conf.toString(), 12000.0f, 0.5f);
+                    if (exposureLayer != 0) api.releaseConfigLayer(exposureLayer);
+                    exposureLayer = replacement;
+                    exposureApi = api;
+                } finally {
+                    Files.deleteIfExists(conf);
+                }
+                appliedEv = ev;
+                appliedExposure = exposure;
+                appliedShadows = shadows;
+                appliedStrength = -1.0f;
+            }
+            if (strength != appliedStrength) {
+                api.setConfigLayerBlending(exposureLayer, strength, 0.5f);
+                appliedStrength = strength;
+            }
+        } catch (RemixException | IOException ex) {
             LOGGER.error("Fullbright exposure failed: {}", ex.getMessage());
         }
     }
 
+    /** Releases world-owned native resources before the stores and runtime are destroyed. */
     public void shutdown() {
         destroyLights();
+        if (exposureLayer != 0) {
+            exposureApi.releaseConfigLayer(exposureLayer);
+            exposureLayer = 0;
+            exposureApi = null;
+        }
+        appliedStrength = -1.0f;
+        blend = 0.0f;
+        level = 0.0f;
+        lastNanos = 0;
     }
 }

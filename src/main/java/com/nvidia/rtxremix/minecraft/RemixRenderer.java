@@ -1686,8 +1686,8 @@ public class RemixRenderer {
         }
         if (lightManager != null) {
             lightManager.clear();
-            fullbright.shutdown();
         }
+        fullbright.shutdown();
         if (entitySubmitter != null) {
             entitySubmitter.clear();
         }
@@ -1786,6 +1786,7 @@ public class RemixRenderer {
             blockOutlinePass = null;
         }
 
+        fullbright.shutdown();
         shutdownAssetStores();
 
         if (interopGlVk != null) {
