@@ -54,7 +54,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * cached (only columns whose input signature changed are rebuilt) and merged into one pool ({@link FarFieldDag}) by a merge task. A
  * column's input is, per 16 x 16 chunk: a client chunk inside the path-traced radius (hole, drawn by Remix), a client chunk
  * beyond it (exact 1-block voxels), or no chunk (LOD height + colour grid from the integrated server, {@link FarLodSource}, with
- * 4 / 8 / 16 block cells by distance). So the far field starts beyond whatever the client really has loaded.
+ * 2 / 4 / 8 / 16 block cells by distance). So the far field starts beyond whatever the client really has loaded.
  *
  * <p>Settings (mod settings screen, persisted) and the optional file {@code rtxremix-farfield} / -Drtxremix.farfield=... with lines
  * {@code radius=0} (path-traced chunks, 0 = vanilla render distance), {@code distance=256} (far field chunks, up to 512),
@@ -254,7 +254,7 @@ public final class FarField {
     private Object levelKey;
     private int lastFakeCount;
     private FarTileSource source;
-    /** Loaded real chunks handed to the multiplayer cache (render thread): position -> chunk object recorded last. */
+    /** Real chunk identity and its last admitted surface revision, owned by the render thread. */
     private final HashMap<Long, Recorded> tracked = new HashMap<>();
     private final java.util.ArrayDeque<Long> recordQueue = new java.util.ArrayDeque<>();
     private final java.util.HashSet<Long> recordQueued = new java.util.HashSet<>();
@@ -435,10 +435,10 @@ public final class FarField {
                 var current = Minecraft.getInstance().getCurrentServer();
                 String name = current == null ? "unknown" : current.ip;
                 name = name.replaceAll("[^A-Za-z0-9._-]", "_");
-                Path dir = FabricLoader.getInstance().getGameDir().resolve("rtxremix-farcache").resolve(name)
-                        .resolve(level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
-                source = new FarCacheSource(dir, cacheMb, null, previousCacheFlush);
-                LOGGER.info("FarField: multiplayer chunk cache {} (limit {} MB){}", dir, cacheMb,
+                Path root = FabricLoader.getInstance().getGameDir().resolve("rtxremix-farcache");
+                Path namespace = Path.of(name, level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
+                source = new FarCacheSource(root, namespace, cacheMb, null, previousCacheFlush);
+                LOGGER.info("FarField: multiplayer chunk cache {} (limit {} MB){}", root.resolve(namespace), cacheMb,
                         BobbyCompat.isPresent() ? ", Bobby fake chunks are read as well" : "");
             } catch (RuntimeException | Error e) {
                 LOGGER.error("FarField: chunk cache init failed", e);
@@ -453,7 +453,9 @@ public final class FarField {
                     .resolve(world + "-" + Long.toHexString(sl.getSeed()))
                     .resolve(level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
             // Received chunks override procedural noise, retaining edits after they leave the client radius.
-            source = new FarCacheSource(dir.resolve("received"), cacheMb, new FarLodSource(sl, dir, lodThreads), previousCacheFlush);
+            String saveIdentity = java.util.UUID.nameUUIDFromBytes(server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT)
+                    .toAbsolutePath().normalize().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+            source = new FarCacheSource(dir.resolve("received"), Path.of(saveIdentity), cacheMb, new FarLodSource(sl, dir, lodThreads), previousCacheFlush);
             LOGGER.info("FarField: LOD source from the integrated server, cache {}", dir);
         } catch (RuntimeException | Error e) {
             LOGGER.error("FarField: LOD source init failed", e);

@@ -17,7 +17,7 @@ import java.util.IdentityHashMap;
 final class FarChunkSnapshot {
     final int cx, cz, minY;
     private final LevelChunkSection[] sections;
-    private final int[] heights;
+    private final int[] highestY;
 
     /** Cheap content signature; no block or heightmap scan. Must be read on the chunk's owner thread. */
     static long signature(LevelChunk chunk) {
@@ -40,9 +40,10 @@ final class FarChunkSnapshot {
         for (int i = 0; i < source.length; i++) {
             if (source[i] != null) sections[i] = source[i].copy();
         }
-        heights = new int[256];
+        // ChunkAccess.getHeight returns the highest occupied Y (getFirstAvailable - 1), not the top face.
+        highestY = new int[256];
         for (int z = 0; z < 16; z++) {
-            for (int x = 0; x < 16; x++) heights[z * 16 + x] = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, x, z);
+            for (int x = 0; x < 16; x++) highestY[z * 16 + x] = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, x, z);
         }
     }
 
@@ -78,7 +79,7 @@ final class FarChunkSnapshot {
         for (int z = 0; z < 16; z++) {
             for (int x = 0; x < 16; x++) {
                 int index = z * 16 + x;
-                int y = heights[index] - 1;
+                int y = highestY[index];
                 int classified = 0;
                 for (; y >= minY; y--) {
                     classified = classes.computeIfAbsent(state(x, y, z), FarField::classify);

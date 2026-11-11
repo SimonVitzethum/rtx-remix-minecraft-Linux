@@ -25,15 +25,15 @@ import java.util.zip.DeflaterOutputStream;
 import java.util.zip.InflaterInputStream;
 
 /**
- * Far terrain source for multiplayer (no integrated server to ask): remembers the surface of every chunk this client ever
+ * Received surface source, optionally over procedural integrated-server terrain: remembers every chunk this client
  * received. Per chunk 16 x 16 columns of {top face height, RGB565 of the top block with biome tint}, 1 KB, grouped in regions of
  * 32 x 32 chunks and kept deflated on disk per server and dimension ({@code rtxremix-farcache/<server>/<dimension>/r_x_z.bin}). Tiles
- * (the same 64 x 64 cell tiles at 4 / 8 / 16 blocks per cell as {@link FarLodSource}) are averaged from those columns on a worker
- * thread; a tile is rebuilt (at most every few seconds) when a chunk inside it was recorded again.
+ * (the same 64 x 64 cell tiles at 2 / 4 / 8 / 16 blocks per cell as {@link FarLodSource}) are averaged from those columns on a worker
+ * thread; a tile is rebuilt under a 500 ms cadence gate when a chunk inside it was recorded again.
  *
  * <p>Memory is bounded: at most {@link #MAX_REGIONS} regions resident (farthest from the player written out and dropped), tiles
  * trimmed by distance. Disk is bounded by the {@code cacheMb} setting over the whole cache directory (oldest files deleted).
- * A chunk is recorded when the client first has it and once more when it leaves, so far terrain stays after the server stops sending it.
+ * Content revisions coalesce surface records; an unload also offers the last received state.
  */
 final class FarCacheSource implements FarTileSource {
     private static final Logger LOGGER = LoggerFactory.getLogger(FarCacheSource.class);
@@ -57,7 +57,7 @@ final class FarCacheSource implements FarTileSource {
         @Override public int compareTo(TileJob o) { int order = Double.compare(priority, o.priority); return order != 0 ? order : Long.compare(key, o.key); }
     }
 
-    private final Path dir;
+    private final Path dir, diskRoot;
     private final long diskLimitBytes;
     private final FarTileSource fallback;
     private final java.util.Set<Long> missingRegions = ConcurrentHashMap.newKeySet();
@@ -78,8 +78,10 @@ final class FarCacheSource implements FarTileSource {
     final AtomicLong built = new AtomicLong();
     final AtomicLong fromDisk = new AtomicLong();
 
-    FarCacheSource(Path dir, int diskLimitMb, FarTileSource fallback, CompletableFuture<Void> previousFlush) {
-        this.dir = dir;
+    FarCacheSource(Path root, Path namespace, int diskLimitMb, FarTileSource fallback, CompletableFuture<Void> previousFlush) {
+        this.diskRoot = root.toAbsolutePath().normalize();
+        this.dir = diskRoot.resolve(namespace).normalize();
+        if (!dir.startsWith(diskRoot)) throw new IllegalArgumentException("Surface cache namespace escapes its root");
         this.diskLimitBytes = diskLimitMb * 1024L * 1024L;
         this.fallback = fallback;
         try {
@@ -132,7 +134,7 @@ final class FarCacheSource implements FarTileSource {
         housekeeping(true);
     }
 
-    void store(FarChunkSnapshot.Surface surface) {
+    synchronized void store(FarChunkSnapshot.Surface surface) {
         int cx = surface.cx(), cz = surface.cz();
         short[] top = surface.top(), rgb = surface.rgb();
         long rk = regionKey(Math.floorDiv(cx, 32), Math.floorDiv(cz, 32));
@@ -205,7 +207,8 @@ final class FarCacheSource implements FarTileSource {
         if (fallback != null) fallback.trim(maxBlocks);
         missingRegions.removeIf(key -> Math.max(Math.abs(((int) (key >> 32) + 0.5) * 512 - centerX),
                 Math.abs((key.intValue() + 0.5) * 512 - centerZ)) > maxBlocks + 512);
-        if (tiles.size() < 600) return;
+        epochs.keySet().removeIf(key -> Math.max(Math.abs(((int) (key >> 32) + 0.5) * 512 - centerX),
+                Math.abs((key.intValue() + 0.5) * 512 - centerZ)) > maxBlocks + 2048);
         tiles.keySet().removeIf(k -> {
             int lg = (int) (k >>> 56);
             int tx = (int) ((k >> 28) & 0xFFFFFFF), tz = (int) (k & 0xFFFFFFF);
@@ -281,10 +284,12 @@ final class FarCacheSource implements FarTileSource {
                 long ck = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
                 if (ck != lastChunk) {
                     lastChunk = ck;
-                    Region r = region(regionKey(Math.floorDiv(cx, 32), Math.floorDiv(cz, 32)), false);
-                    int slot = (Math.floorMod(cz, 32) << 5) | Math.floorMod(cx, 32);
-                    if (r == null) { ct = null; cr = null; }
-                    else synchronized (r) { ct = r.top[slot]; cr = r.rgb[slot]; }
+                    synchronized (this) {
+                        Region r = region(regionKey(Math.floorDiv(cx, 32), Math.floorDiv(cz, 32)), false);
+                        int slot = (Math.floorMod(cz, 32) << 5) | Math.floorMod(cx, 32);
+                        if (r == null) { ct = null; cr = null; }
+                        else { ct = r.top[slot]; cr = r.rgb[slot]; }
+                    }
                 }
                 if (ct == null) continue;
                 tile.usable = true;
@@ -326,16 +331,37 @@ final class FarCacheSource implements FarTileSource {
         if (r != null) return r;
         if (!create && missingRegions.contains(rk)) return null;
         if (create) missingRegions.remove(rk);
-        return regions.computeIfAbsent(rk, k -> {
-            Region loaded = read(k);
-            if (loaded != null) {
-                fromDisk.incrementAndGet();
-                return loaded;
-            }
-            if (create) return new Region(k);
-            if (missingRegions.size() < 8192) missingRegions.add(k);
+        Region loaded = read(rk);
+        if (loaded != null) fromDisk.incrementAndGet();
+        else if (create) loaded = new Region(rk);
+        else {
+            if (missingRegions.size() < 8192) missingRegions.add(rk);
             return null;
-        });
+        }
+        if (regions.size() >= MAX_REGIONS && !evictRegion()) {
+            throw new IllegalStateException("Far-field surface cache is full and cannot persist a dirty region");
+        }
+        regions.put(rk, loaded);
+        return loaded;
+    }
+
+    /** Called under the source's I/O monitor, also held through a record's region lookup and mutation. */
+    private boolean evictRegion() {
+        Region far = null;
+        double farthest = -1;
+        for (Region region : regions.values()) {
+            double distance = Math.max(Math.abs(((int) (region.key >> 32) + 0.5) * 512 - centerX),
+                    Math.abs(((int) region.key + 0.5) * 512 - centerZ));
+            if (distance > farthest || distance == farthest && (far == null || region.key < far.key)) {
+                farthest = distance;
+                far = region;
+            }
+        }
+        if (far != null && (!far.dirty || write(far))) {
+            regions.remove(far.key, far);
+            return true;
+        }
+        return false;
     }
 
     private Region read(long rk) {
@@ -397,7 +423,7 @@ final class FarCacheSource implements FarTileSource {
     }
 
     /** Flushes dirty regions (one per second, all on shutdown), drops far regions above the memory cap, trims the disk. */
-    private void housekeeping(boolean all) {
+    private synchronized void housekeeping(boolean all) {
         long now = System.currentTimeMillis();
         if (!all && now - lastFlushMs < 1000) return;
         lastFlushMs = now;
@@ -408,18 +434,6 @@ final class FarCacheSource implements FarTileSource {
             if (d && (all || flushed < 1)) {
                 write(r);
                 flushed++;
-            }
-        }
-        if (!all && regions.size() > MAX_REGIONS) {
-            Region far = null;
-            double fd = -1;
-            for (Region r : regions.values()) {
-                double dx = ((int) (r.key >> 32) + 0.5) * 512 - centerX, dz = ((int) r.key + 0.5) * 512 - centerZ;
-                double d = Math.max(Math.abs(dx), Math.abs(dz));
-                if (d > fd) { fd = d; far = r; }
-            }
-            if (far != null) {
-                if (write(far)) regions.remove(far.key, far);
             }
         }
         if (all) trimDisk();
@@ -445,13 +459,12 @@ final class FarCacheSource implements FarTileSource {
                 total -= Files.size(p);
                 Files.delete(p);
             }
-        } catch (IOException e) {
+        } catch (IOException | java.io.UncheckedIOException e) {
             LOGGER.warn("FarCache: trim failed", e);
         }
     }
 
     private void trimDisk() {
-        Path root = dir.getParent() == null ? dir : dir.getParent().getParent() == null ? dir.getParent() : dir.getParent().getParent();
-        trimDisk(root, diskLimitBytes);
+        trimDisk(diskRoot, diskLimitBytes);
     }
 }

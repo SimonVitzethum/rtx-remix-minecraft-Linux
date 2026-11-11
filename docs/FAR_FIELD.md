@@ -61,12 +61,17 @@ does not increment the cache epoch. Final changes of retained unloaded chunks ar
 again within the recording budget. Old immutable tiles remain usable while replacements
 are built. A tile changed during its build is rejected and retried on a later request.
 The received-surface disk format remains version 1, so existing multiplayer caches are
-readable. An empty received column also overrides generated ground.
+readable. An empty received column also overrides generated ground. Sampling starts at
+`ChunkAccess.getHeight()` itself: that method already returns the highest occupied Y;
+subtracting again would discard a one-block surface/material layer. Old disk entries
+remain approximate until revisited and recorded again.
 
 Cache recorder shutdown drains admitted snapshots and flushes on its worker. A future
 hands disk ownership to the next session without blocking the client thread, including
 world swaps and far-field off/on cycles. Missing regions are remembered, avoiding a file
-existence check for each cell of unvisited generated terrain. Read/write failures are
+existence check for each cell of unvisited generated terrain. The disk quota root is explicit and never inferred from a directory's parents. The
+resident-region cap is enforced before loading another region, under the same worker
+I/O monitor as record publication; dirty regions are persisted before eviction. Read/write failures are
 logged; failed writes retain the dirty state and cannot evict the only resident copy.
 
 ## Source limits
