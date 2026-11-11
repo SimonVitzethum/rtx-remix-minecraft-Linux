@@ -103,6 +103,7 @@ namespace dxvk {
       bool budgetWarning = false;
       const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
       std::atomic<bool> cancelled{ false };
+      std::atomic<bool> failed{ false };
       std::atomic<bool> admitted{ false };
     };
 
@@ -480,8 +481,6 @@ namespace dxvk {
       return memory.uploadDirty(ctx, image, budget, &m_synchronousAlloc);
     }
 
-    dxvk::mutex m_assetInfoMutex{};
-
   private:
     void asyncLoop(); // boilerplate
 
@@ -594,6 +593,18 @@ namespace dxvk {
         m_processing = true;
       }
 
+      const auto fail = [this, &upload](const std::string& message) {
+        if (!upload->cancelled.load() && !m_requiresShutdown.load()) {
+          Logger::err(str::format("[TextureStaging] Upload failed: ", message));
+          upload->failed = true;
+          ReadyToCopy failure;
+          failure.upload = upload;
+          failure.complete = false;
+          auto lock = std::unique_lock{ m_readyTextures_mutex };
+          m_readyTextures.push_back(std::move(failure));
+        }
+      };
+
       try {
         const auto publish = [this](ReadyToCopy ready) {
           auto lock = std::unique_lock{ m_readyTextures_mutex };
@@ -677,17 +688,9 @@ namespace dxvk {
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), " ms"));
         }
       } catch (const DxvkError& e) {
-        if (!upload->cancelled.load() && !m_requiresShutdown.load()) {
-          Logger::err(str::format("[TextureStaging] Upload failed: ", e.message()));
-          upload->cancelled = true;
-          upload->texture->m_state = ManagedTexture::State::kFailed;
-        }
+        fail(e.message());
       } catch (const std::exception& e) {
-        if (!upload->cancelled.load() && !m_requiresShutdown.load()) {
-          Logger::err(str::format("[TextureStaging] Upload failed: ", e.what()));
-          upload->cancelled = true;
-          upload->texture->m_state = ManagedTexture::State::kFailed;
-        }
+        fail(e.what());
       }
       for (uint32_t level = upload->mipBegin; level < upload->mipEnd; ++level) {
         for (uint32_t layer = 0; layer < upload->asset->info().numLayers; ++layer) {
@@ -1048,6 +1051,11 @@ namespace dxvk {
             }
             continue;
           }
+          if (upload.failed.load()) {
+            upload.cancelled = true;
+            tex->m_state = ManagedTexture::State::kFailed;
+            continue;
+          }
           if (upload.mipBegin == upload.mipEnd) {
             tex->m_currentMipView = nullptr;
             tex->m_currentMip_begin = upload.mipBegin;
@@ -1325,10 +1333,6 @@ namespace dxvk {
     if (m_hotreloadRequests.empty()) {
       return;
     }
-
-    // stall async texture streaming thread while this thread
-    // is patching up the file header information ('ManagedTexture::m_assetData')
-    auto lockAssetInfo = std::unique_lock{ m_asyncThread->m_assetInfoMutex };
 
     // iterate destructively
     for (auto it = m_hotreloadRequests.begin(); it != m_hotreloadRequests.end();) {
