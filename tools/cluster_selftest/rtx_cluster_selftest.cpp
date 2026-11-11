@@ -622,6 +622,7 @@ bool run(const Env& env) {
   allocSet(packP);
   constexpr uint32_t triangleCount = 65;
   constexpr uint32_t vertexCount = triangleCount * 3;
+  constexpr uint32_t degenerateTriangle = 17;
   for (const uint32_t indexStride : {2u, 4u}) {
     const uint32_t vertexOffset = 16, vertexStride = 20, indexOffset = indexStride;
     Buf sourcePositions = c.make(vertexOffset + vertexCount * vertexStride, true);
@@ -637,7 +638,7 @@ bool run(const Env& env) {
           triangle * 0.03125f, corner == 2 ? 1.5f : 0.f};
         // Keep one primitive as an inactive degenerate without renumbering any primitive.
         float value[3]; std::memcpy(value, position, sizeof(value));
-        if (triangle == triangleCount - 2) { value[0] = 2.f * triangle; value[2] = 0.f; }
+        if (triangle == degenerateTriangle) { value[0] = 2.f * triangle; value[2] = 0.f; }
         std::memcpy(static_cast<char*>(sourcePositions.map) + vertexOffset + index * vertexStride, value, sizeof(value));
         std::memcpy(static_cast<char*>(sourceIndices.map) + indexOffset + slot * indexStride, &index, indexStride);
       }
@@ -691,7 +692,7 @@ bool run(const Env& env) {
     uint32_t mismatches = 0;
     for (uint32_t triangle = 0; triangle < triangleCount; ++triangle) {
       const auto* hit = static_cast<const uint32_t*>(hits.map) + triangle * 4;
-      const bool expectedHit = triangle != triangleCount - 2;
+      const bool expectedHit = triangle != degenerateTriangle;
       mismatches += bool(hit[0]) != expectedHit;
       if (expectedHit) {
         mismatches += hit[1] != triangle || hit[2] != 0 || hit[3] != (triangle / 64 * 64) ||
