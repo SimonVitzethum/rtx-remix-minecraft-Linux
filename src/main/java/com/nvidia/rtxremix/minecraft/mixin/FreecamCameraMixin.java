@@ -23,7 +23,7 @@ public abstract class FreecamCameraMixin {
 
     @Inject(method = "alignWithEntity", at = @At("TAIL"))
     private void rtxremix$freecamPose(float partialTicks, CallbackInfo ci) {
-        Freecam.applyTo((Camera) (Object) this, (x, y, z, yaw, pitch) -> {
+        Freecam.applyTo((x, y, z, yaw, pitch) -> {
             setPosition(x, y, z);
             setRotation(yaw, pitch);
         });

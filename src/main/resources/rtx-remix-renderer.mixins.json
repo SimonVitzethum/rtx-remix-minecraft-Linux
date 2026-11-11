@@ -33,6 +33,7 @@
         "FreecamMinecraftMixin",
         "FreecamMouseMixin",
         "FreecamOptionsMixin",
+        "ShortcutKeyMappingMixin",
         "GameRendererMixin",
         "BitmapFontImageMixin",
         "GlyphAtlasTextureMixin",

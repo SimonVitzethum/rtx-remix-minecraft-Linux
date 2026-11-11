@@ -16,6 +16,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,7 +57,6 @@ public final class Freecam {
     private static float pitch;
     private static double speed = DEFAULT_SPEED;
     private static long lastFrameNanos;
-    private static long lastAppliedFrame = -1;
     private static LocalPlayer owner;
     private static float lastHealth;
     private static int lastHurtTime;
@@ -78,7 +78,7 @@ public final class Freecam {
                     }
                     Minecraft mc = Minecraft.getInstance();
                     Component text = Component.translatable("rtxremix.freecam.hud",
-                            toggleKey.getTranslatedKeyMessage(), String.format("%.1f", speed));
+                            toggleKey.getTranslatedKeyMessage(), String.format(Locale.ROOT, "%.1f", speed));
                     graphics.centeredText(mc.font, text, graphics.guiWidth() / 2, 6, 0xFFFFFFFF);
                 });
     }
@@ -120,7 +120,7 @@ public final class Freecam {
         }
         float health = player.getHealth();
         int hurt = player.hurtTime;
-        if (health < lastHealth - 1.0e-3f || (hurt > 0 && lastHurtTime == 0)) {
+        if (health < lastHealth - 1.0e-3f || (hurt > lastHurtTime)) {
             stop("damage");
             return;
         }
@@ -140,6 +140,13 @@ public final class Freecam {
         lastHealth = player.getHealth();
         lastHurtTime = player.hurtTime;
         lastFrameNanos = System.nanoTime();
+        // Cancelling future interactions must also finish the one already in progress.
+        if (mc.gameMode != null) {
+            mc.gameMode.stopDestroyBlock();
+            if (player.isUsingItem()) {
+                mc.gameMode.releaseUsingItem(player);
+            }
+        }
         active = true;
         LOGGER.info("Freecam on at {} {} {}", x, y, z);
     }
@@ -187,7 +194,7 @@ public final class Freecam {
     }
 
     /** Called by the camera mixin once per camera update (render frame): moves and applies the pose. */
-    public static void applyTo(Camera camera, CameraPoseSetter setter) {
+    public static void applyTo(CameraPoseSetter setter) {
         if (!active) {
             return;
         }
