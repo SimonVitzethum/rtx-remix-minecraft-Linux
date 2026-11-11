@@ -16,12 +16,12 @@ up to 32768, including rectangular atlases.
 Material reads use the same tile for albedo, opacity, normals, emission, and
 other PBR channels. Sampling repeats outside a tile while preserving the two
 endpoints of an ordinary face. Every anisotropic tap is constrained to a valid
-bilinear footprint. Only mip levels whose cells align with all four tile edges
-are used: a mip containing two sprites cannot be repaired by clamping UVs.
-Unaligned tiles therefore retain a finer mip at distance. This favors correct
-materials over contaminated coarse mips, but can increase distant aliasing and
-sampling cost. Authoring padded, aligned atlases or supplying tile-specific mip
-chains would allow coarser filtering without cross-sprite contamination.
+bilinear footprint. Only complete mip cells inside the content rectangle are
+used: a mip containing two sprites cannot be repaired by clamping UVs. This also
+allows coarse filtering for unaligned sprites by excluding their partially
+covered edge cells. It can bias the edge color at coarse levels and adds sampling
+cost. Authoring aligned atlases or supplying tile-specific mip chains would
+allow coarser filtering without excluding any sprite texels.
 
 POM samples the existing height channel at level zero. Its march operates in
 local tile coordinates and corrects the tangent basis for rectangular atlas and

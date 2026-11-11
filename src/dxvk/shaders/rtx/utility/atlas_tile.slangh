@@ -37,15 +37,23 @@ struct AtlasTile
     {
       wrapped.y = frac(local.y);
     }
-    const vec2 inset = 0.5f * exp2(ceil(mipLevel));
-    return clamp(minTexel + wrapped * (maxTexel - minTexel), minTexel + inset, maxTexel - inset) / atlasSize;
+    const float scale = exp2(ceil(mipLevel));
+    const vec2 firstCenter = (ceil(minTexel / scale) + 0.5f) * scale;
+    const vec2 lastCenter = (floor(maxTexel / scale) - 0.5f) * scale;
+    return clamp(minTexel + wrapped * (maxTexel - minTexel), firstCenter, lastCenter) / atlasSize;
   }
 
   float maxMipLevel()
   {
-    // Only aligned mip cells contain texels exclusively from this tile.
-    const uint edges = uint(minTexel.x) | uint(minTexel.y) | uint(maxTexel.x) | uint(maxTexel.y);
-    return float(firstbitlow(edges));
+    // Coarse levels are safe when at least one whole mip cell fits inside each tile dimension.
+    float level = floor(log2(min(maxTexel.x - minTexel.x, maxTexel.y - minTexel.y)));
+    float scale = exp2(level);
+    while (any(floor(maxTexel / scale) <= ceil(minTexel / scale)))
+    {
+      level -= 1.0f;
+      scale *= 0.5f;
+    }
+    return level;
   }
 };
 
