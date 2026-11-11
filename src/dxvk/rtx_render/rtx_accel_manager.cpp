@@ -906,7 +906,11 @@ namespace dxvk {
       assert(blasEntry->buildGeometries.size() == 1); // dynamic BLAS should always have this
       assert(blasEntry->buildRanges.size() == 1); // dynamic BLAS should always have this
 
+      const auto previousBlas = blasEntry->dynamicBlas;
       if (m_clusterBlas.build(ctx, execBarriers, *blasEntry, uniqueBlasEntry.instances)) {
+        if (previousBlas.ptr() && previousBlas.ptr() != blasEntry->dynamicBlas.ptr()) {
+          m_blasPool.push_back(previousBlas);
+        }
         for (RtInstance* instance : uniqueBlasEntry.instances) {
           addBlas(instance, blasEntry, nullptr);
         }

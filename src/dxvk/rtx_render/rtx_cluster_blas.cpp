@@ -75,7 +75,7 @@ namespace dxvk {
     const auto indexOffset = tri.indexData.deviceAddress - indices->getDeviceAddress();
     if (vertexOffset > UINT32_MAX || indexOffset > UINT32_MAX || vertexOffset % 4 || indexOffset % indexStride ||
         vertexOffset + uint64_t(geo.vertexCount - 1) * tri.vertexStride + 12 > positions->info().size ||
-        indexOffset + uint64_t(plan.triangles) * 3 * indexStride > indices->info().size ||
+        align(indexOffset + uint64_t(plan.triangles) * 3 * indexStride, VkDeviceSize(4)) > indices->info().size ||
         positions->info().size > UINT32_MAX || indices->info().size > UINT32_MAX ||
         !(positions->info().usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) ||
         !(indices->info().usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) {

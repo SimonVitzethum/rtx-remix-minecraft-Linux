@@ -263,3 +263,9 @@ exe = executable('test_cluster_plan', files('test_cluster_plan.cpp'),
   override_options : ['cpp_std='+dxvk_cpp_std])
 test('test_cluster_plan', exe, env : test_env)
 tests += exe
+
+exe = executable('test_cluster_lifetime', files('test_cluster_lifetime.cpp',
+    '../../../src/dxvk/dxvk_lifetime.cpp', '../../../src/dxvk/dxvk_resource.cpp'),
+  dependencies : test_unit_deps, override_options : ['cpp_std='+dxvk_cpp_std])
+test('test_cluster_lifetime', exe, env : test_env)
+tests += exe
