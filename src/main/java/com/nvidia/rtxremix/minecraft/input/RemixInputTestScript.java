@@ -35,6 +35,12 @@ import java.util.List;
  * fcaim DIST UP ANGLE  freecam DIST blocks from the player (ANGLE degrees around, UP higher) looking at it
  * fcpose X Y Z YAW PITCH  place the freecam
  * fb on|off [VARIANT [KEYRAD BACKRAD EVDROP]]   fullbright (variant 1..3) and tunables
+ * anchor / expect stationary   save and verify player position and view direction
+ * expect freecam on|off / fullbright LEVEL / no-conflict KEY_ID KEY_ID   assert state
+ * state                    log player/camera pose, freecam speed and fullbright fade
+ * kdown / kup NAME         hold or release a key (also space, shift, ctrl)
+ * shot [marker] NAME       mark a screenshot; optional file acknowledgement yields without blocking rendering
+ * scmd TEXT...             integrated-server command (test world only)
  * diag                     log client/server loaded chunk counts and view distances
  * close                    close the menu like Alt+X does
  * altx                     Alt+X chord through KeyboardHandler.keyPress (toggles the developer menu)
@@ -62,6 +68,11 @@ public final class RemixInputTestScript {
     private static long startNanos = -1L;
     private static double cursorX;
     private static double cursorY;
+    private static Path pendingShot;
+    private static long shotStartedNanos;
+    private static net.minecraft.world.phys.Vec3 anchor;
+    private static float anchorYaw;
+    private static float anchorPitch;
 
     private RemixInputTestScript() {
     }
@@ -119,6 +130,18 @@ public final class RemixInputTestScript {
             return; // the clock starts once the world is playable (loading screen gone)
         }
         long now = System.nanoTime();
+        if (pendingShot != null) {
+            if (!Files.exists(pendingShot) && now - shotStartedNanos < 30_000_000_000L) {
+                return;
+            }
+            if (!Files.exists(pendingShot)) {
+                LOGGER.error("Screenshot acknowledgement timed out: {}", pendingShot);
+            }
+            // External capture must not consume the exposure-settling time of subsequent steps.
+            startNanos += now - shotStartedNanos;
+            pendingShot = null;
+            return;
+        }
         if (startNanos < 0) {
             startNanos = now;
         }
@@ -127,6 +150,9 @@ public final class RemixInputTestScript {
             Step step = steps.get(next++);
             try {
                 run(mc, step.words);
+                if (step.words[0].equals("shot")) {
+                    return;
+                }
             } catch (Exception e) {
                 LOGGER.error("Step failed: {}", String.join(" ", step.words), e);
             }
@@ -179,12 +205,10 @@ public final class RemixInputTestScript {
             case "shot" -> {
                 String shotName = w.length > 2 ? w[2] : (w.length > 1 ? w[1] : "");
                 LOGGER.info("shot marker {}", shotName);
-                // The external screenshot tool acknowledges with a file; the render thread waits (max 30 s) so the picture is of this moment.
-                Path ack = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("shot-ack-" + shotName);
-                if (Boolean.getBoolean("rtxremix.test.shotAck") || Files.exists(net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("shot-ack-enable"))) {
-                    for (int i = 0; i < 300 && !Files.exists(ack); i++) {
-                        Thread.sleep(100);
-                    }
+                Path dir = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir();
+                if (Boolean.getBoolean("rtxremix.test.shotAck") || Files.exists(dir.resolve("shot-ack-enable"))) {
+                    pendingShot = dir.resolve("shot-ack-" + shotName);
+                    shotStartedNanos = System.nanoTime();
                 }
             }
             case "cmd" -> mc.player.connection.sendCommand(String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length)));
@@ -204,6 +228,34 @@ public final class RemixInputTestScript {
                 mc.player.yRotO = yaw;
                 mc.player.xRotO = pitch;
             }
+            case "anchor" -> {
+                anchor = mc.player.position();
+                anchorYaw = mc.player.getYRot();
+                anchorPitch = mc.player.getXRot();
+            }
+            case "expect" -> {
+                boolean ok = switch (w[1]) {
+                    case "freecam" -> com.nvidia.rtxremix.minecraft.camera.Freecam.isActive() == w[2].equals("on");
+                    case "stationary" -> anchor != null && mc.player.position().distanceToSqr(anchor) < 0.0001
+                            && mc.player.getYRot() == anchorYaw && mc.player.getXRot() == anchorPitch;
+                    case "fullbright" -> Math.abs(com.nvidia.rtxremix.minecraft.light.Fullbright.level()
+                            - Float.parseFloat(w[2])) < 0.01f;
+                    case "no-conflict" -> {
+                        var keys = java.util.Arrays.stream(mc.options.keyMappings).collect(
+                                java.util.stream.Collectors.toMap(net.minecraft.client.KeyMapping::getName, k -> k));
+                        var a = keys.get(w[2]);
+                        var b = keys.get(w[3]);
+                        yield !a.same(b) && !b.same(a);
+                    }
+                    default -> throw new IllegalArgumentException("unknown expectation " + w[1]);
+                };
+                if (!ok) throw new IllegalStateException("Expectation failed: " + desc);
+                LOGGER.info("PASS {}", desc);
+            }
+            case "state" -> LOGGER.info("state: player={} yaw={} pitch={} camera={} freecam={} speed={} fullbright={}",
+                    mc.player.position(), mc.player.getYRot(), mc.player.getXRot(),
+                    mc.gameRenderer.mainCamera().position(), com.nvidia.rtxremix.minecraft.camera.Freecam.isActive(),
+                    com.nvidia.rtxremix.minecraft.camera.Freecam.speed(), com.nvidia.rtxremix.minecraft.light.Fullbright.level());
             case "diag" -> {
                 var srv = mc.getSingleplayerServer();
                 LOGGER.info("diag: client loaded chunks={} effectiveRD={} optionRD={} serverViewDistance={} serverLoaded={}",
@@ -288,6 +340,9 @@ public final class RemixInputTestScript {
             case "esc", "escape" -> InputConstants.KEY_ESCAPE;
             case "enter" -> InputConstants.KEY_RETURN;
             case "tab" -> InputConstants.KEY_TAB;
+            case "space" -> InputConstants.KEY_SPACE;
+            case "shift" -> InputConstants.KEY_LSHIFT;
+            case "ctrl" -> InputConstants.KEY_LCONTROL;
             case "backspace" -> InputConstants.KEY_BACKSPACE;
             case "up" -> InputConstants.KEY_UP;
             case "down" -> InputConstants.KEY_DOWN;
