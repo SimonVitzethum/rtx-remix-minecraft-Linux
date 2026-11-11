@@ -590,10 +590,8 @@ public class BlockTextureManager {
         atlasSssAlbedoTex = sssAlbedoTex;
 
         for (int lt = 0; lt < LAYER_COUNT; lt++) {
-            if (lt == L_TRANS) {
+            if (lt == L_TRANS || lt == L_GLASS) {
                 atlasMaterials[lt] = createAtlasTransMaterial(emissiveTex, normalTex);
-            } else if (lt == L_GLASS) {
-                atlasMaterials[lt] = createAtlasGlassMaterial(emissiveTex, normalTex);
             } else {
                 atlasMaterials[lt] = createAtlasOpaqueMaterial(lt, normalTex, heightTex,
                         roughnessTex, metallicTex, emissiveTex, null, null);
@@ -725,38 +723,31 @@ public class BlockTextureManager {
 
     private MaterialInfo buildAtlasTransMaterialInfo(
             RemixTexture emissiveTex, RemixTexture normalTex, float emissionIntensity) {
-        MaterialInfo.Builder mb = MaterialInfo.builder()
-                .albedoTexture(atlasAlbedo.getHandle()).filterMode(0);
-        if (normalTex != null)   mb.normalTexture(normalTex.getHandle());
-        if (emissiveTex != null) {
-            mb.emissiveTexture(emissiveTex.getHandle())
-                    .emissiveIntensity(emissionIntensity);
-        }
-        return mb.translucentExt(MaterialInfoTranslucentEXT.builder()
-                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.97f, 0.97f, 0.97f)
-                .transmittanceTexture(atlasAlbedo.getHandle()).transmittanceMeasurementDistance(0.35f)
-                .useDiffuseLayer(false).build()).build();
+        return translucentMaterialInfo(atlasAlbedo.getHandle(),
+                normalTex != null ? normalTex.getHandle() : 0,
+                emissiveTex != null ? emissiveTex.getHandle() : 0,
+                emissionIntensity);
     }
 
     /**
-     * Clear glass. Vanilla's glass texture is alpha 0 between its frame pixels, with
-     * mid-grey RGB there, so the stained-glass material (transmittance from the
-     * albedo) would make it grey. Here the glass itself is a constant near-clear
-     * transmission and the albedo rides on top as a diffuse layer blended by its
-     * alpha, which draws the frame and streaks opaque and leaves the rest to refract.
+     * Minecraft's translucent texture is a surface RGBA layer. Its alpha blends
+     * the authored colour over clear transmission, including opaque frame pixels.
+     * Remix's translucent texture slot supplies that diffuse layer as well.
      */
-    private RemixMaterial createAtlasGlassMaterial(RemixTexture emissiveTex, RemixTexture normalTex) {
-        MaterialInfo.Builder mb = MaterialInfo.builder()
-                .albedoTexture(atlasAlbedo.getHandle()).filterMode(0);
-        if (normalTex != null) mb.normalTexture(normalTex.getHandle());
-        if (emissiveTex != null) {
-            mb.emissiveTexture(emissiveTex.getHandle())
-                    .emissiveIntensity(terrainEmissionIntensity());
+    static MaterialInfo translucentMaterialInfo(
+            long albedoTexture, long normalTexture, long emissiveTexture, float emissionIntensity) {
+        MaterialInfo.Builder material = MaterialInfo.builder()
+                .albedoTexture(albedoTexture).filterMode(0);
+        if (normalTexture != 0) {
+            material.normalTexture(normalTexture);
         }
-        return createMaterialViaStore(mb.translucentExt(MaterialInfoTranslucentEXT.builder()
+        if (emissiveTexture != 0) {
+            material.emissiveTexture(emissiveTexture).emissiveIntensity(emissionIntensity);
+        }
+        return material.translucentExt(MaterialInfoTranslucentEXT.builder()
                 .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.97f, 0.97f, 0.97f)
-                .transmittanceMeasurementDistance(0.35f)
-                .useDiffuseLayer(true).build()).build());
+                .transmittanceTexture(albedoTexture).transmittanceMeasurementDistance(0.35f)
+                .useDiffuseLayer(true).build()).build();
     }
 
     // ====================================================================
@@ -1153,8 +1144,7 @@ public class BlockTextureManager {
         RemixAPI api = renderer.getRemixApi();
         if (api == null) return null;
 
-        if (lt == L_TRANS) return createTransMaterial(api, se);
-        if (lt == L_GLASS) return createGlassMaterial(se);
+        if (lt == L_TRANS || lt == L_GLASS) return createTransMaterial(se);
 
         MaterialInfoOpaqueEXT.Builder ob = MaterialInfoOpaqueEXT.builder()
                 .albedoConstant(1f, 1f, 1f).useDrawCallAlphaState(true);
@@ -1179,27 +1169,11 @@ public class BlockTextureManager {
         return createMaterialViaStore(mb.opaqueExt(ob.build()).build());
     }
 
-    private RemixMaterial createTransMaterial(RemixAPI api, SpriteEntry se) {
-        MaterialInfo.Builder mb = MaterialInfo.builder()
-                .albedoTexture(se.albedo.getHandle()).filterMode(0);
-        if (se.normal != null)   mb.normalTexture(se.normal.getHandle());
-        if (se.emissive != null) mb.emissiveTexture(se.emissive.getHandle()).emissiveIntensity(100.0f);
-        return createMaterialViaStore(mb.translucentExt(MaterialInfoTranslucentEXT.builder()
-                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.97f, 0.97f, 0.97f)
-                .transmittanceTexture(se.albedo.getHandle()).transmittanceMeasurementDistance(0.012f)
-                .useDiffuseLayer(false).build()).build());
-    }
-
-    /** Per-sprite form of {@link #createAtlasGlassMaterial}: clear transmission with the sprite as a diffuse layer. */
-    private RemixMaterial createGlassMaterial(SpriteEntry se) {
-        MaterialInfo.Builder mb = MaterialInfo.builder()
-                .albedoTexture(se.albedo.getHandle()).filterMode(0);
-        if (se.normal != null) mb.normalTexture(se.normal.getHandle());
-        if (se.emissive != null) mb.emissiveTexture(se.emissive.getHandle()).emissiveIntensity(100.0f);
-        return createMaterialViaStore(mb.translucentExt(MaterialInfoTranslucentEXT.builder()
-                .refractiveIndex(COMMON_GLASS_IOR).transmittanceColor(0.97f, 0.97f, 0.97f)
-                .transmittanceMeasurementDistance(0.35f)
-                .useDiffuseLayer(true).build()).build());
+    private RemixMaterial createTransMaterial(SpriteEntry se) {
+        return createMaterialViaStore(translucentMaterialInfo(se.albedo.getHandle(),
+                se.normal != null ? se.normal.getHandle() : 0,
+                se.emissive != null ? se.emissive.getHandle() : 0,
+                100.0f));
     }
 
     private MaterialInfoOpaqueSubsurfaceEXT buildSSS(SpriteEntry se, boolean solid) {
