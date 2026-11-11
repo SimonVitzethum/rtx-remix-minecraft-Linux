@@ -908,6 +908,14 @@ namespace dxvk {
       assert(blasEntry->buildRanges.size() == 1); // dynamic BLAS should always have this
 
       const auto previousBlas = blasEntry->dynamicBlas;
+      if (previousBlas.ptr() && previousBlas->clusters.ptr()) {
+        // Material changes can leave cached geometry descriptors with the previous opacity flags.
+        VkGeometryFlagsKHR flags = uniqueBlasEntry.instances.front()->getGeometryFlags();
+        for (const auto instance : uniqueBlasEntry.instances) {
+          flags &= instance->getGeometryFlags();
+        }
+        blasEntry->buildGeometries[0].flags = flags;
+      }
       if (m_clusterBlas.build(ctx, execBarriers, *blasEntry, uniqueBlasEntry.instances)) {
         if (previousBlas.ptr() && previousBlas.ptr() != blasEntry->dynamicBlas.ptr()) {
           m_blasPool.push_back(previousBlas);
