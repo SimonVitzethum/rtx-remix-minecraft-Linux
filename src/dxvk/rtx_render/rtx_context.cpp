@@ -1335,7 +1335,13 @@ namespace dxvk {
     }
     constants.pomMaxIterations = RtxOptions::Displacement::maxIterations();
 
-    constants.totalMipBias = getSceneManager().getTotalMipBias(); 
+    constants.totalMipBias = getSceneManager().getTotalMipBias();
+    constants.atlasMaxAnisotropy = RtxOptions::useAnisotropicFiltering()
+      ? std::min(m_device->properties().core.properties.limits.maxSamplerAnisotropy, RtxOptions::maxAnisotropySamples())
+      : 1.0f;
+    constants.atlasFilteringPadding0 = 0;
+    constants.atlasFilteringPadding1 = 0;
+    constants.atlasFilteringPadding2 = 0;
     constants.hairCardMipBias = RtxOptions::hairCardMipBias();
     constants.hairCardRoughnessScale = RtxOptions::hairCardRoughnessScale();
 

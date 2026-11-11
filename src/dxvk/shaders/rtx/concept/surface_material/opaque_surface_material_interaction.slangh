@@ -21,6 +21,8 @@
 */
 #pragma once
 
+#include "rtx/utility/atlas_tile.slangh"
+
 #include "opaque_surface_material_blending.slangh"
 
 // Opaque Surface Material Interaction Constants
@@ -242,8 +244,9 @@ float pomSampleHeight(uint16_t idx, uint16_t samplerIndex, float2 texcoord)
 
 float2 pomGetStep(float3 direction, float layerSize, float totalHeight)
 {
-  // convert tangent space direction to texcoord
-  return direction.xy / direction.z * totalHeight * layerSize;
+  // Keep grazing rays finite before periodic atlas coordinates are evaluated.
+  const float z = direction.z < 0.0f ? min(direction.z, -1.0e-5f) : max(direction.z, 1.0e-5f);
+  return direction.xy / z * totalHeight * layerSize;
 }
 
 float pomGetNumSamples(float3 direction)
@@ -255,12 +258,73 @@ float pomGetNumSamples(float3 direction)
   return lerp(maxSamples, minSamples, abs(direction.z));
 }
 
+float pomSampleHeightTile(uint16_t idx, uint16_t samplerIndex, AtlasTile tile, float2 local)
+{
+  return 1.0f - textures[nonuniformEXT(uint(idx))].SampleLevel(
+    samplers[nonuniformEXT(uint(samplerIndex))], tile.sampleUv(local), 0).r;
+}
+
+float3 pomCalculateTexcoordTile(
+  OpaqueSurfaceMaterial opaqueSurfaceMaterial,
+  SurfaceInteraction surfaceInteraction,
+  float3 viewDir,
+  inout uint iterations)
+{
+  uint atlasWidth;
+  uint atlasHeight;
+  uint atlasLevels;
+  textures[nonuniformEXT(uint(opaqueSurfaceMaterial.heightTextureIndex))].GetDimensions(0, atlasWidth, atlasHeight, atlasLevels);
+  const AtlasTile tile = atlasTileCreate(surfaceInteraction.texcoordBoundsPacked, float2(atlasWidth, atlasHeight));
+  iterations = 0;
+  if (!tile.isValid())
+  {
+    return float3(surfaceInteraction.textureCoordinates, 1.0f);
+  }
+
+  // genTangSpace normalizes the atlas derivatives by their longer edge. Restore the tile's aspect ratio.
+  const float2 tileSizeUv = tile.sizeUv();
+  const float tileBasisScale = max(length(surfaceInteraction.rawTangent) * tileSizeUv.x,
+    length(surfaceInteraction.rawBitangent) * tileSizeUv.y);
+  const float3 localView = normalize(float3(viewDir.xy * tileBasisScale / tileSizeUv, viewDir.z));
+
+  const float totalHeight = opaqueSurfaceMaterial.displaceIn + opaqueSurfaceMaterial.displaceOut;
+  const float neutralHeight = opaqueSurfaceMaterial.displaceIn / totalHeight;
+  const float numLayers = pomGetNumSamples(localView);
+  const float layerSize = rcp(numLayers);
+  const float2 step = pomGetStep(localView, layerSize, totalHeight);
+
+  float2 currLocal = tile.toLocal(surfaceInteraction.textureCoordinates);
+  currLocal = currLocal + (step * numLayers * (1.f - neutralHeight));
+  float currHeight = pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tile, currLocal);
+
+  float currDepth = 0.0f, prevHeight = 0.0f;
+  while (currDepth < currHeight && iterations < uint(numLayers) + 2u)
+  {
+    iterations++;
+    currLocal -= step;
+    prevHeight = currHeight;
+    currHeight = pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tile, currLocal);
+    currDepth += layerSize;
+  }
+
+  const float depthNminus1 = prevHeight - currDepth + layerSize;
+  const float depthN = currHeight - currDepth;
+  const float weight = iterations > 0u ? saturate(depthN / (depthN - depthNminus1)) : 0.0f;
+  currLocal += step * weight;
+  return float3(tile.sampleUv(currLocal), currHeight);
+}
+
 float3 pomCalculateTexcoord(
   OpaqueSurfaceMaterial opaqueSurfaceMaterial,
   SurfaceInteraction surfaceInteraction,
   float3 viewDir,
   inout uint iterations)
 {
+  if (any(surfaceInteraction.texcoordBoundsPacked != 0u))
+  {
+    return pomCalculateTexcoordTile(opaqueSurfaceMaterial, surfaceInteraction, viewDir, iterations);
+  }
+
   float totalHeight = opaqueSurfaceMaterial.displaceIn + opaqueSurfaceMaterial.displaceOut;
   float neutralHeight = opaqueSurfaceMaterial.displaceIn / totalHeight;
   // TODO if the ray origin is below the displaceOut height, bad results happen.
@@ -309,16 +373,25 @@ float3 pomCalculateTexcoord(
 
 float pomSampleVisibility(
   OpaqueSurfaceMaterial opaqueSurfaceMaterial,
-  float2 texcoord,
+  uint4 displacementData,
   float3 rayDirection)
 {
+  const float2 texcoord = asfloat(displacementData.xy);
+  uint width;
+  uint height;
+  uint levels;
+  textures[nonuniformEXT(uint(opaqueSurfaceMaterial.heightTextureIndex))].GetDimensions(0, width, height, levels);
+  const AtlasTile tile = atlasTileCreate(displacementData.zw, float2(width, height));
+  const bool tiled = tile.isValid();
   // Don't actually care about neutral height here - this function just checks if a ray from a texcoord successfully exits
   // the geometry described by the heightmap.  Doesn't (currently) matter how high that geometry is relative to the original surface.
   float totalHeight = opaqueSurfaceMaterial.displaceIn + opaqueSurfaceMaterial.displaceOut;
   // NOTE: pomTraceRay could be used here, but testing found it was more expensive and had worse artifacts when
   // doing visibility testing.
-  float2 currTexcoord = texcoord;
-  float currHeight = pomSampleHeight(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, currTexcoord);
+  float2 currTexcoord = tiled ? tile.toLocal(texcoord) : texcoord;
+  float currHeight = tiled
+    ? pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tile, currTexcoord)
+    : pomSampleHeight(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, currTexcoord);
   float currDepth = currHeight;
   float numLayers = pomGetNumSamples(rayDirection);
   float layerSize = rcp(numLayers);
@@ -328,7 +401,9 @@ float pomSampleVisibility(
   while (currDepth > 0.0f)
   {
     currTexcoord += step;
-    currHeight = pomSampleHeight(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, currTexcoord);
+    currHeight = tiled
+      ? pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tile, currTexcoord)
+      : pomSampleHeight(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, currTexcoord);
     currDepth -= layerSize;
 
     if (currHeight < currDepth)
@@ -344,7 +419,7 @@ float opaqueSurfaceMaterialInteractionCalcHeightThroughput(
   MinimalSurfaceInteraction minimalSurfaceInteraction,
   vec3 rayDirection,
   OpaqueSurfaceMaterial opaqueSurfaceMaterial,
-  float2 texcoord)
+  uint4 displacementData)
 {
   // rebuild tangent space
   const f16mat3 worldToTangent = f16mat3(
@@ -352,7 +427,7 @@ float opaqueSurfaceMaterialInteractionCalcHeightThroughput(
     minimalSurfaceInteraction.geometryBitangent,
     minimalSurfaceInteraction.geometryNormal);
   const vec3 lightDirTangentSpace = normalize(mul(worldToTangent, rayDirection));
-  return pomSampleVisibility(opaqueSurfaceMaterial, texcoord, lightDirTangentSpace);
+  return pomSampleVisibility(opaqueSurfaceMaterial, displacementData, lightDirTangentSpace);
 }
 #endif
 
@@ -590,6 +665,7 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreateImpl<let 
 
     opaqueSurfaceMaterialInteraction.flags |= OPAQUE_SURFACE_MATERIAL_INTERACTION_FLAG_HAS_HEIGHT_TEXTURE;
   }
+
 #endif
 
   // Sample from each Opaque Surface Material texture

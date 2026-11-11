@@ -249,6 +249,7 @@ struct RtSurface {
     flags1 |= isMotionBlurMaskOut ?           (1 << 28) : 0;
     flags1 |= skipSurfaceInteractionSpritesheetAdjustment ? (1 << 29) : 0;
     flags1 |= isPreservePath ?                (1u << 30) : 0;
+    flags1 |= hasTexcoordBounds ?             (1u << 31) : 0;
 
     writeGPUHelper(data, offset, flags1);
 
@@ -411,6 +412,7 @@ struct RtSurface {
   bool isStatic = false;
   // True when SceneManager took the preserve replacement-instance path (usePreservePath); unrelated to motion isStatic.
   bool isPreservePath = false;
+  bool hasTexcoordBounds = false;
   bool hasMaterialChanged = false;
   bool isAnimatedWater = false;
   bool isClipPlaneEnabled = false;

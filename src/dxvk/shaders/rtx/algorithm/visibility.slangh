@@ -486,7 +486,7 @@ VisibilityResult traceVisibilityRay<let VisibilityMode : uint>(
   // ViewModel instances shouldn't occlude anything but ViewModel surfaces and primary rays
   bool hasRayOriginatedFromViewModel = false,
   bool usePreviousTLAS = false,
-  uint primarySurfaceIndex = SURFACE_INDEX_INVALID, float2 texCoords = vec2(0.0f),
+  uint primarySurfaceIndex = SURFACE_INDEX_INVALID, uint4 displacementData = uint4(0u),
   bool isThinOpaqueSubsurface = false,
   vec3 shadingNormal = vec3(0.0f), bool clearOpaqueHitAttenuation = true)
 {
@@ -538,7 +538,7 @@ VisibilityResult traceVisibilityRay<let VisibilityMode : uint>(
         OpaqueSurfaceMaterial opaqueSurfaceMaterial = opaqueSurfaceMaterialCreate(memoryPolymorphicSurfaceMaterial, true);
         
         pomAttenuation = opaqueSurfaceMaterialInteractionCalcHeightThroughput(
-          minimalSurfaceInteraction, visibilityRay.direction, opaqueSurfaceMaterial, texCoords
+          minimalSurfaceInteraction, visibilityRay.direction, opaqueSurfaceMaterial, displacementData
         );
     
         if (pomAttenuation <= 0.001f)

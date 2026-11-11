@@ -22,10 +22,42 @@
 #pragma once
 
 #include "rtx/concept/surface/surface.slangh"
+#include "rtx/utility/atlas_tile.slangh"
 
 vec4 textureRead(uint16_t textureIndex, uint16_t samplerIndex, SurfaceInteraction surfaceInteraction, float lodBias = 0.0)
 {
   const float gradBias = exp2(lodBias);
+  if (any(surfaceInteraction.texcoordBoundsPacked != 0u))
+  {
+    uint width;
+    uint height;
+    uint levels;
+    textures[nonuniformEXT(uint(textureIndex))].GetDimensions(0, width, height, levels);
+    const AtlasTile tile = atlasTileCreate(surfaceInteraction.texcoordBoundsPacked, vec2(width, height));
+    if (tile.isValid())
+    {
+      const float atlasGradBias = exp2(lodBias + cb.totalMipBias);
+      const vec2 gradientX = surfaceInteraction.textureGradientX * atlasGradBias;
+      const vec2 gradientY = surfaceInteraction.textureGradientY * atlasGradBias;
+      const float lengthX = length(gradientX * tile.atlasSize);
+      const float lengthY = length(gradientY * tile.atlasSize);
+      const vec2 majorAxis = lengthX >= lengthY ? gradientX : gradientY;
+      const float majorLength = max(lengthX, lengthY);
+      const float minorLength = max(1.0f, min(lengthX, lengthY));
+      const uint taps = uint(clamp(ceil(majorLength / minorLength), 1.0f, max(1.0f, cb.atlasMaxAnisotropy)));
+      const float lod = clamp(log2(max(minorLength, majorLength / float(taps))),
+        0.0f, min(tile.maxMipLevel(), float(levels - 1)));
+      vec4 result = 0.0f;
+      for (uint i = 0; i < taps; ++i)
+      {
+        const float offset = (float(i) + 0.5f) / float(taps) - 0.5f;
+        const vec2 local = tile.toLocal(surfaceInteraction.textureCoordinates + majorAxis * offset);
+        result += textures[nonuniformEXT(uint(textureIndex))].SampleLevel(
+          samplers[nonuniformEXT(uint(samplerIndex))], tile.sampleUv(local, lod), lod);
+      }
+      return result / float(taps);
+    }
+  }
 
   // Note: The nonuniform decoration on the texture index here and returned Sampler2D does not propagate through function calls due to a rather
   // annoying exception in the specification (See: https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_nonuniform_qualifier.txt).

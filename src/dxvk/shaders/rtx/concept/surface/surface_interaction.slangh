@@ -658,6 +658,16 @@ SurfaceInteraction surfaceInteractionCreateImpl<let GenerateTangents : bool, let
 
     surfaceInteraction.textureCoordinates = sanitizedInterpolatedTextureCoordinates;
 
+    // API bounds are normalized to UNORM16 before upload and are shared by all triangle vertices.
+    if (surface.hasTexcoordBounds && surface.texcoordBufferIndex != BINDING_INDEX_INVALID &&
+        surface.texcoordGenerationMode == uint(TexGenMode::None))
+    {
+      const uint boundsElementIndex = (idx[0] * uint(surface.texcoordStride) + surface.texcoordOffset) / 4 + 3;
+      surfaceInteraction.texcoordBoundsPacked = uint2(
+        asuint(BUFFER_ARRAY(geometries, surface.texcoordBufferIndex, boundsElementIndex + 0)),
+        asuint(BUFFER_ARRAY(geometries, surface.texcoordBufferIndex, boundsElementIndex + 1)));
+    }
+
     if (GenerateTangents)
     {
       // Note: World positions used here, the original PBRT usage uses model space vertex positions since it calculates the

@@ -36,8 +36,8 @@ Texture2D<uint> SharedMaterialData0;
 layout(r32ui, binding = INTEGRATE_NEE_BINDING_SHARED_MATERIAL_DATA1_INPUT)
 Texture2D<uint> SharedMaterialData1;
 
-layout(rg32f, binding = INTEGRATE_NEE_BINDING_SHARED_TEXTURE_COORD_INPUT)
-Texture2D<float2> SharedTextureCoord;
+layout(rgba32ui, binding = INTEGRATE_NEE_BINDING_SHARED_TEXTURE_COORD_INPUT)
+Texture2D<uint4> SharedTextureCoord;
 
 layout(r32ui, binding = INTEGRATE_NEE_BINDING_SHARED_SURFACE_INDEX_INPUT)
 Texture2D<uint> SharedSurfaceIndex;

@@ -60,6 +60,7 @@
 #include "../dxvk_image.h"
 
 #include "../../util/util_math.h"
+#include "../shaders/rtx/utility/f16_conversion.h"
 #include "../../util/util_remix_api_version.h"
 #include "../../util/util_vector.h"
 #include "../../util/util_string.h"
@@ -987,7 +988,21 @@ namespace {
     dxvk::Rc<dxvk::DxvkBuffer> skinningBuffer = nullptr;
 
     auto vertexSlice = dxvk::DxvkBufferSlice { vertexBuffer };
+    static_assert(sizeof(remixapi_HardcodedVertex) == 64);
+    static_assert(offsetof(remixapi_HardcodedVertex, texcoordBounds) == 36);
     memcpy(vertexSlice.mapPtr(0), src.vertices_values, vertexDataSize);
+
+    const bool unormBounds = src.flags & REMIXAPI_MESH_INFO_SURFACE_TRIANGLES_BIT_TEXCOORD_BOUNDS_UNORM16;
+    const bool halfBounds = src.flags & REMIXAPI_MESH_INFO_SURFACE_TRIANGLES_BIT_TEXCOORD_BOUNDS;
+    if (halfBounds && !unormBounds) {
+      auto pVertices = static_cast<remixapi_HardcodedVertex*>(vertexSlice.mapPtr(0));
+      for (size_t i = 0; i < src.vertices_count; ++i) {
+        for (auto& bound : pVertices[i].texcoordBounds) {
+          const float value = f16tof32(bound);
+          bound = std::isfinite(value) ? uint16_t(std::round(std::clamp(value, 0.0f, 1.0f) * 65535.0f)) : 0;
+        }
+      }
+    }
 
     auto indexSlice = dxvk::DxvkBufferSlice {};
     if (indexDataSize > 0) {
@@ -1026,6 +1041,7 @@ namespace {
 
     auto dst = dxvk::RasterGeometry {};
     dst.externalMaterial = src.material;
+    dst.hasTexcoordBounds = unormBounds || halfBounds;
     dst.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     dst.cullMode = VK_CULL_MODE_NONE; // this will be overwritten by the instance info at draw time
     dst.frontFace = VK_FRONT_FACE_CLOCKWISE;

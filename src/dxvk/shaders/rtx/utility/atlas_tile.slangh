@@ -1,0 +1,70 @@
+/*
+ * Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-License-Identifier: MIT
+ */
+#pragma once
+
+struct AtlasTile
+{
+  vec2 minTexel;
+  vec2 maxTexel;
+  vec2 atlasSize;
+
+  bool isValid()
+  {
+    return all(maxTexel > minTexel) && all(minTexel >= 0.0f) && all(maxTexel <= atlasSize);
+  }
+
+  vec2 sizeUv()
+  {
+    return (maxTexel - minTexel) / atlasSize;
+  }
+
+  vec2 toLocal(vec2 uv)
+  {
+    return (uv * atlasSize - minTexel) / (maxTexel - minTexel);
+  }
+
+  vec2 sampleUv(vec2 local, float mipLevel = 0.0f)
+  {
+    // Preserve the two endpoints of a face, while repeating coordinates beyond it.
+    vec2 wrapped = local;
+    if (local.x < 0.0f || local.x > 1.0f)
+    {
+      wrapped.x = frac(local.x);
+    }
+    if (local.y < 0.0f || local.y > 1.0f)
+    {
+      wrapped.y = frac(local.y);
+    }
+    const float scale = exp2(ceil(mipLevel));
+    const vec2 firstCenter = (ceil(minTexel / scale) + 0.5f) * scale;
+    const vec2 lastCenter = (floor(maxTexel / scale) - 0.5f) * scale;
+    return clamp(minTexel + wrapped * (maxTexel - minTexel), firstCenter, lastCenter) / atlasSize;
+  }
+
+  float maxMipLevel()
+  {
+    // Coarse levels are safe when at least one whole mip cell fits inside each tile dimension.
+    const float atlasAlignment = float(firstbitlow(uint(atlasSize.x) | uint(atlasSize.y)));
+    float level = min(atlasAlignment, floor(log2(min(maxTexel.x - minTexel.x, maxTexel.y - minTexel.y))));
+    float scale = exp2(level);
+    while (any(floor(maxTexel / scale) <= ceil(minTexel / scale)))
+    {
+      level -= 1.0f;
+      scale *= 0.5f;
+    }
+    return level;
+  }
+};
+
+AtlasTile atlasTileCreate(uint2 packedBounds, vec2 atlasSize)
+{
+  const vec2 minUv = vec2(packedBounds.x & 0xffffu, packedBounds.x >> 16u) / 65535.0f;
+  const vec2 maxUv = vec2(packedBounds.y & 0xffffu, packedBounds.y >> 16u) / 65535.0f;
+  AtlasTile tile;
+  tile.minTexel = round(minUv * atlasSize);
+  tile.maxTexel = round(maxUv * atlasSize);
+  tile.atlasSize = atlasSize;
+  return tile;
+}

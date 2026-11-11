@@ -1540,7 +1540,7 @@ namespace dxvk {
     m_raytracingOutput.m_neeCacheThreadTask = createImageResource(ctx, "radiance cache thread task", compactedExtent, VK_FORMAT_R32G32_UINT);
 
     // Displacement
-    m_raytracingOutput.m_sharedTextureCoord = createImageResource(ctx, "displacement texture coordinate", compactedExtent, VK_FORMAT_R32G32_SFLOAT);
+    m_raytracingOutput.m_sharedTextureCoord = createImageResource(ctx, "displacement texture coordinate and atlas bounds", compactedExtent, VK_FORMAT_R32G32B32A32_UINT);
 
     // Post Effect motion blur prefilter intermediate textures
     m_raytracingOutput.m_primarySurfaceFlagsIntermediateTexture1 = AliasedResource(m_raytracingOutput.m_secondaryPerceptualRoughness, ctx, m_downscaledExtent, VK_FORMAT_R8_UINT, "Primary Surface Flags Intermediate Texture 1");

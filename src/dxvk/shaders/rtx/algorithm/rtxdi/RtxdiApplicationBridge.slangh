@@ -951,7 +951,7 @@ bool RAB_TraceLightSampleVisibility(RAB_Surface surface, RAB_LightSample lightSa
     0, 0, 1.0,
     surface.isViewModel,
     cb.enablePreviousTLAS && usePreviousTLAS,
-    BINDING_INDEX_INVALID, vec2(0.0f),
+    BINDING_INDEX_INVALID, uint4(0u),
     isThinOpaqueSubsurface,
     surface.opaqueSurfaceMaterialInteraction.shadingNormal);
 
