@@ -66,7 +66,7 @@ namespace dxvk {
         tri.vertexFormat != VK_FORMAT_R32G32B32_SFLOAT ||
         (tri.indexType != VK_INDEX_TYPE_UINT16 && tri.indexType != VK_INDEX_TYPE_UINT32) ||
         range.firstVertex || range.primitiveOffset || range.transformOffset || !geo.vertexCount ||
-        tri.vertexStride < 12 || tri.vertexStride > UINT32_MAX) {
+        tri.vertexStride < 12 || tri.vertexStride % 4 || tri.vertexStride > UINT32_MAX) {
       ++m_unsupported;
       return false;
     }
@@ -78,7 +78,8 @@ namespace dxvk {
     if (vertexOffset > UINT32_MAX || indexOffset > UINT32_MAX || vertexOffset % 4 || indexOffset % indexStride ||
         vertexOffset + uint64_t(geo.vertexCount - 1) * tri.vertexStride + 12 > positions->info().size ||
         align(indexOffset + uint64_t(plan.triangles) * 3 * indexStride, VkDeviceSize(4)) > indices->info().size ||
-        positions->info().size > UINT32_MAX || indices->info().size > UINT32_MAX ||
+        positions->info().size > std::min(uint64_t(UINT32_MAX), uint64_t(device->properties().core.properties.limits.maxStorageBufferRange)) ||
+        indices->info().size > std::min(uint64_t(UINT32_MAX), uint64_t(device->properties().core.properties.limits.maxStorageBufferRange)) ||
         !(positions->info().usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) ||
         !(indices->info().usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) {
       ++m_unsupported;
