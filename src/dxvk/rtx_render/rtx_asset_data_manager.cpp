@@ -484,13 +484,18 @@ namespace dxvk {
     }
 
     bool copyData(int layer, int level, size_t offset, size_t size, void* destination) override {
-      if (layer < 0 || uint32_t(layer) >= m_info.numLayers || level < 0 || uint32_t(level) >= m_info.mipLevels
-          || !data(layer, level)) {
+      if (layer < 0 || uint32_t(layer) >= m_info.numLayers || level < 0 || uint32_t(level) >= m_info.mipLevels) {
         return false;
       }
-      const auto& source = m_data.at(getBlobIndex(layer, 0, level));
-      return offset <= source.size() && size <= source.size() - offset
-        && AssetData::copyData(layer, level, offset, size, destination);
+      const uint32_t index = getBlobIndex(layer, 0, level);
+      const auto* blob = m_package->getDataBlobDesc(index);
+      if (!blob || offset > blob->size || size > blob->size - offset) {
+        return false;
+      }
+      if (blob->compression) {
+        throw DxvkError("Compressed data blobs are not supported for CPU readback.");
+      }
+      return m_package->readDataBlob(index, destination, size, offset) == size;
     }
 
     void evictCache(int layer, int level) override {

@@ -33,7 +33,9 @@ Previously resident images remain usable during promotion.
 
 The transaction retains the source asset and image description. Hot reload or a
 new demotion cancels obsolete transactions. Source caches are evicted after each
-subresource and on cancellation/failure. Mutable memory textures lock each byte
+subresource and on cancellation/failure. Uncompressed package blobs are read
+directly into each staging range without caching the complete mip. Shared package
+file seeks and reads are serialized. Mutable memory textures lock each byte
 copy. Animated writes made during a base upload retain their dirty rectangles;
 the final batch drains those rectangles in bounded row bands using the immediate
 pool before publishing the image. Existing resident-atlas partial updates retain

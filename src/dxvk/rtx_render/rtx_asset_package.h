@@ -24,7 +24,10 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include <algorithm>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <string>
 
 #include "../../util/rc/util_rc.h"
@@ -89,15 +92,20 @@ namespace dxvk {
 
     static_assert(sizeof(AssetDesc) == 20, "Asset description structure size overrun!");
 
+    // Blob records follow 20-byte asset records and may have an unaligned address.
+#pragma pack(push, 1)
     struct BlobDesc {
       uint64_t offset : 40;
       uint64_t compression : 8;
       uint64_t flags : 8;
+      uint64_t reserved : 8;
 
       uint32_t size;
       uint32_t crc32;
     };
 
+#pragma pack(pop)
+    static_assert(offsetof(BlobDesc, size) == 8, "Blob size field offset changed!");
     static_assert(sizeof(BlobDesc) == 16, "Blob description structure size overrun!");
 
     AssetPackage() = default;
@@ -226,22 +234,24 @@ namespace dxvk {
       return reinterpret_cast<const BlobDesc*>(m_metadata.get() + offs);
     }
 
-    size_t readDataBlob(uint32_t idx, void* out, size_t outSize) {
-      if (auto blobDesc = getDataBlobDesc(idx)) {
-        if (outSize < blobDesc->size)
+    // Reads a bounded range without materializing the complete blob in a CPU cache.
+    size_t readDataBlob(uint32_t idx, void* out, size_t outSize, size_t blobOffset = 0) {
+      auto lock = std::lock_guard{ m_ioMutex };
+      if (const auto* blobDesc = getDataBlobDesc(idx)) {
+        if (!out || blobOffset > blobDesc->size || !openFileHandle()) {
           return 0;
-
-        if (!openFileHandle())
-          return 0;
-
-        if (0 == fseek64(m_handle, blobDesc->offset, SEEK_SET))
-          return fread(out, 1, blobDesc->size, m_handle);
+        }
+        const size_t bytes = std::min(outSize, size_t(blobDesc->size) - blobOffset);
+        // Blob offsets are 40 bits and sizes are 32 bits, so this sum fits the signed file offset.
+        if (bytes && 0 == fseek64(m_handle, uint64_t(blobDesc->offset) + blobOffset, SEEK_SET)) {
+          return fread(out, 1, bytes, m_handle);
+        }
       }
-
       return 0;
     }
 
     size_t getDataSize() {
+      auto lock = std::lock_guard{ m_ioMutex };
       if (!openFileHandle())
         return 0;
 
@@ -272,6 +282,7 @@ namespace dxvk {
 
   private:
     std::string m_filename;
+    std::mutex m_ioMutex;
     FILE* m_handle = nullptr;
 
     uint32_t m_assetCount = 0;
