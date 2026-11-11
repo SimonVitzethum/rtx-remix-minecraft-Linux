@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Freecam: body, motion isolation, actual key routes, damage exit, F3+F4.
 1 fb off
 1 scmd gamemode survival @p
