@@ -26,8 +26,14 @@
 #include <memory>
 
 #include "dxvk_buffer.h"
+#include "../../util/util_env.h"
 
 namespace dxvk {
+
+  inline bool textureStagingDiagnosticsEnabled() {
+    static const bool enabled = env::getEnvVar("RTX_TEXTURE_STAGING_DIAGNOSTICS") == "1";
+    return enabled;
+  }
 
   // Allocates on demand within a fixed budget. Queued slices and GPU commands
   // retain the buffer until their temporary references and fences retire.
@@ -75,9 +81,13 @@ namespace dxvk {
         m_offset = 0;
         const VkDeviceSize capacity = dxvk::align(std::max(std::min(m_budget, VkDeviceSize(1024 * 1024)), size), kBufferAlignment);
         if (!m_buffer.ptr() || m_buffer->info().size != capacity) {
+          if (m_buffer.ptr() && textureStagingDiagnosticsEnabled()) {
+            Logger::info(str::format("[TextureStaging] Pool released ", m_buffer->info().size,
+              " bytes, ceiling ", m_budget, ", resizing idle pool"));
+          }
           m_buffer = nullptr;
           m_buffer = createBuffer(*m_device, capacity);
-          if (capacity >= 4 * 1024 * 1024) {
+          if (capacity >= 4 * 1024 * 1024 || textureStagingDiagnosticsEnabled()) {
             Logger::info(str::format("[TextureStaging] Pool allocated ", capacity, " bytes, ceiling ", m_budget));
           }
         }
@@ -96,8 +106,8 @@ namespace dxvk {
     // Producer only. Queued slices hold a temporary write reference until submission or cancellation.
     void trim() {
       if (m_buffer.ptr() && !m_buffer->isInUse()) {
-        if (m_buffer->info().size >= 4 * 1024 * 1024) {
-          Logger::info(str::format("[TextureStaging] Pool released ", m_buffer->info().size, " bytes"));
+        if (m_buffer->info().size >= 4 * 1024 * 1024 || textureStagingDiagnosticsEnabled()) {
+          Logger::info(str::format("[TextureStaging] Pool released ", m_buffer->info().size, " bytes, ceiling ", m_budget));
         }
         m_buffer = nullptr;
         m_offset = 0;

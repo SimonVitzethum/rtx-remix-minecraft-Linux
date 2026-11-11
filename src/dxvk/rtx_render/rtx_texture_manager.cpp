@@ -1045,6 +1045,11 @@ namespace dxvk {
           const bool demoted = wanted.first > upload.mipBegin;
           if (demoted || tex->m_state != ManagedTexture::State::kQueuedForUpload
               || tex->m_assetData != upload.asset) {
+            if (textureStagingDiagnosticsEnabled()) {
+              Logger::info(str::format("[TextureStaging] Cancelled ", upload.asset->info().extent.width, "x",
+                upload.asset->info().extent.height, ": asset changed ", tex->m_assetData != upload.asset,
+                ", demoted ", demoted, ", state ", uint32_t(tex->m_state), ", frame ", m_device->getCurrentFrameId()));
+            }
             upload.cancelled = true;
             if (tex->m_state == ManagedTexture::State::kQueuedForUpload && (demoted || tex->m_assetData != upload.asset)) {
               tex->m_state = ManagedTexture::State::kInitialized;
@@ -1089,6 +1094,11 @@ namespace dxvk {
             }
             upload.image = allocDeviceImage(m_device, upload.asset, upload.imageInfo, upload.mipBegin, upload.mipEnd);
             m_asyncThread->admitUpload(upload);
+            if (textureStagingDiagnosticsEnabled()) {
+              Logger::info(str::format("[TextureStaging] Admitted ", upload.asset->info().extent.width, "x",
+                upload.asset->info().extent.height, ", image bytes ", upload.deviceBytes,
+                ", frame ", m_device->getCurrentFrameId()));
+            }
           }
           if (ready.bytes > remainingBytes) {
             deferred.push_back(std::move(ready));
@@ -1104,6 +1114,11 @@ namespace dxvk {
               execBarriers.recordCommands(ctx->getCommandList());
               const auto dirty = m_asyncThread->reconcileDirty(ctx, *memory, upload.image->image(), remainingBytes);
               remainingBytes -= dirty.bytes;
+              if (dirty.bytes && textureStagingDiagnosticsEnabled()) {
+                Logger::info(str::format("[TextureStaging] Reconciled ", dirty.bytes, " dirty bytes for ",
+                  upload.asset->info().extent.width, "x", upload.asset->info().extent.height,
+                  ", complete ", dirty.complete, ", frame ", m_device->getCurrentFrameId()));
+              }
               if (dirty.compatible && !dirty.complete) {
                 ready.mips.clear();
                 ready.lease.reset();

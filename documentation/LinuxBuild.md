@@ -98,6 +98,11 @@ their working directories. `REMIX_PIPELINE_CACHE_FILE` overrides the location.
 
 - `REMIX_DUMP_INTEROP=1` logs pixel statistics of every 30th rendered frame.
 - `REMIX_DUMP_PRESENT=1` logs pixel statistics of every 20th presented frame.
+- `RTX_TEXTURE_STAGING_DIAGNOSTICS=1` logs staging pool allocation, idle resize
+  and release, image admission, obsolete-request cancellation and dirty-memory
+  reconciliation. Set it before process startup. Pool events identify the pool
+  by its byte budget. Releases occur after queued leases and GPU-use references
+  have retired. Upload recording times are CPU measurements, not GPU timings.
 
 Both log to stderr/stdout and write no files.
 
