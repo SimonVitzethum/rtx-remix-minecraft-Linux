@@ -36,14 +36,15 @@ vec4 textureRead(uint16_t textureIndex, uint16_t samplerIndex, SurfaceInteractio
     const AtlasTile tile = atlasTileCreate(surfaceInteraction.texcoordBoundsPacked, vec2(width, height));
     if (tile.isValid())
     {
-      const vec2 gradientX = surfaceInteraction.textureGradientX * gradBias;
-      const vec2 gradientY = surfaceInteraction.textureGradientY * gradBias;
+      const float atlasGradBias = exp2(lodBias + cb.totalMipBias);
+      const vec2 gradientX = surfaceInteraction.textureGradientX * atlasGradBias;
+      const vec2 gradientY = surfaceInteraction.textureGradientY * atlasGradBias;
       const float lengthX = length(gradientX * tile.atlasSize);
       const float lengthY = length(gradientY * tile.atlasSize);
       const vec2 majorAxis = lengthX >= lengthY ? gradientX : gradientY;
       const float majorLength = max(lengthX, lengthY);
       const float minorLength = max(1.0f, min(lengthX, lengthY));
-      const uint taps = uint(clamp(ceil(majorLength / minorLength), 1.0f, 16.0f));
+      const uint taps = uint(clamp(ceil(majorLength / minorLength), 1.0f, max(1.0f, cb.atlasMaxAnisotropy)));
       const float lod = clamp(log2(max(minorLength, majorLength / float(taps))),
         0.0f, min(tile.maxMipLevel(), float(levels - 1)));
       vec4 result = 0.0f;

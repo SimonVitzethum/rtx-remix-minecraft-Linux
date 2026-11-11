@@ -456,6 +456,11 @@ struct RaytraceArgs {
 
   uint enableRtxdiBestLightJitter;
 
+  float atlasMaxAnisotropy;
+  uint atlasFilteringPadding0;
+  uint atlasFilteringPadding1;
+  uint atlasFilteringPadding2;
+
   // NOTE: Add structs to the top section of RaytraceArgs, not the bottom.
   // NOTE: bool does not work in debug builds, use uint instead.
 };

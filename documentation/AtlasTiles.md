@@ -14,7 +14,8 @@ texture dimensions. This recovers exact texel boundaries for atlas dimensions
 up to 32768, including rectangular atlases.
 
 Material reads use the same tile for albedo, opacity, normals, emission, and
-other PBR channels. Sampling repeats outside a tile while preserving the two
+other PBR channels. Explicit tile filtering honors the runtime/upscaler mip bias
+and the configured anisotropy limit, including disabled anisotropy. Sampling repeats outside a tile while preserving the two
 endpoints of an ordinary face. Every anisotropic tap is constrained to a valid
 bilinear footprint. Only complete mip cells inside the content rectangle are
 used: a mip containing two sprites cannot be repaired by clamping UVs. Levels
