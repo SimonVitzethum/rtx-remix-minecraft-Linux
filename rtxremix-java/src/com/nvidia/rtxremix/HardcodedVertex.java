@@ -20,9 +20,9 @@ public class HardcodedVertex {
     public float[] normal = new float[3];
     public float[] texcoord = new float[2];
     public int color;
-    /** Packed half2: min.u, min.v. Leave both bounds zero to disable atlas wrapping bounds. */
+    /** Packed UNORM16 pair: min.u, min.v. Leave both bounds zero to disable atlas wrapping bounds. */
     public int texcoordBoundsMin;
-    /** Packed half2: max.u, max.v. Leave both bounds zero to disable atlas wrapping bounds. */
+    /** Packed UNORM16 pair: max.u, max.v. Leave both bounds zero to disable atlas wrapping bounds. */
     public int texcoordBoundsMax;
     public int _pad0;
     public int _pad1;
@@ -32,17 +32,46 @@ public class HardcodedVertex {
 
     /** Packs two floats into a single int as two IEEE 754 binary16 values. */
     public static int packHalf2x16(float x, float y) {
-        return (floatToHalf(x) & 0xFFFF) | ((floatToHalf(y) & 0xFFFF) << 16);
+        return floatToHalf(x) | (floatToHalf(y) << 16);
     }
 
-    private static int floatToHalf(float f) {
-        int bits = Float.floatToRawIntBits(f);
+    /**
+     * Packs two floats in [0,1] into a single int as two UNORM16 values (x in the low half). Used for atlas tile bounds:
+     * binary16 has only 11 bits of mantissa, which is 6 texels of a 12288 texel wide atlas near uv 1.
+     */
+    public static int packUnorm2x16(float x, float y) {
+        return unorm16(x) | (unorm16(y) << 16);
+    }
+
+    private static int unorm16(float f) {
+        return Math.max(0, Math.min(65535, Math.round(f * 65535.0f)));
+    }
+
+    private static int floatToHalf(float value) {
+        int bits = Float.floatToRawIntBits(value);
         int sign = (bits >>> 16) & 0x8000;
-        int expo = ((bits >>> 23) & 0xFF) - 112;
-        int mant = bits & 0x7FFFFF;
-        if (expo <= 0) return sign;
-        if (expo >= 31) return sign | 0x7C00;
-        return sign | (expo << 10) | (mant >>> 13);
+        int exponent = (bits >>> 23) & 0xff;
+        int mantissa = bits & 0x7fffff;
+        if (exponent == 255) {
+            return sign | 0x7c00 | (mantissa == 0 ? 0 : 0x200);
+        }
+        int halfExponent = exponent - 112;
+        if (halfExponent >= 31) return sign | 0x7c00;
+        if (halfExponent <= 0) {
+            if (halfExponent < -10) return sign;
+            mantissa |= 0x800000;
+            int shift = 14 - halfExponent;
+            int result = mantissa >>> shift;
+            int remainder = mantissa & ((1 << shift) - 1);
+            int midpoint = 1 << (shift - 1);
+            if (remainder > midpoint || (remainder == midpoint && (result & 1) != 0)) result++;
+            return sign | result;
+        }
+        // Round to nearest, with ties going to the even significand.
+        mantissa += 0xfff + ((mantissa >>> 13) & 1);
+        if ((mantissa & 0x800000) != 0) halfExponent++;
+        if (halfExponent >= 31) return sign | 0x7c00;
+        return sign | (halfExponent << 10) | ((mantissa >>> 13) & 0x3ff);
     }
 
     public HardcodedVertex() {}
@@ -78,9 +107,10 @@ public class HardcodedVertex {
         this.color = color;
     }
 
+    /** Sets atlas bounds for surfaces using {@link MeshInfoSurfaceTriangles#TEXCOORD_BOUNDS_UNORM16}. */
     public void setTexcoordBounds(float minU, float minV, float maxU, float maxV) {
-        this.texcoordBoundsMin = packHalf2x16(minU, minV);
-        this.texcoordBoundsMax = packHalf2x16(maxU, maxV);
+        this.texcoordBoundsMin = packUnorm2x16(minU, minV);
+        this.texcoordBoundsMax = packUnorm2x16(maxU, maxV);
     }
 
     public static HardcodedVertex create(float x, float y, float z) {

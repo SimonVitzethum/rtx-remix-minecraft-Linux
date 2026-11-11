@@ -695,8 +695,8 @@ public class RemixCapturingConsumer implements VertexConsumer {
             return;
         }
 
-        int packedMin = HardcodedVertex.packHalf2x16(minU, minV);
-        int packedMax = HardcodedVertex.packHalf2x16(maxU, maxV);
+        int packedMin = HardcodedVertex.packUnorm2x16(minU, minV);
+        int packedMax = HardcodedVertex.packUnorm2x16(maxU, maxV);
         for (int i = start; i <= lastVertexIndex; i++) {
             texcoordBoundsMin[i] = packedMin;
             texcoordBoundsMax[i] = packedMax;
@@ -760,8 +760,8 @@ public class RemixCapturingConsumer implements VertexConsumer {
         int boundsMin = 0;
         int boundsMax = 0;
         if (sprite != null) {
-            boundsMin = HardcodedVertex.packHalf2x16(sprite.getU0(), sprite.getV0());
-            boundsMax = HardcodedVertex.packHalf2x16(sprite.getU1(), sprite.getV1());
+            boundsMin = HardcodedVertex.packUnorm2x16(sprite.getU0(), sprite.getV0());
+            boundsMax = HardcodedVertex.packUnorm2x16(sprite.getU1(), sprite.getV1());
         }
 
         Vector3fc faceNormal = quad.direction().getUnitVec3f();

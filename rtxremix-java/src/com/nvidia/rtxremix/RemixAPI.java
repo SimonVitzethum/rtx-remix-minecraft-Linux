@@ -26,7 +26,7 @@ import java.util.Collection;
 public class RemixAPI {
     public static final int VERSION_MAJOR = 0;
     public static final int VERSION_MINOR = 16;
-    public static final int VERSION_PATCH = 1;
+    public static final int VERSION_PATCH = 2;
 
     /**
      * Fits every value except long hash lists, so most reads through

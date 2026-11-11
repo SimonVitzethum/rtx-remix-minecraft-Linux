@@ -70,7 +70,7 @@
 
 #define REMIXAPI_VERSION_MAJOR 0
 #define REMIXAPI_VERSION_MINOR 16
-#define REMIXAPI_VERSION_PATCH 1
+#define REMIXAPI_VERSION_PATCH 2
 
 
 // External
@@ -443,8 +443,10 @@ extern "C" {
     float    normal[3];
     float    texcoord[2];
     uint32_t color;
-    // Optional texture atlas region for UV wrapping: min.u, min.v, max.u, max.v as IEEE 754 half-floats.
-    // Enabled if remixapi_MeshInfoSurfaceTriangles sets REMIXAPI_MESH_INFO_SURFACE_TRIANGLES_BIT_TEXCOORD_BOUNDS.
+    // Optional atlas region: min.u, min.v, max.u, max.v. TEXCOORD_BOUNDS uses IEEE 754 binary16.
+    // TEXCOORD_BOUNDS_UNORM16 uses unsigned normalized 16-bit values (value / 65535).
+    // Bounds must be identical on every vertex of a triangle. With neither flag they are ignored.
+    // UNORM16 takes precedence if both flags are set.
     uint16_t texcoordBounds[4];
     uint32_t _pad0;
     uint32_t _pad1;
@@ -467,6 +469,7 @@ extern "C" {
 
   typedef enum remixapi_MeshInfoSurfaceTrianglesFlagBit {
     REMIXAPI_MESH_INFO_SURFACE_TRIANGLES_BIT_TEXCOORD_BOUNDS = 1 << 0,
+    REMIXAPI_MESH_INFO_SURFACE_TRIANGLES_BIT_TEXCOORD_BOUNDS_UNORM16 = 1 << 1,
   } remixapi_MeshInfoSurfaceTrianglesFlagBit;
   typedef uint32_t remixapi_MeshInfoSurfaceTrianglesFlags;
 

@@ -196,10 +196,10 @@ public class RemixParticleRenderer {
                 float spriteMinV = sprite.getV0();
                 float spriteMaxU = sprite.getU1();
                 float spriteMaxV = sprite.getV1();
-                boundsMin = HardcodedVertex.packHalf2x16(
+                boundsMin = HardcodedVertex.packUnorm2x16(
                         Math.min(spriteMinU, spriteMaxU),
                         Math.min(spriteMinV, spriteMaxV));
-                boundsMax = HardcodedVertex.packHalf2x16(
+                boundsMax = HardcodedVertex.packUnorm2x16(
                         Math.max(spriteMinU, spriteMaxU),
                         Math.max(spriteMinV, spriteMaxV));
 
@@ -650,7 +650,7 @@ public class RemixParticleRenderer {
             RemixMeshSurface surface = new RemixMeshSurface(material)
                     .setVertexData(vertices, particleCount * VERTS_PER_PARTICLE)
                     .setIndexData(indices, particleCount * INDICES_PER_PARTICLE)
-                    .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS);
+                    .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS_UNORM16);
             RemixMesh mesh = new RemixMesh(new RemixMeshSurface[]{surface});
             vertices = null;
             indices = null;

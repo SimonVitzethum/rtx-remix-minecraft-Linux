@@ -11,7 +11,10 @@ import java.nio.ByteBuffer;
  * and optional skinning data as direct ByteBuffers.
  */
 public class MeshInfoSurfaceTriangles {
+    /** Atlas bounds encoded as IEEE 754 binary16. */
     public static final int TEXCOORD_BOUNDS = 1 << 0;
+    /** Atlas bounds encoded with {@link HardcodedVertex#packUnorm2x16(float, float)}. */
+    public static final int TEXCOORD_BOUNDS_UNORM16 = 1 << 1;
 
     public ByteBuffer vertexBuffer;
     public int vertexCount;

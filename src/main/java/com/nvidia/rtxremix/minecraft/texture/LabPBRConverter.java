@@ -79,9 +79,37 @@ public final class LabPBRConverter {
             }
     }
 
-    /** Blits a single R8 channel from _n alpha (height). */
-    public static void blitHeight(byte[] dst, int atlasW, NativeImage n, int ox, int oy, int w, int h) {
-        blitR8(dst, atlasW, n, ox, oy, w, h, 24); // alpha shift
+    /**
+     * Blits _n alpha as R8 height, preserving every nonzero-opacity texel's authored value.
+     * Fully transparent texels use the lowest visible height, so cutout holes cannot stand
+     * above the visible surface and the raymarch need not descend beyond its actual relief.
+     */
+    public static void blitHeight(byte[] dst, int atlasW, NativeImage n, byte[] albedoRGBA,
+                                  int ox, int oy, int w, int h) {
+        int[] pixels = n.getPixelsABGR();
+        int nw = n.getWidth(), nh = n.getHeight();
+        int lowestVisible = 255;
+        boolean hasTransparent = false;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int target = (oy + y) * atlasW + ox + x;
+                int height = pixels[(y % nh) * nw + x % nw] >>> 24;
+                dst[target] = (byte) height;
+                if (albedoRGBA[target * 4 + 3] == 0) {
+                    hasTransparent = true;
+                } else {
+                    lowestVisible = Math.min(lowestVisible, height);
+                }
+            }
+        }
+        if (hasTransparent) {
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int target = (oy + y) * atlasW + ox + x;
+                    if (albedoRGBA[target * 4 + 3] == 0) dst[target] = (byte) lowestVisible;
+                }
+            }
+        }
     }
 
     /** Blits roughness R8 from _s red channel (perceptual smoothness -> linear roughness). */
@@ -579,17 +607,6 @@ public final class LabPBRConverter {
     }
 
     // --- Helpers ---
-
-    private static void blitR8(byte[] dst, int atlasW, NativeImage img,
-                               int ox, int oy, int w, int h, int shift) {
-        int[] pixels = img.getPixelsABGR();
-        int iw = img.getWidth(), ih = img.getHeight();
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++) {
-                int abgr = pixels[(y % ih) * iw + (x % iw)];
-                dst[(oy + y) * atlasW + (ox + x)] = (byte) ((abgr >> shift) & 0xFF);
-            }
-    }
 
     private static int clamp255(int v) { return Math.max(0, Math.min(255, v)); }
 

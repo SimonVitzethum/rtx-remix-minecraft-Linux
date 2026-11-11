@@ -65,11 +65,10 @@ public class BlockTextureManager {
     /** Blend state for draw calls using the atlas translucent material, as terrain pairs its translucent pages. */
     public static final InstanceInfoBlendEXT ATLAS_TRANSLUCENT_BLEND =
             InstanceInfoBlendEXT.textureTimesVertexColor();
+    /** Depth of the LabPBR height map in tile units (1 = one block). The runtime marches inside each sprite's atlas tile. */
     private static final float POM_DISPLACE_IN = 0.25f;
-    // TODO: the Linux runtime does not implement texcoordBounds, so POM on the shared atlas height map marches
-    // out of the sprite into its neighbours and smears the block faces into long streaks. Re-enable once the
-    // runtime clamps POM to the per-vertex UV bounds.
-    private static final boolean ATLAS_POM_ENABLED = false;
+    /** Terrain vertices carry UNORM16 tile bounds (HardcodedVertex.packUnorm2x16), which the runtime's POM needs. */
+    private static final boolean ATLAS_POM_ENABLED = true;
     private static final float COMMON_GLASS_IOR = 1.52f;
     private static final float THIN_SSS_MEASUREMENT_DISTANCE = 0.75f;
     private static final int THIN_SSS_DEFAULT_THICKNESS = Math.round(THIN_SSS_MEASUREMENT_DISTANCE * 255.0f);
@@ -178,12 +177,13 @@ public class BlockTextureManager {
         public boolean hasPBR, hasSSS;
         float[] lightColor;
 
-        SpriteEntry(int i, Identifier id, TextureAtlasSprite s) {
+        SpriteEntry(int i, Identifier id, TextureAtlasSprite s, int atlasWidth, int atlasHeight) {
             this.index = i; this.id = id;
             u0 = s.getU0(); v0 = s.getV0(); u1 = s.getU1(); v1 = s.getV1();
-            pixX = s.getX(); pixY = s.getY();
+            AtlasSpriteRegion region = AtlasSpriteRegion.from(s, atlasWidth, atlasHeight);
+            pixX = region.x(); pixY = region.y();
             SpriteContents contents = s.contents();
-            pixW = contents.width(); pixH = contents.height();
+            pixW = region.width(); pixH = region.height();
             transparentPixels = scanTransparency(contents, pixW, pixH);
             hasTransparency = transparentPixels != null && !transparentPixels.isEmpty();
         }
@@ -221,11 +221,14 @@ public class BlockTextureManager {
             if (img == null) return null;
             int[] pixels = img.getPixelsABGR();
             BitSet transparent = null;
-            for (int i = 0; i < w * h; i++)
-                if (((pixels[i] >> 24) & 0xFF) < 255) {
-                    if (transparent == null) transparent = new BitSet(w * h);
-                    transparent.set(i);
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    if (((pixels[y * img.getWidth() + x] >>> 24) & 0xFF) < 255) {
+                        if (transparent == null) transparent = new BitSet(w * h);
+                        transparent.set(y * w + x);
+                    }
                 }
+            }
             return transparent;
         }
 
@@ -273,6 +276,9 @@ public class BlockTextureManager {
                 appliedTerrainEmissionMultiplier = terrainEmissionMultiplier;
             }
             buildAtlasMaterials(api, labPBRVariants);
+            if (System.getenv("RTXREMIX_DUMP_ATLAS") != null) {
+                dumpAtlasCrops(System.getenv("RTXREMIX_DUMP_ATLAS"));
+            }
             buildWaterMaterials(api);
             Map<String, AnimatedSpriteLabPBR> labPBRMap =
                 buildAnimatedSpriteLabPBRMap(labPBRVariants, spriteAtlas);
@@ -283,6 +289,30 @@ public class BlockTextureManager {
         } catch (Exception e) {
             LOGGER.error("Init failed", e);
             initFailed = true;
+        }
+    }
+
+    /** Debug: writes the albedo atlas around a few sprites (with 12 texels of surroundings) as PNG, alpha included. */
+    private void dumpAtlasCrops(String dir) {
+        try {
+            java.nio.file.Files.createDirectories(java.nio.file.Path.of(dir));
+            for (String name : new String[] {"block/spruce_planks", "block/bricks", "block/stone", "block/dirt", "block/oak_leaves", "block/short_grass"}) {
+                SpriteEntry se = spriteById.get(Identifier.withDefaultNamespace(name));
+                if (se == null) continue;
+                int pad = 12, x0 = Math.max(0, se.pixX - pad), y0 = Math.max(0, se.pixY - pad);
+                int w = Math.min(atlasW - x0, se.pixW + 2 * pad), h = Math.min(atlasH - y0, se.pixH + 2 * pad);
+                java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++) {
+                        int i = ((y0 + y) * atlasW + (x0 + x)) * 4;
+                        img.setRGB(x, y, ((albedoRGBA[i + 3] & 0xFF) << 24) | ((albedoRGBA[i] & 0xFF) << 16)
+                                | ((albedoRGBA[i + 1] & 0xFF) << 8) | (albedoRGBA[i + 2] & 0xFF));
+                    }
+                javax.imageio.ImageIO.write(img, "png", new java.io.File(dir, name.replace('/', '_') + ".png"));
+                LOGGER.info("dumpAtlas {} at {},{} size {}x{} atlas {}x{}", name, se.pixX, se.pixY, se.pixW, se.pixH, atlasW, atlasH);
+            }
+        } catch (java.io.IOException e) {
+            LOGGER.error("Cannot write atlas crops to {}", dir, e);
         }
     }
 
@@ -312,7 +342,7 @@ public class BlockTextureManager {
         int pbr = 0, emissiveCount = 0, idx = 0;
 
         for (var e : map.entrySet()) {
-            SpriteEntry se = new SpriteEntry(idx++, e.getKey(), e.getValue());
+            SpriteEntry se = new SpriteEntry(idx++, e.getKey(), e.getValue(), atlasW, atlasH);
             byte[] alb = extractRGBA(se.pixX, se.pixY, se.pixW, se.pixH);
             int luminance = lumMap.getOrDefault(e.getKey().toString(), 0);
 
@@ -489,7 +519,7 @@ public class BlockTextureManager {
             try {
                 if (nI != null) {
                     LabPBRConverter.blitNormal(normalAtlas, atlasW, nI, se.pixX, se.pixY, se.pixW, se.pixH);
-                    LabPBRConverter.blitHeight(heightAtlas, atlasW, nI, se.pixX, se.pixY, se.pixW, se.pixH);
+                    LabPBRConverter.blitHeight(heightAtlas, atlasW, nI, albedoRGBA, se.pixX, se.pixY, se.pixW, se.pixH);
                     LabPBRConverter.applyAO(albedoRGBA, atlasW, nI, se.pixX, se.pixY, se.pixW, se.pixH);
                     LabPBRConverter.applyAO(sssAlbedoAtlas, atlasW, nI, se.pixX, se.pixY, se.pixW, se.pixH);
                     hasAnyNormal = true;
@@ -525,6 +555,13 @@ public class BlockTextureManager {
                 if (sI != null) sI.close();
                 if (sssI != null) sssI.close();
             }
+        }
+
+        try (ProfileScope ignored = ProfileScope.begin("Atlas.padding")) {
+            List<AtlasPadding.Region> regions = sprites.stream()
+                    .map(se -> new AtlasPadding.Region(se.pixX, se.pixY, se.pixW, se.pixH)).toList();
+            AtlasPadding.apply(atlasW, atlasH, 4, regions, albedoRGBA, normalAtlas, heightAtlas,
+                    roughnessAtlas, metallicAtlas, emissiveAtlas, sssThicknessAtlas, sssAlbedoAtlas);
         }
 
         atlasAlbedo = upload(api, "atlas_albedo", albedoRGBA, atlasW, atlasH,
@@ -1026,7 +1063,7 @@ public class BlockTextureManager {
         if (nI != null) {
             byte[] nd = new byte[w * h * 4], hd = new byte[w * h];
             LabPBRConverter.blitNormal(nd, w, nI, 0, 0, w, h);
-            LabPBRConverter.blitHeight(hd, w, nI, 0, 0, w, h);
+            LabPBRConverter.blitHeight(hd, w, nI, alb, 0, 0, w, h);
             se.normal = upload(api, p + "n", nd, w, h, TextureFormat.RGBA8_UNORM, TexturePurpose.NORMAL_DX);
             se.height = upload(api, p + "h", hd, w, h, TextureFormat.R8_UNORM, TexturePurpose.HEIGHTMAP);
         }
@@ -1081,18 +1118,7 @@ public class BlockTextureManager {
         for (TextureAtlasSprite sprite : acc.getSprites().values()) {
             NativeImage img = ((SpriteContentsAccessor) sprite.contents()).getImage();
             if (img == null) continue;
-            int sx = sprite.getX(), sy = sprite.getY();
-            int sw = sprite.contents().width(), sh = sprite.contents().height();
-            int[] pixels = img.getPixelsABGR();
-            for (int y = 0; y < sh; y++)
-                for (int x = 0; x < sw; x++) {
-                    int abgr = pixels[y * sw + x];
-                    int idx = ((sy + y) * w + (sx + x)) * 4;
-                    buf[idx]     = (byte) (abgr & 0xFF);
-                    buf[idx + 1] = (byte) ((abgr >> 8) & 0xFF);
-                    buf[idx + 2] = (byte) ((abgr >> 16) & 0xFF);
-                    buf[idx + 3] = (byte) ((abgr >> 24) & 0xFF);
-                }
+            AtlasSpriteRegion.from(sprite, w, h).copyRgba(buf, w, img);
         }
         return buf;
     }

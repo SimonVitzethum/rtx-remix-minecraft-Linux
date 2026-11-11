@@ -291,10 +291,10 @@ public final class DirectQuadWriter {
 
         BucketBuffer bb = getBucket(cat, bucketKey);
 
-        int boundsMin = isWater ? HardcodedVertex.packHalf2x16(0, 0)
-                                : HardcodedVertex.packHalf2x16(su0, sv0);
-        int boundsMax = isWater ? HardcodedVertex.packHalf2x16(1, 1)
-                                : HardcodedVertex.packHalf2x16(su1, sv1);
+        int boundsMin = isWater ? HardcodedVertex.packUnorm2x16(0, 0)
+                                : HardcodedVertex.packUnorm2x16(su0, sv0);
+        int boundsMax = isWater ? HardcodedVertex.packUnorm2x16(1, 1)
+                                : HardcodedVertex.packUnorm2x16(su1, sv1);
 
         bb.writeQuad(positions, 0, uvs, 0, nx, ny, nz, color, boundsMin, boundsMax);
     }
@@ -332,8 +332,8 @@ public final class DirectQuadWriter {
 
             BucketBuffer bb = getBucket(cat, bucketKey);
 
-            int boundsMin = HardcodedVertex.packHalf2x16(stageSU0[i], stageSV0[i]);
-            int boundsMax = HardcodedVertex.packHalf2x16(stageSU1[i], stageSV1[i]);
+            int boundsMin = HardcodedVertex.packUnorm2x16(stageSU0[i], stageSV0[i]);
+            int boundsMax = HardcodedVertex.packUnorm2x16(stageSU1[i], stageSV1[i]);
 
             bb.writeQuad(stagePos, i * 12, stageUvs, i * 8,
                          stageNx[i], stageNy[i], stageNz[i],
