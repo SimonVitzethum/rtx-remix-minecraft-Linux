@@ -49,7 +49,10 @@ Before allocating an image, the consumer queries its Vulkan memory requirements
 without binding memory, rounds to buffer/image granularity, and checks the
 existing material-texture budget against current device-local usage. Private
 images and resources awaiting retirement are included in that usage. Insufficient
-space defers the request and signals existing budget-pressure handling. A
+space defers the request and signals existing budget-pressure handling. Async
+requests are admitted before packing or reading source mips, so a blocked image
+holds neither a staging slice nor a loaded source cache and does not prevent
+other admitted textures from streaming. A
 same-size replacement or demotion can release its old image to permit retirement.
 A texture that cannot fit even by itself remains pending until the budget changes;
 it does not bypass admission or force streaming off. Large non-demotable atlases

@@ -103,6 +103,7 @@ namespace dxvk {
       bool budgetWarning = false;
       const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
       std::atomic<bool> cancelled{ false };
+      std::atomic<bool> admitted{ false };
     };
 
     struct ReadyToCopyMip {
@@ -457,6 +458,12 @@ namespace dxvk {
 
     void deferUploads(std::vector<ReadyToCopy> uploads);
 
+    void admitUpload(TextureUpload& upload) {
+      auto lock = std::unique_lock{ m_texturesToProcess_mutex };
+      upload.admitted = true;
+      m_texturesToProcess_cond.notify_one();
+    }
+
     bool hasPendingUploads() {
       auto process = std::unique_lock{ m_texturesToProcess_mutex };
       auto ready = std::unique_lock{ m_readyTextures_mutex };
@@ -497,7 +504,7 @@ namespace dxvk {
   void AsyncRunner::queueAdd(const Rc<ManagedTexture>& tex, bool async) {
     assert(tex->m_state == ManagedTexture::State::kQueuedForUpload);
     auto upload = planUpload(tex);
-    if (!async && upload->bytes <= m_synchronousAlloc.budget()) {
+    if (!upload->bytes || (!async && upload->bytes <= m_synchronousAlloc.budget())) {
       m_synchronousAlloc.trim();
       auto ready = makeStagingForTextureAsset(m_synchronousAlloc, upload);
       if (ready.upload) {
@@ -506,9 +513,14 @@ namespace dxvk {
         return;
       }
     }
-    auto lock = std::unique_lock{ m_texturesToProcess_mutex };
-    m_texturesToProcess.push_back(std::move(upload));
-    m_texturesToProcess_cond.notify_one();
+    auto process = std::unique_lock{ m_texturesToProcess_mutex };
+    auto ready = std::unique_lock{ m_readyTextures_mutex };
+    m_texturesToProcess.push_back(upload);
+    ReadyToCopy admission;
+    admission.upload = std::move(upload);
+    admission.complete = false;
+    m_readyTextures.push_back(std::move(admission));
+    m_readyTextures_cond.notify_one();
   }
 
 
@@ -533,7 +545,7 @@ namespace dxvk {
 
   void AsyncRunner::deferUploads(std::vector<ReadyToCopy> uploads) {
     auto lock = std::unique_lock{ m_readyTextures_mutex };
-    m_readyTextures.insert(m_readyTextures.begin(),
+    m_readyTextures.insert(m_readyTextures.end(),
       std::make_move_iterator(uploads.begin()), std::make_move_iterator(uploads.end()));
   }
 
@@ -544,21 +556,21 @@ namespace dxvk {
       std::shared_ptr<TextureUpload> upload;
       {
         auto lock = std::unique_lock{ m_texturesToProcess_mutex };
-        // Periodically release retired staging even when no new assets arrive.
-        m_texturesToProcess_cond.wait_for(lock, std::chrono::milliseconds(10), [this]() {
-          return !m_texturesToProcess.empty() || m_requiresShutdown.load();
+        const auto eligible = [](const auto& item) { return item->admitted.load() || item->cancelled.load(); };
+        // Admission requests hold no staging or source cache while waiting for device memory.
+        m_texturesToProcess_cond.wait_for(lock, std::chrono::milliseconds(10), [this, &eligible]() {
+          return m_requiresShutdown.load() || std::any_of(m_texturesToProcess.begin(), m_texturesToProcess.end(), eligible);
         });
-        if (m_texturesToProcess.empty()) {
-          m_ringbuf.trim();
-        }
         if (m_requiresShutdown.load()) {
           return;
         }
-        if (m_texturesToProcess.empty()) {
+        const auto next = std::find_if(m_texturesToProcess.begin(), m_texturesToProcess.end(), eligible);
+        if (next == m_texturesToProcess.end()) {
+          m_ringbuf.trim();
           continue;
         }
-        upload = std::move(m_texturesToProcess.front());
-        m_texturesToProcess.pop_front();
+        upload = std::move(*next);
+        m_texturesToProcess.erase(next);
         m_processing = true;
       }
 
@@ -647,11 +659,13 @@ namespace dxvk {
       } catch (const DxvkError& e) {
         if (!upload->cancelled.load() && !m_requiresShutdown.load()) {
           Logger::err(str::format("[TextureStaging] Upload failed: ", e.message()));
+          upload->cancelled = true;
           upload->texture->m_state = ManagedTexture::State::kFailed;
         }
       } catch (const std::exception& e) {
         if (!upload->cancelled.load() && !m_requiresShutdown.load()) {
           Logger::err(str::format("[TextureStaging] Upload failed: ", e.what()));
+          upload->cancelled = true;
           upload->texture->m_state = ManagedTexture::State::kFailed;
         }
       }
@@ -1001,9 +1015,12 @@ namespace dxvk {
         for (auto& ready : uploads) {
           auto& upload = *ready.upload;
           const auto& tex = upload.texture;
+          if (upload.cancelled.load()) {
+            continue;
+          }
           const auto wanted = tex->calcRequiredMips_BeginEnd();
           const bool demoted = wanted.first > upload.mipBegin;
-          if (upload.cancelled.load() || demoted || tex->m_state != ManagedTexture::State::kQueuedForUpload
+          if (demoted || tex->m_state != ManagedTexture::State::kQueuedForUpload
               || tex->m_assetData != upload.asset) {
             upload.cancelled = true;
             if (tex->m_state == ManagedTexture::State::kQueuedForUpload && (demoted || tex->m_assetData != upload.asset)) {
@@ -1043,6 +1060,7 @@ namespace dxvk {
               continue;
             }
             upload.image = allocDeviceImage(m_device, upload.asset, upload.imageInfo, upload.mipBegin, upload.mipEnd);
+            m_asyncThread->admitUpload(upload);
           }
           if (ready.bytes > remainingBytes) {
             deferred.push_back(std::move(ready));

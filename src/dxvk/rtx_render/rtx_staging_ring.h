@@ -75,6 +75,7 @@ namespace dxvk {
         m_offset = 0;
         const VkDeviceSize capacity = dxvk::align(std::max(std::min(m_budget, VkDeviceSize(1024 * 1024)), size), kBufferAlignment);
         if (!m_buffer.ptr() || m_buffer->info().size != capacity) {
+          m_buffer = nullptr;
           m_buffer = createBuffer(*m_device, capacity);
           if (capacity >= 4 * 1024 * 1024) {
             Logger::info(str::format("[TextureStaging] Pool allocated ", capacity, " bytes, ceiling ", m_budget));
