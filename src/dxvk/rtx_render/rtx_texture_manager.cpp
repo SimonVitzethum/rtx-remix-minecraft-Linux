@@ -1048,7 +1048,7 @@ namespace dxvk {
             if (textureStagingDiagnosticsEnabled()) {
               Logger::info(str::format("[TextureStaging] Cancelled ", upload.asset->info().extent.width, "x",
                 upload.asset->info().extent.height, ": asset changed ", tex->m_assetData != upload.asset,
-                ", demoted ", demoted, ", state ", uint32_t(tex->m_state), ", frame ", m_device->getCurrentFrameId()));
+                ", demoted ", demoted, ", state ", uint32_t(tex->m_state.load()), ", frame ", m_device->getCurrentFrameId()));
             }
             upload.cancelled = true;
             if (tex->m_state == ManagedTexture::State::kQueuedForUpload && (demoted || tex->m_assetData != upload.asset)) {
