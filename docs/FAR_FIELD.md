@@ -5,6 +5,25 @@ exact loaded client voxels outside the path-traced radius, Bobby fake chunks, ge
 single-player terrain, persistent received multiplayer surfaces, sky updates and water
 tints share this pipeline.
 
+## Design choices
+
+Renderer dirty flags alone miss off-screen content changes and mix geometry changes with
+light-only rebuilds. Hashing every voxel repeatedly would detect mutations but makes the
+cost follow the loaded world volume. Section content revisions instead make the existing
+planning pass proportional to section count; immutable owner-thread palette copies put
+voxel work on workers without racing client-world mutation.
+
+The existing 256-block subtree is the invalidation and publication unit. A changed input
+rebuilds that subtree while unrelated cached subtrees remain reusable. Finer per-section
+DAG patching would require additional retained intermediate state and relocation rules;
+this change keeps the single DAG architecture and bounds capture/worker admission instead.
+
+Additional far detail comes from a bounded 2-block horizontal band and integer-height
+surface boundaries. Retaining full remote voxels everywhere would preserve overhangs and
+materials but scale memory with remote volume. Received surfaces and procedural fallback
+therefore share the tile source, while loaded real/Bobby chunks retain their exact voxels.
+There is no second distant renderer or separate publication system.
+
 ## Content ownership and refresh
 
 `FarSectionRevisionMixin` increments a section revision only when `setBlockState` changes
