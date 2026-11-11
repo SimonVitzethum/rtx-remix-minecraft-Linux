@@ -52,6 +52,7 @@ namespace dxvk {
         (instance->getGeometryFlags() & VK_GEOMETRY_OPAQUE_BIT_KHR);
     }
     if (!eligible) {
+      ++m_ineligible;
       return false;
     }
     const auto& geometry = entry.buildGeometries[0];
@@ -66,6 +67,7 @@ namespace dxvk {
         (tri.indexType != VK_INDEX_TYPE_UINT16 && tri.indexType != VK_INDEX_TYPE_UINT32) ||
         range.firstVertex || range.primitiveOffset || range.transformOffset || !geo.vertexCount ||
         tri.vertexStride < 12 || tri.vertexStride > UINT32_MAX) {
+      ++m_unsupported;
       return false;
     }
     const auto& positions = geo.positionBuffer.buffer();
@@ -79,6 +81,7 @@ namespace dxvk {
         positions->info().size > UINT32_MAX || indices->info().size > UINT32_MAX ||
         !(positions->info().usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) ||
         !(indices->info().usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) {
+      ++m_unsupported;
       return false;
     }
     const std::array<uint64_t, 7> key = {entry.frameLastUpdated, tri.vertexStride, geo.vertexCount,
@@ -262,7 +265,7 @@ namespace dxvk {
   void RtxClusterBlasBuilder::report(uint32_t frame) {
     if (clusterAccelerationStructureRequested() && frame % 120 == 0) {
       Logger::info(str::format("Cluster AS frame=", frame, " builds=", m_builds, " cacheHits=", m_hits,
-        " CLAS=", m_clusters, " budgetFallbacks=", m_fallbacks, " liveReservedBytes=", m_budget->load()));
+        " CLAS=", m_clusters, " budgetFallbacks=", m_fallbacks, " ineligible=", m_ineligible, " unsupported=", m_unsupported, " liveReservedBytes=", m_budget->load()));
     }
   }
 }

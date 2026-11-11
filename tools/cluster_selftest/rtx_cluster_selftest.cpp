@@ -4,6 +4,7 @@
 #include "rtx_cluster_selftest.h"
 #include "rtx_cluster_selftest_cull_spv.h"
 #include "rtx_cluster_selftest_trace_spv.h"
+#include "cluster_pack_spv.h"
 
 #include <chrono>
 #include <cmath>
@@ -187,14 +188,14 @@ bool run(const Env& env) {
   auto begin = [&]() { f.vkResetCommandBuffer(cmd, 0); VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT }; f.vkBeginCommandBuffer(cmd, &bi); f.vkCmdResetQueryPool(cmd, qp, 0, 16); };
   auto submit = [&]() { f.vkEndCommandBuffer(cmd); VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO }; si.commandBufferCount = 1; si.pCommandBuffers = &cmd; f.vkQueueSubmit(env.queue, 1, &si, VK_NULL_HANDLE); f.vkQueueWaitIdle(env.queue); };
   auto barrier = [&]() {
-    VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT };
+    VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT };
     f.vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
   };
   auto stamp = [&](uint32_t i) { f.vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, qp, i); };
   auto readStamps = [&](uint32_t n, std::vector<uint64_t>& out) { out.resize(n); f.vkGetQueryPoolResults(dev, qp, 0, n, n * 8, out.data(), 8, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT); };
   auto gpuMs = [&](const std::vector<uint64_t>& s, uint32_t a, uint32_t b) { return double(s[b] - s[a]) * env.timestampPeriodNs * 1e-6; };
 
-  auto makePipe = [&](const unsigned char* spv, size_t spvSize, uint32_t bindings, VkDescriptorType type0, uint32_t pcSize) {
+  auto makePipe = [&](const void* spv, size_t spvSize, uint32_t bindings, VkDescriptorType type0, uint32_t pcSize) {
     Pipe p;
     std::vector<uint32_t> code((spvSize + 3) / 4);
     std::memcpy(code.data(), spv, spvSize);
@@ -216,7 +217,7 @@ bool run(const Env& env) {
     return p;
   };
   VkDescriptorPoolSize dps[3] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32 }, { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 4 }, { VK_DESCRIPTOR_TYPE_PARTITIONED_ACCELERATION_STRUCTURE_NV, 4 } };
-  VkDescriptorPoolCreateInfo dpi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 4, env.hasPartitioned ? 3u : 2u, dps };
+  VkDescriptorPoolCreateInfo dpi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 8, env.hasPartitioned ? 3u : 2u, dps };
   VkDescriptorPool dpool; f.vkCreateDescriptorPool(dev, &dpi, nullptr, &dpool);
 
   Pipe cullP = makePipe(s17_cull_spv, sizeof(s17_cull_spv), 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 36);
@@ -242,6 +243,7 @@ bool run(const Env& env) {
       i.triangleCount = kTrisPerCluster;
       i.vertexCount = kVertsPerCluster;
       i.indexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_16BIT_NV;
+      i.opacityMicromapIndexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_16BIT_NV;
       i.baseGeometryIndexAndGeometryFlags.geometryIndex = 0x800000u | (cid * kTrisPerCluster);
       i.baseGeometryIndexAndGeometryFlags.geometryFlags = VK_CLUSTER_ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT_NV;
       i.indexBufferStride = 2;
@@ -443,7 +445,7 @@ bool run(const Env& env) {
       if (eh) {
         maxDt = std::max(maxDt, double(std::fabs(t - et)));
         if (std::fabs(t - et) > 8e-3f) mism++;
-        if (checkIds && (h[1] != ep || h[2] != eg || h[3] != ec)) idMism++;
+        if (checkIds && (h[1] != ep + ec * kTrisPerCluster || h[2] != 0 || h[3] != ec)) idMism++;
       }
     }
     log(std::string("selftest: trace[") + name + "] rays " + std::to_string(kRays * kRays) + ": expected hits " + std::to_string(expHits) + ", got " + std::to_string(gotHits) +
@@ -613,6 +615,97 @@ bool run(const Env& env) {
   } else {
     log("selftest: PTLAS not tested (extension not enabled)");
   }
+
+  // Exercise the production gather and hit normalization with a partial final cluster.
+  // Source vertices are deliberately interleaved and reverse-indexed, and one triangle is degenerate.
+  Pipe packP = makePipe(cluster_pack_spv, sizeof(cluster_pack_spv), 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24);
+  allocSet(packP);
+  constexpr uint32_t triangleCount = 65;
+  constexpr uint32_t vertexCount = triangleCount * 3;
+  for (const uint32_t indexStride : {2u, 4u}) {
+    const uint32_t vertexOffset = 16, vertexStride = 20, indexOffset = indexStride;
+    Buf sourcePositions = c.make(vertexOffset + vertexCount * vertexStride, true);
+    Buf sourceIndices = c.make(indexOffset + vertexCount * indexStride, true);
+    Buf packedPositions = c.make(vertexCount * 12, true);
+    Buf localIndices = c.make(64 * 3 * 2, true);
+    for (uint32_t i = 0; i < 64 * 3; ++i) { static_cast<uint16_t*>(localIndices.map)[i] = i; }
+    for (uint32_t triangle = 0; triangle < triangleCount; ++triangle) {
+      for (uint32_t corner = 0; corner < 3; ++corner) {
+        const uint32_t index = (triangleCount - 1 - triangle) * 3 + corner;
+        const uint32_t slot = triangle * 3 + corner;
+        const float position[3] = {2.f * triangle + (corner == 1 ? 1.5f : 0.f),
+          triangle * 0.03125f, corner == 2 ? 1.5f : 0.f};
+        // Keep one primitive as an inactive degenerate without renumbering any primitive.
+        float value[3]; std::memcpy(value, position, sizeof(value));
+        if (triangle == triangleCount - 2) { value[0] = 2.f * triangle; value[2] = 0.f; }
+        std::memcpy(static_cast<char*>(sourcePositions.map) + vertexOffset + index * vertexStride, value, sizeof(value));
+        std::memcpy(static_cast<char*>(sourceIndices.map) + indexOffset + slot * indexStride, &index, indexStride);
+      }
+    }
+    writeBuf(packP.set, 0, sourcePositions); writeBuf(packP.set, 1, sourceIndices); writeBuf(packP.set, 2, packedPositions);
+    struct PackArgs { uint32_t count, vertices, stride, indexStride, vertexOffset, indexOffset; };
+    const PackArgs args {vertexCount, vertexCount, vertexStride, indexStride, vertexOffset, indexOffset};
+    begin();
+    f.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, packP.pipeline);
+    f.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, packP.layout, 0, 1, &packP.set, 0, nullptr);
+    f.vkCmdPushConstants(cmd, packP.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(args), &args);
+    f.vkCmdDispatch(cmd, (vertexCount + 63) / 64, 1, 1); barrier(); submit();
+    uint32_t gatherMismatches = 0;
+    for (uint32_t i = 0; i < vertexCount; ++i) {
+      uint32_t index = 0;
+      std::memcpy(&index, static_cast<char*>(sourceIndices.map) + indexOffset + i * indexStride, indexStride);
+      gatherMismatches += std::memcmp(static_cast<char*>(sourcePositions.map) + vertexOffset + index * vertexStride,
+        static_cast<char*>(packedPositions.map) + i * 12, 12) != 0;
+    }
+    auto* info = static_cast<VkClusterAccelerationStructureBuildTriangleClusterInfoNV*>(clasInfos.map);
+    for (uint32_t cluster = 0; cluster < 2; ++cluster) {
+      info[cluster] = {};
+      info[cluster].clusterID = cluster * 64;
+      info[cluster].triangleCount = cluster == 0 ? 64 : 1;
+      info[cluster].vertexCount = info[cluster].triangleCount * 3;
+      info[cluster].indexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_16BIT_NV;
+      info[cluster].opacityMicromapIndexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_16BIT_NV;
+      info[cluster].baseGeometryIndexAndGeometryFlags.geometryIndex = 0x800000u | (cluster * 64);
+      info[cluster].baseGeometryIndexAndGeometryFlags.geometryFlags = VK_CLUSTER_ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT_NV;
+      info[cluster].indexBuffer = localIndices.address;
+      info[cluster].vertexBuffer = packedPositions.address + cluster * 64 * 36;
+      info[cluster].indexBufferStride = 2;
+      info[cluster].vertexBufferStride = 12;
+    }
+    static_cast<uint32_t*>(counts.map)[0] = 2;
+    VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV twoClusters {2, 8, clasAddrs.address};
+    // The existing BLAS input is device-local; use a coherent standalone descriptor for this case.
+    Buf boundarySource = c.make(sizeof(twoClusters), true);
+    std::memcpy(boundarySource.map, &twoClusters, sizeof(twoClusters));
+    auto boundaryBlas = blasCmd;
+    boundaryBlas.srcInfosArray = {boundarySource.address, sizeof(twoClusters), sizeof(twoClusters)};
+    begin(); f.vkCmdBuildClusterAccelerationStructureIndirectNV(cmd, &clasCmd); barrier();
+    f.vkCmdBuildClusterAccelerationStructureIndirectNV(cmd, &boundaryBlas); barrier();
+    recordTlasBuild(tlasCluster, 0); barrier(); submit();
+    bindTlas(tlasCluster);
+    begin(); f.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, traceP.pipeline);
+    f.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, traceP.layout, 0, 1, &traceP.set, 0, nullptr);
+    struct { uint32_t w, h; float step, oy, ox, oz; } pc = {triangleCount, 1, 2.f, kOriginY, 0.f, 0.f};
+    f.vkCmdPushConstants(cmd, traceP.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    f.vkCmdDispatch(cmd, (triangleCount + 7) / 8, 1, 1); barrier(); submit();
+    uint32_t mismatches = 0;
+    for (uint32_t triangle = 0; triangle < triangleCount; ++triangle) {
+      const auto* hit = static_cast<const uint32_t*>(hits.map) + triangle * 4;
+      const bool expectedHit = triangle != triangleCount - 2;
+      mismatches += bool(hit[0]) != expectedHit;
+      if (expectedHit) {
+        mismatches += hit[1] != triangle || hit[2] != 0 || hit[3] != (triangle / 64 * 64) ||
+          std::fabs(static_cast<const float*>(tbuf.map)[triangle] - (kOriginY - triangle * 0.03125f)) > 1e-4f;
+      }
+    }
+    log("selftest: production gather uint" + std::to_string(indexStride * 8) +
+      " reverse-indexed/interleaved 65 triangles, partial CLAS and degenerate: gather mismatches " +
+      std::to_string(gatherMismatches) + ", normalized primitive/geometry/cluster/hit/t mismatches " + std::to_string(mismatches));
+    ok &= gatherMismatches == 0 && mismatches == 0;
+  }
+  f.vkDestroyPipeline(dev, packP.pipeline, nullptr);
+  f.vkDestroyPipelineLayout(dev, packP.layout, nullptr);
+  f.vkDestroyDescriptorSetLayout(dev, packP.dsl, nullptr);
 
   f.vkDestroyQueryPool(dev, qp, nullptr);
   f.vkDestroyDescriptorPool(dev, dpool, nullptr);

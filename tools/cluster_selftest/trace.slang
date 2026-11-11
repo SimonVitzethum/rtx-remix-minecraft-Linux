@@ -1,3 +1,8 @@
+#define CUSTOM_INDEX_SURFACE_MASK 0x1fffffu
+#define CUSTOM_INDEX_MATERIAL_TYPE_BIT 21
+static const uint surfaceMaterialTypeMask = 3u;
+#include "rtx/concept/ray/ray_helper.slangh"
+
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure tlas;
 [[vk::binding(1, 0)]] RWStructuredBuffer<uint4> outHits;  // x = hit, y = primitiveIndex, z = geometryIndex, w = clusterID
 [[vk::binding(2, 0)]] RWStructuredBuffer<float> outT;
@@ -20,7 +25,11 @@ void main(uint3 id : SV_DispatchThreadID)
   uint idx = id.y * pc.width + id.x;
   if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
   {
-    outHits[idx] = uint4(1, q.CommittedPrimitiveIndex(), q.CommittedGeometryIndex(), uint(q.CommittedClusterID()));
+    RayHitInfo hit;
+    hit.primitiveIndex = q.CommittedPrimitiveIndex();
+    hit.geometryIndex = q.CommittedGeometryIndex();
+    normalizeRayHitInfo(hit);
+    outHits[idx] = uint4(1, hit.primitiveIndex, hit.geometryIndex, uint(q.CommittedClusterID()));
     outT[idx] = q.CommittedRayT();
   }
   else

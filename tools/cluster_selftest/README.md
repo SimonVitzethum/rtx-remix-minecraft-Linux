@@ -2,7 +2,9 @@
 
 This preserves the S17 CLAS/cluster BLAS/PTLAS ray verification, bounds grid size
 to 8–128, queries features before device creation and exercises tagged geometry
-indices used by the production hit mapping. Generated shader headers and the
+indices used by the production hit mapping. It also executes the production
+gather shader on reverse-indexed/interleaved uint16 and uint32 geometry with
+65 triangles, a partial final CLAS and an inactive degenerate primitive. Generated shader headers and the
 executable stay in scratch. This isolated harness does not exercise the retained
 renderer cache or demonstrate a game performance improvement. Its unconditional
 KHR rebuild timing is a synthetic build measurement, not a retained-cache baseline.

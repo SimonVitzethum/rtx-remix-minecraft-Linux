@@ -434,6 +434,10 @@ namespace dxvk {
       enabledFeatures.nvClusterAccelerationStructureFeatures.clusterAccelerationStructure = VK_TRUE;
       enabledFeatures.nvClusterAccelerationStructureFeatures.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.nvClusterAccelerationStructureFeatures);
     }
+    if (clusterAccelerationStructureRequested()) {
+      Logger::info(str::format("Cluster AS requested: device feature ",
+        enabledFeatures.nvClusterAccelerationStructureFeatures.clusterAccelerationStructure ? "enabled" : "unavailable; using KHR fallback"));
+    }
     // NV-DXVK end
 
     DxvkNameSet extensionsEnabled;

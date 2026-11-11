@@ -70,6 +70,7 @@ namespace dxvk {
   void AccelManager::clear() {
     m_gpuCrashRecorder.clear();
     m_blasPool.clear();
+    m_activeDynamicBlases.clear();
 
     // Invalidate incremental rebuild cache
     m_cachedBuckets.clear();
@@ -2069,6 +2070,22 @@ namespace dxvk {
       if (blas->clusters.ptr()) {
         ctx->getCommandList()->trackResource<DxvkAccess::Read>(blas->clusters);
       }
+    }
+    if (clusterAccelerationStructureRequested() && m_device->getCurrentFrameId() % 120 == 0) {
+      uint64_t clusterBlasCount = 0, activeClusters = 0, clusterInstances = 0;
+      std::unordered_set<VkDeviceAddress> clusterAddresses;
+      for (const auto& blas : m_activeDynamicBlases) {
+        if (!blas->clusters.ptr()) { continue; }
+        ++clusterBlasCount;
+        activeClusters += blas->clusters->clusterCount;
+        clusterAddresses.insert(blas->accelerationStructureReference);
+      }
+      for (const auto& instance : m_mergedInstances[Tlas::Opaque]) {
+        clusterInstances += clusterAddresses.count(instance.accelerationStructureReference);
+      }
+      Logger::info(str::format("Cluster AS scene frame=", m_device->getCurrentFrameId(),
+        " clusterBLAS=", clusterBlasCount, " activeCLAS=", activeClusters,
+        " opaqueTLASInstances=", clusterInstances));
     }
     m_clusterBlas.report(m_device->getCurrentFrameId());
 

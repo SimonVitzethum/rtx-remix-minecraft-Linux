@@ -45,5 +45,7 @@ namespace dxvk {
     uint64_t m_hits = 0;
     uint64_t m_fallbacks = 0;
     uint64_t m_clusters = 0;
+    uint64_t m_ineligible = 0;
+    uint64_t m_unsupported = 0;
   };
 }

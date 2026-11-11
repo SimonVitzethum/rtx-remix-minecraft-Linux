@@ -62,7 +62,8 @@ clears and replacement. The ordinary previous-TLAS retention also retains the
 CLAS hierarchy. Alignments come from the cluster device properties. Explicit
 transfer/compute/build barriers separate gather, CLAS build, BLAS build and TLAS
 use. There is no per-frame GPU-to-host readback or new per-frame scratch build
-for cached geometry. Diagnostic counts are cumulative CPU-side record counts,
+for cached geometry. Diagnostics include live CLAS, cluster BLAS and ordinary opaque-TLAS instance
+counts. Build and cache counters are cumulative CPU-side record counts,
 not GPU completion or performance measurements.
 
 ## Validation status
