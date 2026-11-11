@@ -84,6 +84,8 @@ class SettingsRowWidthTest {
             entry("rtxremix.setting.farfield.distance", "512"),
             entry("rtxremix.setting.farfield.fog", "Off"),
             entry("rtxremix.setting.farfield.shadows", "Off"),
+            entry("rtxremix.setting.farfield.cache", "OFF"),
+            entry("rtxremix.setting.farfield.cacheMb", "4096"),
             entry("rtxremix.setting.light.reach", "256"),
             entry("rtxremix.setting.framerate.unfocused", "Unlimited"),
             entry("rtxremix.setting.upscaling.mode", "5"),
@@ -172,7 +174,8 @@ class SettingsRowWidthTest {
         Map<String, String> labels = new HashMap<>();
         for (Map.Entry<String, String> line : lang.entrySet()) {
             String key = line.getKey();
-            if (key.startsWith(LABEL_PREFIX) && !key.endsWith(TOOLTIP_SUFFIX)) {
+            if (key.startsWith(LABEL_PREFIX) && !key.endsWith(TOOLTIP_SUFFIX)
+                    && !key.contains(TOOLTIP_SUFFIX + ".")) {
                 labels.put(key, line.getValue());
             }
         }
