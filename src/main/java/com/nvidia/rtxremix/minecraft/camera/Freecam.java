@@ -91,13 +91,6 @@ public final class Freecam {
         return speed;
     }
 
-    public static Vec3d position() {
-        return new Vec3d(x, y, z);
-    }
-
-    public record Vec3d(double x, double y, double z) {
-    }
-
     private static void tick(Minecraft mc) {
         LocalPlayer player = mc.player;
         boolean worldReady = player != null && mc.level != null;
