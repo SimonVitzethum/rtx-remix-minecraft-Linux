@@ -101,7 +101,7 @@ class RtxSettingsTest {
     @Test
     void lightingScreenResetDoesNotIncludeItsBlockLightsSubscreen() {
         assertEquals(
-                List.of(SettingGroup.SKY, SettingGroup.CLOUDS),
+                List.of(SettingGroup.SKY, SettingGroup.CLOUDS, SettingGroup.FULLBRIGHT),
                 RtxSettingsCategoryScreen.resettableGroups(SettingCategory.LIGHTING));
     }
 }

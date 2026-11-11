@@ -1,0 +1,93 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Freecam: body, motion isolation, actual key routes, damage exit, F3+F4.
+1 fb off
+1 scmd gamemode survival @p
+1 scmd time set 6000
+1 scmd weather clear
+1 scmd fill -70 205 405 -42 205 435 grass_block
+1 scmd fill -56 206 427 -56 208 427 gold_block
+2 scmd tp @p -56 206 421 0 10
+8 look 0 10
+10 expect no-conflict key.rtxremix.freecam key.debug.switchGameMode
+10 expect no-conflict key.rtxremix.fullbright key.debug.showHitboxes
+12 key f4
+13 expect freecam on
+13 fcaim 5 1.5 20
+14 anchor
+16 state
+17 shot marker freecam_body
+17.5 move c c 0 0
+17.7 move c c 40 -15
+18 kdown w
+18 kdown d
+18 kdown space
+19 state
+19 kup w
+19 kup d
+19 kup space
+20 kdown shift
+21 kup shift
+22 scroll 2
+23 kdown ctrl
+23 kdown w
+24 kup w
+24 kup ctrl
+25 down left
+25 down right
+26 up left
+26 up right
+25.5 expect no-interaction
+27 expect stationary
+27 expect camera-moved
+27 expect camera-turned
+27 expect hotbar-unchanged
+27 state
+28 scmd damage @p 2
+30 expect freecam off
+31 key f4
+32 expect freecam on
+33 key f4
+34 expect freecam off
+35 kdown f3
+35 key f4
+36 expect freecam off
+36 shot marker gamemode_switcher
+37 kup f3
+# Build all six room surfaces BEFORE any visual/exposure comparison.
+39 scmd gamemode creative @p
+39 scmd time set 18000
+39 scmd fill -64 258 413 -48 266 429 stone hollow
+39 scmd fill -56 259 421 -56 262 421 iron_ore
+39 scmd fill -52 259 417 -52 260 417 oak_planks
+39 scmd fill -60 259 425 -60 261 425 gold_ore
+39 scmd setblock -52 259 425 chest
+39 scmd setblock -60 259 417 furnace
+41 scmd tp @p -56 259 427 180 8
+44 scmd execute if block -64 266 413 stone if block -48 266 429 stone if block -56 266 421 stone run say S23_ROOF_READY
+48 look 180 8
+65 state
+65 get rtx.autoExposure.evMinValue
+65 get rtx.localtonemap.exposure
+66 shot marker room_off
+67 key b
+70 expect fullbright 1
+83 get rtx.autoExposure.evMinValue
+83 get rtx.localtonemap.exposure
+84 shot marker room_on_100_50
+85 key b
+88 expect fullbright 0
+101 get rtx.autoExposure.evMinValue
+101 get rtx.localtonemap.exposure
+102 shot marker room_off_restored
+# Open night comparison at the same fixed pose, after exposure settles.
+104 scmd tp @p -56 206 421 0 10
+110 look 0 10
+125 shot marker night_off
+126 key b
+129 expect fullbright 1
+142 shot marker night_on_100_50
+143 key b
+146 expect fullbright 0
+147 state
+148 shot marker session_done

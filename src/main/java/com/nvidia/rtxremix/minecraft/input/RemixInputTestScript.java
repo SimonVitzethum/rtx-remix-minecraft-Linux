@@ -31,10 +31,21 @@ import java.util.List;
  * conf KEY VALUE          Remix config variable (SetConfigVariable), e.g. conf rtx.qualityDLSS 2
  * cmd TEXT...             chat command without the slash (sendCommand), e.g. cmd tp @s 0 100 0 90 0
  * look YAW PITCH          set the local player's view direction (degrees)
+ * freecam                  toggle the freecam (like the key; the real key is tested with "key f4")
+ * fcaim DIST UP ANGLE  freecam DIST blocks from the player (ANGLE degrees around, UP higher) looking at it
+ * fcpose X Y Z YAW PITCH  place the freecam
+ * fb on|off [VARIANT [KEYRAD BACKRAD EVDROP]]   fullbright (variant 1..3) and tunables
+ * anchor / expect stationary   save and verify player position and view direction
+ * expect freecam on|off / fullbright LEVEL / no-conflict KEY_ID KEY_ID   assert state
+ * expect camera-moved|camera-turned|hotbar-unchanged|no-interaction   verify input routing
+ * state                    log player/camera pose, freecam speed and fullbright fade
+ * kdown / kup NAME         hold or release a key (also space, shift, ctrl)
+ * shot [marker] NAME       mark a screenshot; optional file acknowledgement yields without blocking rendering
+ * scmd TEXT...             integrated-server command (test world only)
  * diag                     log client/server loaded chunk counts and view distances
  * close                    close the menu like Alt+X does
  * altx                     Alt+X chord through KeyboardHandler.keyPress (toggles the developer menu)
- * move X Y                 cursor in window coordinates; "c" is the window centre; X and Y may be fractions like 0.5
+ * move X Y [DX DY]         cursor in window coordinates; "c" is the window centre; X and Y may be fractions like 0.5
  * click [left|right]       press and release at the current position
  * down / up [button]       press or release only
  * scroll DY                wheel
@@ -58,6 +69,15 @@ public final class RemixInputTestScript {
     private static long startNanos = -1L;
     private static double cursorX;
     private static double cursorY;
+    private static Path pendingShot;
+    private static long shotStartedNanos;
+    private static net.minecraft.world.phys.Vec3 anchor;
+    private static float anchorYaw;
+    private static float anchorPitch;
+    private static net.minecraft.world.phys.Vec3 anchorCamera;
+    private static float anchorCameraYaw;
+    private static float anchorCameraPitch;
+    private static int anchorSlot;
 
     private RemixInputTestScript() {
     }
@@ -107,7 +127,26 @@ public final class RemixInputTestScript {
         if (!menuMode && (mc.level == null || mc.player == null)) {
             return;
         }
+        if (mc.player != null && mc.gui.screen() instanceof net.minecraft.client.gui.screens.DeathScreen) {
+            mc.player.respawn(); // a world saved while dead (test damage) must not block the script
+            return;
+        }
+        if (!menuMode && startNanos < 0 && mc.gui.screen() != null) {
+            return; // the clock starts once the world is playable (loading screen gone)
+        }
         long now = System.nanoTime();
+        if (pendingShot != null) {
+            if (!Files.exists(pendingShot) && now - shotStartedNanos < 30_000_000_000L) {
+                return;
+            }
+            if (!Files.exists(pendingShot)) {
+                LOGGER.error("Screenshot acknowledgement timed out: {}", pendingShot);
+            }
+            // External capture must not consume the exposure-settling time of subsequent steps.
+            startNanos += now - shotStartedNanos;
+            pendingShot = null;
+            return;
+        }
         if (startNanos < 0) {
             startNanos = now;
         }
@@ -116,6 +155,9 @@ public final class RemixInputTestScript {
             Step step = steps.get(next++);
             try {
                 run(mc, step.words);
+                if (step.words[0].equals("shot")) {
+                    return;
+                }
             } catch (Exception e) {
                 LOGGER.error("Step failed: {}", String.join(" ", step.words), e);
             }
@@ -139,7 +181,41 @@ public final class RemixInputTestScript {
             case "dumpblocks" -> BlockGridTest.dump(net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve(w[1]));
             case "grid" -> BlockGridTest.grid(mc, net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve(w[1]),
                     Integer.parseInt(w[2]), Integer.parseInt(w[3]), Integer.parseInt(w[4]), Integer.parseInt(w[5]));
-            case "shot" -> LOGGER.info("shot marker {}", w.length > 1 ? w[1] : "");
+            case "freecam" -> com.nvidia.rtxremix.minecraft.camera.Freecam.toggleForTest(mc);
+            case "fcpose" -> com.nvidia.rtxremix.minecraft.camera.Freecam.setPose(Double.parseDouble(w[1]),
+                    Double.parseDouble(w[2]), Double.parseDouble(w[3]), Float.parseFloat(w[4]), Float.parseFloat(w[5]));
+            case "fcaim" -> {
+                // freecam DIST blocks away from the player at ANGLE degrees around it, UP blocks higher, looking at the player
+                double dist = Double.parseDouble(w[1]);
+                double up = Double.parseDouble(w[2]);
+                double ang = Math.toRadians(Double.parseDouble(w[3]));
+                net.minecraft.world.phys.Vec3 pe = mc.player.getEyePosition();
+                double cx = pe.x + Math.sin(ang) * dist;
+                double cz = pe.z + Math.cos(ang) * dist;
+                double cy = pe.y + up;
+                double dx = pe.x - cx;
+                double dz = pe.z - cz;
+                double dy = pe.y - 0.5 - cy;
+                float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+                float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+                com.nvidia.rtxremix.minecraft.camera.Freecam.setPose(cx, cy, cz, yaw, pitch);
+            }
+            case "fb" -> {
+                com.nvidia.rtxremix.minecraft.light.Fullbright.setEnabled(w[1].equals("on"));
+                if (w.length > 2) com.nvidia.rtxremix.minecraft.light.Fullbright.variant = Integer.parseInt(w[2]);
+                if (w.length > 3) com.nvidia.rtxremix.minecraft.light.Fullbright.keyRadiance = Float.parseFloat(w[3]);
+                if (w.length > 4) com.nvidia.rtxremix.minecraft.light.Fullbright.backRadiance = Float.parseFloat(w[4]);
+                if (w.length > 5) com.nvidia.rtxremix.minecraft.light.Fullbright.evMinDrop = Float.parseFloat(w[5]);
+            }
+            case "shot" -> {
+                String shotName = w.length > 2 ? w[2] : (w.length > 1 ? w[1] : "");
+                LOGGER.info("shot marker {}", shotName);
+                Path dir = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir();
+                if (Boolean.getBoolean("rtxremix.test.shotAck") || Files.exists(dir.resolve("shot-ack-enable"))) {
+                    pendingShot = dir.resolve("shot-ack-" + shotName);
+                    shotStartedNanos = System.nanoTime();
+                }
+            }
             case "cmd" -> mc.player.connection.sendCommand(String.join(" ", java.util.Arrays.copyOfRange(w, 1, w.length)));
             case "scmd" -> {
                 // server-side command with full permission (test worlds without cheats): scmd execute as @p run tp @s 0 120 0
@@ -157,6 +233,45 @@ public final class RemixInputTestScript {
                 mc.player.yRotO = yaw;
                 mc.player.xRotO = pitch;
             }
+            case "anchor" -> {
+                anchor = mc.player.position();
+                anchorYaw = mc.player.getYRot();
+                anchorPitch = mc.player.getXRot();
+                var camera = mc.gameRenderer.mainCamera();
+                anchorCamera = camera.position();
+                anchorCameraYaw = camera.yRot();
+                anchorCameraPitch = camera.xRot();
+                anchorSlot = mc.player.getInventory().getSelectedSlot();
+            }
+            case "expect" -> {
+                boolean ok = switch (w[1]) {
+                    case "freecam" -> com.nvidia.rtxremix.minecraft.camera.Freecam.isActive() == w[2].equals("on");
+                    case "stationary" -> anchor != null && mc.player.position().distanceToSqr(anchor) < 0.0001
+                            && mc.player.getYRot() == anchorYaw && mc.player.getXRot() == anchorPitch;
+                    case "camera-moved" -> anchorCamera != null
+                            && mc.gameRenderer.mainCamera().position().distanceToSqr(anchorCamera) > 0.01;
+                    case "camera-turned" -> Math.abs(mc.gameRenderer.mainCamera().yRot() - anchorCameraYaw) > 0.01f
+                            || Math.abs(mc.gameRenderer.mainCamera().xRot() - anchorCameraPitch) > 0.01f;
+                    case "hotbar-unchanged" -> mc.player.getInventory().getSelectedSlot() == anchorSlot;
+                    case "no-interaction" -> !mc.player.isUsingItem() && !mc.player.isSwinging() && !mc.gameMode.isDestroying();
+                    case "fullbright" -> Math.abs(com.nvidia.rtxremix.minecraft.light.Fullbright.level()
+                            - Float.parseFloat(w[2])) < 0.01f;
+                    case "no-conflict" -> {
+                        var keys = java.util.Arrays.stream(mc.options.keyMappings).collect(
+                                java.util.stream.Collectors.toMap(net.minecraft.client.KeyMapping::getName, k -> k));
+                        var a = keys.get(w[2]);
+                        var b = keys.get(w[3]);
+                        yield !a.same(b) && !b.same(a);
+                    }
+                    default -> throw new IllegalArgumentException("unknown expectation " + w[1]);
+                };
+                if (!ok) throw new IllegalStateException("Expectation failed: " + desc);
+                LOGGER.info("PASS {}", desc);
+            }
+            case "state" -> LOGGER.info("state: player={} yaw={} pitch={} camera={} freecam={} speed={} fullbright={}",
+                    mc.player.position(), mc.player.getYRot(), mc.player.getXRot(),
+                    mc.gameRenderer.mainCamera().position(), com.nvidia.rtxremix.minecraft.camera.Freecam.isActive(),
+                    com.nvidia.rtxremix.minecraft.camera.Freecam.speed(), com.nvidia.rtxremix.minecraft.light.Fullbright.level());
             case "diag" -> {
                 var srv = mc.getSingleplayerServer();
                 LOGGER.info("diag: clockTime={} rain={} thunder={}", mc.level.getDefaultClockTime(),
@@ -181,7 +296,9 @@ public final class RemixInputTestScript {
             case "move" -> {
                 cursorX = coordinate(w[1], window.getScreenWidth());
                 cursorY = coordinate(w[2], window.getScreenHeight());
-                mc.mouseHandler.onMove(h, cursorX, cursorY, 0.0, 0.0);
+                mc.mouseHandler.onMove(h, cursorX, cursorY,
+                        w.length > 3 ? Double.parseDouble(w[3]) : 0.0,
+                        w.length > 4 ? Double.parseDouble(w[4]) : 0.0);
             }
             case "click" -> {
                 int button = button(w);
@@ -192,6 +309,8 @@ public final class RemixInputTestScript {
             case "up" -> mc.mouseHandler.onButton(h, new MouseButtonInfo(button(w), 0), 0);
             case "scroll" -> mc.mouseHandler.onScroll(h, 0.0, Double.parseDouble(w[1]));
             case "char" -> mc.keyboardHandler.charTyped(h, new CharacterEvent(w[1].codePointAt(0)));
+            case "kdown" -> mc.keyboardHandler.keyPress(h, 1, new KeyEvent(scancode(w[1]), 0, 0));
+            case "kup" -> mc.keyboardHandler.keyPress(h, 0, new KeyEvent(scancode(w[1]), 0, 0));
             case "key" -> {
                 int sc = scancode(w[1]);
                 mc.keyboardHandler.keyPress(h, 1, new KeyEvent(sc, 0, 0));
@@ -241,6 +360,9 @@ public final class RemixInputTestScript {
             case "esc", "escape" -> InputConstants.KEY_ESCAPE;
             case "enter" -> InputConstants.KEY_RETURN;
             case "tab" -> InputConstants.KEY_TAB;
+            case "space" -> InputConstants.KEY_SPACE;
+            case "shift" -> InputConstants.KEY_LSHIFT;
+            case "ctrl" -> InputConstants.KEY_LCONTROL;
             case "backspace" -> InputConstants.KEY_BACKSPACE;
             case "up" -> InputConstants.KEY_UP;
             case "down" -> InputConstants.KEY_DOWN;

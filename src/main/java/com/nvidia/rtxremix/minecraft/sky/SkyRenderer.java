@@ -600,7 +600,7 @@ public class SkyRenderer {
 
     static float skyAmbientMultiplier(float sunHeight) {
         float nightFactor = 1.0f - LightManager.celestialVisibility(sunHeight);
-        return dayAmbientBoost * (1.0f - nightFactor) + nightAmbientBoost * nightFactor;
+        return dayAmbientBoost * (1.0f - nightFactor) + (nightAmbientBoost + com.nvidia.rtxremix.minecraft.light.Fullbright.nightAmbientBoost()) * nightFactor;
     }
 
     private void renderCelestialMeshes(

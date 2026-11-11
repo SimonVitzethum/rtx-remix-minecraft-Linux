@@ -1,6 +1,16 @@
 {
   "key.rtxremix.toggleHeldLights": "Toggle Held Lights",
   "key.rtxremix.toggleRtx": "Toggle RTX Rendering",
+  "key.rtxremix.freecam": "Freecam",
+  "key.rtxremix.fullbright": "Toggle Fullbright",
+  "rtxremix.freecam.hud": "Freecam (%s to exit, scroll: speed %s)",
+  "rtxremix.fullbright.on": "Fullbright: ON",
+  "rtxremix.fullbright.off": "Fullbright: OFF",
+  "rtxremix.settings.group.fullbright": "Fullbright",
+  "rtxremix.setting.fullbright.enabled": "Fullbright",
+  "rtxremix.setting.fullbright.enabled.tip": "Night vision style fill light and exposure so dark caves and nights are readable. Also on key B.",
+  "rtxremix.setting.fullbright.intensity": "Fullbright Level",
+  "rtxremix.setting.fullbright.intensity.tip": "Strength of the fullbright fill light and exposure lift.",
   "key.category.rtxremix.main": "RTX Remix",
 
   "block.rtx-remix-renderer.copper_beacon": "Copper Beacon",

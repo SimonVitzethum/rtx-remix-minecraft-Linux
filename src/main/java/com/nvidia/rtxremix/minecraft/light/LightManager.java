@@ -872,6 +872,7 @@ public class LightManager {
         Minecraft client = Minecraft.getInstance();
         return client != null
                 && holder == client.player
+                && !com.nvidia.rtxremix.minecraft.camera.Freecam.isActive()
                 && client.options.getCameraType().isFirstPerson();
     }
 

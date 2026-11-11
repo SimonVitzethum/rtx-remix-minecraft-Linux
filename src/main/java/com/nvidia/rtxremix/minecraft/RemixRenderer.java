@@ -160,6 +160,7 @@ public class RemixRenderer {
     // initialize(), so it is null only before the renderer comes up.
     private ConfLayerDriver confLayerDriver;
     private LightManager lightManager;
+    private final com.nvidia.rtxremix.minecraft.light.Fullbright fullbright = new com.nvidia.rtxremix.minecraft.light.Fullbright();
     private SkyRenderer skyRenderer;
     private CloudRenderer cloudRenderer;
     private BlockTextureManager textureManager;
@@ -909,6 +910,7 @@ public class RemixRenderer {
                 // one-frame lag between a spinning beacon and its beam.
                 lightManager.updateEntityLights(world, camera, tickDelta);
                 lightManager.updateLights(world);
+                fullbright.update(this, camera);
             } finally {
                 perfTimer.end(perfLights);
             }
@@ -1689,6 +1691,7 @@ public class RemixRenderer {
         if (lightManager != null) {
             lightManager.clear();
         }
+        fullbright.shutdown();
         if (entitySubmitter != null) {
             entitySubmitter.clear();
         }
@@ -1787,6 +1790,7 @@ public class RemixRenderer {
             blockOutlinePass = null;
         }
 
+        fullbright.shutdown();
         shutdownAssetStores();
 
         if (interopGlVk != null) {
