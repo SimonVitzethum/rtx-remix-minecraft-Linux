@@ -303,6 +303,7 @@ private:
 
   // The recorder currently lives here because it only captures acceleration
   // structure state. Move it higher if crash recording expands beyond AS data.
+  RtxClusterBlasBuilder m_clusterBlas;
   RtxGpuCrashRecorder m_gpuCrashRecorder;
   VkDeviceSize m_scratchAlignment;
   Rc<DxvkBuffer> m_scratchBuffer;

@@ -27,6 +27,9 @@ namespace dxvk {
     VkPhysicalDeviceAccelerationStructurePropertiesKHR        khrDeviceAccelerationStructureProperties;
     VkPhysicalDeviceFloatControlsPropertiesKHR                khrShaderFloatControls;
     VkPhysicalDeviceOpacityMicromapPropertiesEXT              extOpacityMicromapProperties;
+    // NV-DXVK start: Cluster acceleration structures
+    VkPhysicalDeviceClusterAccelerationStructurePropertiesNV  nvClusterAccelerationStructureProperties;
+    // NV-DXVK end
     VkPhysicalDeviceRayTracingInvocationReorderPropertiesNV   nvRayTracingInvocationReorderProperties;
   };
 
@@ -54,6 +57,9 @@ namespace dxvk {
   	VkPhysicalDeviceRayQueryFeaturesKHR	                      khrRayQueryFeatures;
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR	            khrDeviceRayTracingPipelineFeatures;
   	VkPhysicalDeviceAccelerationStructureFeaturesKHR          khrAccelerationStructureFeatures;
+    // NV-DXVK start: Cluster acceleration structures
+    VkPhysicalDeviceClusterAccelerationStructureFeaturesNV    nvClusterAccelerationStructureFeatures;
+    // NV-DXVK end
     VkPhysicalDeviceShaderAtomicFloatFeaturesEXT              extShaderAtomicFloat;
     VkPhysicalDeviceDiagnosticsConfigFeaturesNV               nvDeviceDiagnosticsConfig;
     VkPhysicalDeviceBufferDeviceAddressFeaturesKHR            khrBufferDeviceAddress;

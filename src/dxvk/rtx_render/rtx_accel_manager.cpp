@@ -906,6 +906,20 @@ namespace dxvk {
       assert(blasEntry->buildGeometries.size() == 1); // dynamic BLAS should always have this
       assert(blasEntry->buildRanges.size() == 1); // dynamic BLAS should always have this
 
+      if (m_clusterBlas.build(ctx, execBarriers, *blasEntry, uniqueBlasEntry.instances)) {
+        for (RtInstance* instance : uniqueBlasEntry.instances) {
+          addBlas(instance, blasEntry, nullptr);
+        }
+        m_activeDynamicBlases.push_back(blasEntry->dynamicBlas);
+        continue;
+      }
+      if (blasEntry->dynamicBlas.ptr() && blasEntry->dynamicBlas->clusters.ptr()) {
+        // Retire the complete cluster hierarchy before rebuilding unsupported geometry through KHR.
+        m_blasPool.push_back(std::move(blasEntry->dynamicBlas));
+        blasEntry->dynamicBlas = nullptr;
+        blasEntry->hasDynamicSizeInfo = false;
+      }
+
       bool forceRebuild = false;
       XXH64_hash_t boundOpacityMicromapHash = kEmptyHash;
       if (opacityMicromapManager) {
@@ -1351,6 +1365,9 @@ namespace dxvk {
       // Try to find an existing BLAS that is minimally sufficient to fit this bucket of geometries
       PooledBlas* selectedBlas = nullptr;
       for (const auto& blas : m_blasPool) {
+        if (blas->clusters.ptr()) {
+          continue;
+        }
         size_t bufferSize = blas->accelStructure->info().size;
         uint32_t paddedLastTouched = blas->frameLastTouched + 1 + (RtxOptions::enablePreviousTLAS() ? 1u : 0u); /* note: +2 because frameLastTouched is unsigned and init'd with UINT32_MAX, and keep the BLAS'es for one extra frame for previous TLAS access */
         if (bufferSize >= sizeInfo.accelerationStructureSize &&
@@ -2037,6 +2054,19 @@ namespace dxvk {
     for (auto&& blas : m_blasPool) {
       ctx->getCommandList()->trackResource<DxvkAccess::Read>(blas->accelStructure);
     }
+
+    // Track the whole hierarchy even when the scene-generation fast path skipped all build work.
+    for (const auto& blas : m_activeDynamicBlases) {
+      if (blas->clusters.ptr()) {
+        ctx->getCommandList()->trackResource<DxvkAccess::Read>(blas->clusters);
+      }
+    }
+    for (const auto& blas : m_blasPool) {
+      if (blas->clusters.ptr()) {
+        ctx->getCommandList()->trackResource<DxvkAccess::Read>(blas->clusters);
+      }
+    }
+    m_clusterBlas.report(m_device->getCurrentFrameId());
 
     size_t totalScratchSize = 0;
     internalBuildTlas<Tlas::Opaque>(ctx, totalScratchSize);

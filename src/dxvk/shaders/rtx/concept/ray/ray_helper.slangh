@@ -44,6 +44,17 @@ struct RayHitInfo
   bool frontHit;
 };
 
+// Geometry indices on cluster BLAS carry the original primitive range.
+// This uses ordinary ray-query builtins on every device, including the KHR fallback.
+void normalizeRayHitInfo(inout RayHitInfo hit)
+{
+  if ((hit.geometryIndex & 0x800000u) != 0)
+  {
+    hit.primitiveIndex += hit.geometryIndex & 0x7fffffu;
+    hit.geometryIndex = 0;
+  }
+}
+
 uint calculateSurfaceIndex(RayHitInfo rayHitInfo) 
 {
   return (rayHitInfo.customIndex & CUSTOM_INDEX_SURFACE_MASK) + rayHitInfo.geometryIndex;    
@@ -62,7 +73,8 @@ variableName.primitiveIndex = PrimitiveIndex();                                 
 variableName.customIndex = InstanceID();                                          \
 variableName.geometryIndex = GeometryIndex();                                     \
 variableName.hasHit = true;                                                       \
-variableName.frontHit = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+variableName.frontHit = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE; \
+normalizeRayHitInfo(variableName);
 
 #define RAY_HIT_INFO_CREATE_TRACE_RAY_MISS(variableName) \
 RayHitInfo variableName;                                 \
@@ -75,7 +87,8 @@ variableName.barycentricCoordinates = barycentricsToUint(rayQuery.CandidateTrian
 variableName.primitiveIndex = rayQuery.CandidatePrimitiveIndex();                                   \
 variableName.customIndex = rayQuery.CandidateInstanceID();                                          \
 variableName.geometryIndex = rayQuery.CandidateGeometryIndex();                                     \
-variableName.frontHit = rayQuery.CandidateTriangleFrontFace();
+variableName.frontHit = rayQuery.CandidateTriangleFrontFace(); \
+normalizeRayHitInfo(variableName);
 
 #define RAY_HIT_INFO_CREATE_RAY_QUERY_COMMITTED(variableName, rayQuery)                             \
 RayHitInfo variableName;                                                                            \
@@ -85,4 +98,5 @@ variableName.barycentricCoordinates = barycentricsToUint(rayQuery.CommittedTrian
 variableName.primitiveIndex = rayQuery.CommittedPrimitiveIndex();                                   \
 variableName.customIndex = rayQuery.CommittedInstanceID();                                          \
 variableName.geometryIndex = rayQuery.CommittedGeometryIndex();                                     \
-variableName.frontHit = rayQuery.CommittedTriangleFrontFace();
+variableName.frontHit = rayQuery.CommittedTriangleFrontFace(); \
+if (variableName.hasHit) { normalizeRayHitInfo(variableName); }

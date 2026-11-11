@@ -26,6 +26,9 @@
 #include "dxvk_adapter.h"
 
 #include "dxvk_device.h"
+// NV-DXVK start: Opt-in cluster acceleration structures
+#include "rtx_render/rtx_cluster_blas.h"
+// NV-DXVK end
 #include "dxvk_instance.h"
 #include "../util/util_once.h"
 #include "../util/util_sentry.h"
@@ -353,7 +356,7 @@ namespace dxvk {
           DxvkDeviceFeatures  enabledFeatures) {
     DxvkDeviceExtensions devExtensions;
 
-    std::array<DxvkExt*, 45> devExtensionList = {{
+    std::array<DxvkExt*, 46> devExtensionList = {{
       &devExtensions.amdMemoryOverallocationBehaviour,
       &devExtensions.amdShaderFragmentMask,
       &devExtensions.ext4444Formats,
@@ -396,6 +399,7 @@ namespace dxvk {
       &devExtensions.nvRayTracingInvocationReorder,
       &devExtensions.khrSynchronization2,
       &devExtensions.extOpacityMicromap,
+      &devExtensions.nvClusterAccelerationStructure,
       &devExtensions.nvLowLatency,
       &devExtensions.nvxBinaryImport,
       &devExtensions.nvxImageViewHandle,
@@ -420,6 +424,17 @@ namespace dxvk {
 
       enabledFeatures.khrBufferDeviceAddress.bufferDeviceAddress = VK_TRUE;
     }
+
+    // NV-DXVK start: cluster acceleration structures, opt-in only
+    if (clusterAccelerationStructureRequested() &&
+        m_deviceExtensions.supports(devExtensions.nvClusterAccelerationStructure.name()) &&
+        m_deviceFeatures.nvClusterAccelerationStructureFeatures.clusterAccelerationStructure) {
+      devExtensions.nvClusterAccelerationStructure.setMode(DxvkExtMode::Optional);
+      enabledFeatures.nvClusterAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
+      enabledFeatures.nvClusterAccelerationStructureFeatures.clusterAccelerationStructure = VK_TRUE;
+      enabledFeatures.nvClusterAccelerationStructureFeatures.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.nvClusterAccelerationStructureFeatures);
+    }
+    // NV-DXVK end
 
     DxvkNameSet extensionsEnabled;
 
@@ -1095,6 +1110,14 @@ namespace dxvk {
       m_deviceInfo.khrDeviceAccelerationStructureProperties.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.khrDeviceAccelerationStructureProperties);
     }
 
+    // NV-DXVK start: Query optional cluster acceleration structure support
+    if (m_deviceExtensions.supports(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME)) {
+      m_deviceInfo.nvClusterAccelerationStructureProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_PROPERTIES_NV;
+      m_deviceInfo.nvClusterAccelerationStructureProperties.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.nvClusterAccelerationStructureProperties);
+    }
+
+    // NV-DXVK end
+
     if (m_deviceExtensions.supports(VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME)) {
       m_deviceInfo.extOpacityMicromapProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_PROPERTIES_EXT;
       m_deviceInfo.extOpacityMicromapProperties.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.extOpacityMicromapProperties);
@@ -1187,6 +1210,14 @@ namespace dxvk {
       m_deviceFeatures.khrRayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
       m_deviceFeatures.khrRayQueryFeatures.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.khrRayQueryFeatures);
     }
+
+    // NV-DXVK start: Query optional cluster acceleration structure support
+    if (m_deviceExtensions.supports(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME)) {
+      m_deviceFeatures.nvClusterAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
+      m_deviceFeatures.nvClusterAccelerationStructureFeatures.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.nvClusterAccelerationStructureFeatures);
+    }
+
+    // NV-DXVK end
 
     if (m_deviceExtensions.supports(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)) {
       m_deviceFeatures.khrAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;

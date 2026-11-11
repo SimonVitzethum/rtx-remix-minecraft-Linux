@@ -32,6 +32,8 @@
 #include "../../util/util_threadpool.h"
 #include "../../util/util_spatial_map.h"
 
+#include "rtx_cluster_blas.h"
+
 #include <inttypes.h>
 #include <memory>
 #include <vector>
@@ -922,6 +924,7 @@ private:
 
  // A BLAS and its data buffer that can be pooled and used for various geometries
 struct PooledBlas : public RcObject {
+  Rc<ClusterBlasResources> clusters;
   Rc<DxvkAccelStructure> accelStructure;
   uint64_t accelerationStructureReference = 0;
 
