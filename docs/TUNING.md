@@ -303,9 +303,9 @@ entity or separate visibility traversal.
 and exposure. Its two sphere radiances default to 100/50, with volumetric
 radiance disabled for camera-following emitters. Exposure is a temporary conf
 layer at priority 12000, above shipped biome/zone profiles and below explicit
-user overrides. Acquire reads a small generated conf synchronously; the file is
-then deleted. Post-processing changes replace that layer, and world clear or
-renderer shutdown releases it. Fade-out disables the layer rather than writing
+user overrides. Acquire reads a small generated conf synchronously; the file stays available
+for native layer reloads until release. Post-processing changes replace that
+layer, and world clear or renderer shutdown releases it and deletes the file. Fade-out disables the layer rather than writing
 baseline values into User Settings.
 
 For a headless regression, copy

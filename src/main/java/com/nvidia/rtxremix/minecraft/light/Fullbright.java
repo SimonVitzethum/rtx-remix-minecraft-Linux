@@ -68,6 +68,7 @@ public final class Fullbright {
     private RemixLight back;
     private RemixAPI exposureApi;
     private long exposureLayer;
+    private Path exposureConf;
     private float appliedStrength = -1.0f;
     private float appliedEv = Float.NaN;
     private float appliedExposure = Float.NaN;
@@ -188,18 +189,19 @@ public final class Fullbright {
         try {
             if (exposureLayer == 0 || ev != appliedEv || exposure != appliedExposure || shadows != appliedShadows) {
                 // Dynamic effects belong to a blendable layer, below explicit user overrides.
-                // Acquire parses synchronously; the small generated file is not a shipped payload.
+                // Keep the small generated file until release, including native menu reloads.
                 Path conf = Files.createTempFile("rtxremix-fullbright-", ".conf");
                 try {
                     Files.writeString(conf, "rtx.autoExposure.evMinValue = " + ev
                             + "\nrtx.localtonemap.exposure = " + exposure
                             + "\nrtx.localtonemap.shadows = " + shadows + "\n");
                     long replacement = api.acquireConfigLayer(conf.toString(), 12000.0f, 0.5f);
-                    if (exposureLayer != 0) api.releaseConfigLayer(exposureLayer);
+                    releaseExposure();
                     exposureLayer = replacement;
                     exposureApi = api;
+                    exposureConf = conf;
                 } finally {
-                    Files.deleteIfExists(conf);
+                    if (!conf.equals(exposureConf)) Files.deleteIfExists(conf);
                 }
                 appliedEv = ev;
                 appliedExposure = exposure;
@@ -215,14 +217,26 @@ public final class Fullbright {
         }
     }
 
-    /** Releases world-owned native resources before the stores and runtime are destroyed. */
-    public void shutdown() {
-        destroyLights();
+    private void releaseExposure() {
         if (exposureLayer != 0) {
             exposureApi.releaseConfigLayer(exposureLayer);
             exposureLayer = 0;
             exposureApi = null;
         }
+        if (exposureConf != null) {
+            try {
+                Files.deleteIfExists(exposureConf);
+            } catch (IOException ex) {
+                LOGGER.warn("Cannot delete released Fullbright conf {}", exposureConf, ex);
+            }
+            exposureConf = null;
+        }
+    }
+
+    /** Releases world-owned native resources before the stores and runtime are destroyed. */
+    public void shutdown() {
+        destroyLights();
+        releaseExposure();
         appliedStrength = -1.0f;
         blend = 0.0f;
         level = 0.0f;
