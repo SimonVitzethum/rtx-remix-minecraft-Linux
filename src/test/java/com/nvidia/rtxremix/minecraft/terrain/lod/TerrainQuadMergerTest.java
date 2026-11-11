@@ -20,8 +20,7 @@ class TerrainQuadMergerTest {
     private static final int BOUNDS_MAX = pack(0.375f, 0.625f);
 
     private static int pack(float x, float y) {
-        return (Short.toUnsignedInt(Float.floatToFloat16(x)))
-                | Short.toUnsignedInt(Float.floatToFloat16(y)) << 16;
+        return com.nvidia.rtxremix.HardcodedVertex.packUnorm2x16(x, y);
     }
 
     /** One +Y block face at cell (x, z), height y, full-sprite UVs. */

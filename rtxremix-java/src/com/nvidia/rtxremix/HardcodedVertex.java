@@ -20,9 +20,9 @@ public class HardcodedVertex {
     public float[] normal = new float[3];
     public float[] texcoord = new float[2];
     public int color;
-    /** Packed half2: min.u, min.v. Leave both bounds zero to disable atlas wrapping bounds. */
+    /** Packed UNORM16 pair: min.u, min.v. Leave both bounds zero to disable atlas wrapping bounds. */
     public int texcoordBoundsMin;
-    /** Packed half2: max.u, max.v. Leave both bounds zero to disable atlas wrapping bounds. */
+    /** Packed UNORM16 pair: max.u, max.v. Leave both bounds zero to disable atlas wrapping bounds. */
     public int texcoordBoundsMax;
     public int _pad0;
     public int _pad1;
@@ -90,6 +90,7 @@ public class HardcodedVertex {
         this.color = color;
     }
 
+    /** Sets atlas bounds for surfaces using {@link MeshInfoSurfaceTriangles#TEXCOORD_BOUNDS_UNORM16}. */
     public void setTexcoordBounds(float minU, float minV, float maxU, float maxV) {
         this.texcoordBoundsMin = packUnorm2x16(minU, minV);
         this.texcoordBoundsMax = packUnorm2x16(maxU, maxV);

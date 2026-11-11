@@ -1905,7 +1905,7 @@ public class RemixEntitySubmitter {
         return new RemixMeshSurface(mat)
                 .setVertexData(vertices, vertCount)
                 .setIndexDataFrom(indices, indices.length)
-                .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS);
+                .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS_UNORM16);
     }
 
     /**

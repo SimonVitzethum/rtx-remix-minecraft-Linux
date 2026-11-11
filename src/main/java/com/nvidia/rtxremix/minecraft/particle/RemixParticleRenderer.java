@@ -650,7 +650,7 @@ public class RemixParticleRenderer {
             RemixMeshSurface surface = new RemixMeshSurface(material)
                     .setVertexData(vertices, particleCount * VERTS_PER_PARTICLE)
                     .setIndexData(indices, particleCount * INDICES_PER_PARTICLE)
-                    .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS);
+                    .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS_UNORM16);
             RemixMesh mesh = new RemixMesh(new RemixMeshSurface[]{surface});
             vertices = null;
             indices = null;

@@ -350,7 +350,7 @@ public final class BlockMeshBuilder {
                     RemixMeshSurface surface = new RemixMeshSurface(material)
                             .setVertexData(vm, totalVerts)
                             .setIndexData(im, totalIdx)
-                            .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS);
+                            .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS_UNORM16);
                     transferred = true;
                     accumulator.add(surface, (long) quadCount * BYTES_PER_CANONICAL_QUAD);
                 } finally {
@@ -418,7 +418,7 @@ public final class BlockMeshBuilder {
             RemixMeshSurface surface = new RemixMeshSurface(material)
                     .setVertexData(vm, totalVerts)
                     .setIndexData(im, totalIdx)
-                    .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS);
+                    .setFlags(MeshInfoSurfaceTriangles.TEXCOORD_BOUNDS_UNORM16);
             transferred = true;
             return surface;
         } finally {

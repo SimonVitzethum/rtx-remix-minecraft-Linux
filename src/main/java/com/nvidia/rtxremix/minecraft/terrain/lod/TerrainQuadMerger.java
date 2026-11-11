@@ -66,7 +66,8 @@ public final class TerrainQuadMerger {
                 int base = q * 4 * STRIDE;
                 if (classify(src, base, source.xOff(), source.yOff(), source.zOff(), info)) {
                     GroupKey key = new GroupKey(info.axis, info.normalSign, Float.floatToIntBits(info.plane),
-                            info.color, info.boundsMin, info.boundsMax, info.orientation);
+                            info.color, info.boundsMin, info.boundsMax, info.orientation,
+                            info.uMin, info.uMax, info.vMin, info.vMax);
                     Group group = groups.get(key);
                     if (group == null) {
                         group = new Group(key, info);
@@ -117,7 +118,8 @@ public final class TerrainQuadMerger {
     }
 
     private record GroupKey(int axis, int normalSign, int planeBits, int color,
-                            int boundsMin, int boundsMax, int orientation) {
+                            int boundsMin, int boundsMax, int orientation,
+                            float uMin, float uMax, float vMin, float vMax) {
     }
 
     private static boolean classify(ByteBuffer v, int base, int xOff, int yOff, int zOff, QuadInfo out) {
@@ -184,6 +186,8 @@ public final class TerrainQuadMerger {
         }
         int orientation = 0;
         int seenCorners = 0;
+        float actualUMin = Float.POSITIVE_INFINITY, actualVMin = Float.POSITIVE_INFINITY;
+        float actualUMax = Float.NEGATIVE_INFINITY, actualVMax = Float.NEGATIVE_INFINITY;
         for (int i = 0; i < 4; i++) {
             float pa = pos[i * 3 + a] - aMin;
             float pb = pos[i * 3 + b] - bMinPos;
@@ -194,6 +198,10 @@ public final class TerrainQuadMerger {
             }
             float u = v.getFloat(base + i * STRIDE + 24);
             float w = v.getFloat(base + i * STRIDE + 28);
+            actualUMin = Math.min(actualUMin, u);
+            actualUMax = Math.max(actualUMax, u);
+            actualVMin = Math.min(actualVMin, w);
+            actualVMax = Math.max(actualVMax, w);
             int uBit;
             if (Math.abs(u - uHi) <= uEps) {
                 uBit = 1;
@@ -228,10 +236,11 @@ public final class TerrainQuadMerger {
         out.orientation = orientation;
         out.cellA = (int) Math.round(aMin);
         out.cellB = (int) Math.round(bMinPos);
-        out.uMin = uLo;
-        out.uMax = uHi;
-        out.vMin = vLo;
-        out.vMax = vHi;
+        // Bounds classify the sprite. Geometry keeps its original UVs without quantization drift.
+        out.uMin = actualUMin;
+        out.uMax = actualUMax;
+        out.vMin = actualVMin;
+        out.vMax = actualVMax;
         out.nx = nx;
         out.ny = ny;
         out.nz = nz;
