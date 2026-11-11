@@ -52,6 +52,8 @@ final class FarLodSource implements FarTileSource {
         final short[] rgb = new short[TILE_CELLS * TILE_CELLS];
         /** Changes whenever the content changed (cache sources); part of the column signature. */
         long version;
+        /** False only for an empty cache probe that has neither received nor generated source data yet. */
+        boolean usable = true;
     }
 
     private final ChunkGenerator generator;

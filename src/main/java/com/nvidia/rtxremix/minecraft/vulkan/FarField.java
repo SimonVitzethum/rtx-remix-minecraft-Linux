@@ -685,6 +685,7 @@ public final class FarField {
     }
 
     private void submit(Capture capture, ClientLevel level) {
+        long jobSession = session;
         // The validator is invoked only by the render thread, never by a worker.
         FarBuildCache.Ticket ticket = cache.begin(capture.key, capture.signature, () -> capture.input == null || capture.input.stillCurrent(level));
         if (ticket == null) return;
@@ -693,7 +694,10 @@ public final class FarField {
             long start = System.nanoTime();
             FarSubtree.Result result = null;
             try {
+                if (session != jobSession) return;
                 result = buildSubtree(capture.sx, capture.sz, capture.lg, capture.tile, classes, capture.snapshots, capture.minY, capture.slabs);
+            } catch (java.util.concurrent.CancellationException ignored) {
+                // Shutdown interrupts the current CPU build; no partial result is published.
             } catch (RuntimeException t) {
                 LOGGER.error("FarField subtree {},{} failed", capture.sx, capture.sz, t);
             } finally {

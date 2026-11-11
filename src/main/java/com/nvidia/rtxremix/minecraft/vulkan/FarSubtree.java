@@ -101,6 +101,7 @@ final class FarSubtree {
     }
 
     private int region(int level, int x, int y, int z) {
+        if (level >= 6 && Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
         int size = 1 << level;
         int yAbs = slabBase + y;
         if (level >= 4 && exactCount(x >> 4, z >> 4, size >> 4) > 0) {

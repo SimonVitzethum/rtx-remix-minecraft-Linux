@@ -20,7 +20,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.InflaterInputStream;
@@ -63,7 +62,7 @@ final class FarCacheSource implements FarTileSource {
     private final FarTileSource fallback;
     private final java.util.Set<Long> missingRegions = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<Long, Region> regions = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, AtomicInteger> epochs = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, AtomicLong> epochs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, FarLodSource.Tile> tiles = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Long> lastBuilt = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Boolean> queued = new ConcurrentHashMap<>();
@@ -141,7 +140,7 @@ final class FarCacheSource implements FarTileSource {
         int slot = (Math.floorMod(cz, 32) << 5) | Math.floorMod(cx, 32);
         if (java.util.Arrays.equals(r.top(slot), top) && java.util.Arrays.equals(r.rgb(slot), rgb)) return;
         r.set(slot, top, rgb);
-        epochs.computeIfAbsent(rk, k -> new AtomicInteger()).incrementAndGet();
+        epochs.computeIfAbsent(rk, k -> new AtomicLong()).incrementAndGet();
         recorded.incrementAndGet();
     }
 
@@ -162,7 +161,7 @@ final class FarCacheSource implements FarTileSource {
         long sum = 0;
         for (int rz = Math.floorDiv(z0, 512); rz <= Math.floorDiv(z0 + blocks - 1, 512); rz++) {
             for (int rx = Math.floorDiv(x0, 512); rx <= Math.floorDiv(x0 + blocks - 1, 512); rx++) {
-                AtomicInteger e = epochs.get(regionKey(rx, rz));
+                AtomicLong e = epochs.get(regionKey(rx, rz));
                 if (e != null) sum += e.get();
             }
         }
@@ -176,7 +175,7 @@ final class FarCacheSource implements FarTileSource {
         long k = tileKey(lg, tx, tz);
         FarLodSource.Tile t = tiles.get(k);
         long now = System.currentTimeMillis();
-        if (t != null && t.version == stamp(lg, tx, tz)) return t;
+        if (t != null && t.version == stamp(lg, tx, tz)) return t.usable ? t : null;
         Long lb = lastBuilt.get(k);
         if (t == null || lb == null || now - lb > REBUILD_MIN_MS) {
             if (!closed && queued.size() < 4096 && queued.putIfAbsent(k, Boolean.TRUE) == null) {
@@ -185,12 +184,13 @@ final class FarCacheSource implements FarTileSource {
                 tileQueue.add(new TileJob(k, lg, tx, tz, Math.max(Math.abs(dx), Math.abs(dz))));
             }
         }
-        return t;
+        return t != null && t.usable ? t : null;
     }
 
     @Override
     public boolean has(int lg, int tx, int tz) {
-        return tiles.containsKey(tileKey(lg, tx, tz));
+        FarLodSource.Tile tile = tiles.get(tileKey(lg, tx, tz));
+        return tile != null && (tile.usable || fallback != null && fallback.has(lg, tx, tz));
     }
 
     @Override
@@ -264,6 +264,7 @@ final class FarCacheSource implements FarTileSource {
     private FarLodSource.Tile build(TileJob j) {
         FarLodSource.Tile tile = new FarLodSource.Tile();
         FarLodSource.Tile base = fallback == null ? null : fallback.get(j.lg, j.tx, j.tz);
+        tile.usable = base != null;
         if (base == null) java.util.Arrays.fill(tile.top, FarLodSource.EMPTY);
         else {
             System.arraycopy(base.top, 0, tile.top, 0, tile.top.length);
@@ -286,6 +287,7 @@ final class FarCacheSource implements FarTileSource {
                     else synchronized (r) { ct = r.top[slot]; cr = r.rgb[slot]; }
                 }
                 if (ct == null) continue;
+                tile.usable = true;
                 int lx = bx & 15, lz = bz & 15;
                 int n = 0, sumTop = 0, sr = 0, sg = 0, sb = 0;
                 for (int z = lz; z < lz + size; z++) {
