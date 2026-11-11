@@ -446,6 +446,7 @@ extern "C" {
     // Optional atlas region: min.u, min.v, max.u, max.v. TEXCOORD_BOUNDS uses IEEE 754 binary16.
     // TEXCOORD_BOUNDS_UNORM16 uses unsigned normalized 16-bit values (value / 65535).
     // Bounds must be identical on every vertex of a triangle. With neither flag they are ignored.
+    // UNORM16 takes precedence if both flags are set.
     uint16_t texcoordBounds[4];
     uint32_t _pad0;
     uint32_t _pad1;

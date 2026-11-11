@@ -307,15 +307,6 @@ public class RemixRenderer {
                         + "the launcher's access token, so keep it private");
             }
 
-            // Atlas POM (BlockTextureManager.ATLAS_POM_ENABLED): the runtime marches the height field inside each sprite's tile
-            // (per-vertex texcoord bounds) for the primary hit only. Its self-shadowing visibility rays and indirect/NEE/ReSTIR
-            // POM paths have no tile information and would march through the neighbouring sprites, so they stay off.
-            for (String conf : new String[] {
-                    "rtx.displacement.enableDirectLighting", "rtx.displacement.enableIndirectLighting",
-                    "rtx.displacement.enableNEECache", "rtx.displacement.enableReSTIRGI"}) {
-                remixApi.setConfigVariable(conf, "False");
-            }
-
             // RTXREMIX_EXTRA_RTXCONF="rtx.a=1;rtx.b=true" applies arbitrary rtx.conf
             // overrides for this session. Applied before startup() so options that
             // are only read at device/swapchain creation (e.g. frame generation)
