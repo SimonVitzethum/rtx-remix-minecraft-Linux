@@ -9,6 +9,7 @@ import com.nvidia.rtxremix.minecraft.texture.ParticleAtlasManager;
 import com.nvidia.rtxremix.minecraft.texture.LabPBRConverter;
 import com.nvidia.rtxremix.minecraft.texture.DynamicTextureCache;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
+import com.nvidia.rtxremix.minecraft.texture.AtlasSpriteRegion;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
 import com.nvidia.rtxremix.minecraft.mixin.SpriteAtlasAccessor;
 import com.nvidia.rtxremix.minecraft.block.CopperBeaconBlockEntity;
@@ -2372,10 +2373,11 @@ public class RemixEntitySubmitter {
             for (Map.Entry<Identifier, TextureAtlasSprite> entry : sprites.entrySet()) {
                 Identifier spriteId = entry.getKey();
                 TextureAtlasSprite sprite = entry.getValue();
-                int x = sprite.getX();
-                int y = sprite.getY();
-                int spriteW = sprite.contents().width();
-                int spriteH = sprite.contents().height();
+                AtlasSpriteRegion region = AtlasSpriteRegion.from(sprite, w, h);
+                int x = region.x();
+                int y = region.y();
+                int spriteW = region.width();
+                int spriteH = region.height();
                 NativeImage nImg = loadVariant(rm, spriteId, "_n");
                 NativeImage sImg = loadVariant(rm, spriteId, "_s");
                 NativeImage sssImg = loadVariant(rm, spriteId, "_sss");

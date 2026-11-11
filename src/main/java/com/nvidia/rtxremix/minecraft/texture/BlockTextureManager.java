@@ -177,12 +177,13 @@ public class BlockTextureManager {
         public boolean hasPBR, hasSSS;
         float[] lightColor;
 
-        SpriteEntry(int i, Identifier id, TextureAtlasSprite s) {
+        SpriteEntry(int i, Identifier id, TextureAtlasSprite s, int atlasWidth, int atlasHeight) {
             this.index = i; this.id = id;
             u0 = s.getU0(); v0 = s.getV0(); u1 = s.getU1(); v1 = s.getV1();
-            pixX = s.getX(); pixY = s.getY();
+            AtlasSpriteRegion region = AtlasSpriteRegion.from(s, atlasWidth, atlasHeight);
+            pixX = region.x(); pixY = region.y();
             SpriteContents contents = s.contents();
-            pixW = contents.width(); pixH = contents.height();
+            pixW = region.width(); pixH = region.height();
             transparentPixels = scanTransparency(contents, pixW, pixH);
             hasTransparency = transparentPixels != null && !transparentPixels.isEmpty();
         }
@@ -220,11 +221,14 @@ public class BlockTextureManager {
             if (img == null) return null;
             int[] pixels = img.getPixelsABGR();
             BitSet transparent = null;
-            for (int i = 0; i < w * h; i++)
-                if (((pixels[i] >> 24) & 0xFF) < 255) {
-                    if (transparent == null) transparent = new BitSet(w * h);
-                    transparent.set(i);
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    if (((pixels[y * img.getWidth() + x] >>> 24) & 0xFF) < 255) {
+                        if (transparent == null) transparent = new BitSet(w * h);
+                        transparent.set(y * w + x);
+                    }
                 }
+            }
             return transparent;
         }
 
@@ -338,7 +342,7 @@ public class BlockTextureManager {
         int pbr = 0, emissiveCount = 0, idx = 0;
 
         for (var e : map.entrySet()) {
-            SpriteEntry se = new SpriteEntry(idx++, e.getKey(), e.getValue());
+            SpriteEntry se = new SpriteEntry(idx++, e.getKey(), e.getValue(), atlasW, atlasH);
             byte[] alb = extractRGBA(se.pixX, se.pixY, se.pixW, se.pixH);
             int luminance = lumMap.getOrDefault(e.getKey().toString(), 0);
 
@@ -1114,18 +1118,7 @@ public class BlockTextureManager {
         for (TextureAtlasSprite sprite : acc.getSprites().values()) {
             NativeImage img = ((SpriteContentsAccessor) sprite.contents()).getImage();
             if (img == null) continue;
-            int sx = sprite.getX(), sy = sprite.getY();
-            int sw = sprite.contents().width(), sh = sprite.contents().height();
-            int[] pixels = img.getPixelsABGR();
-            for (int y = 0; y < sh; y++)
-                for (int x = 0; x < sw; x++) {
-                    int abgr = pixels[y * sw + x];
-                    int idx = ((sy + y) * w + (sx + x)) * 4;
-                    buf[idx]     = (byte) (abgr & 0xFF);
-                    buf[idx + 1] = (byte) ((abgr >> 8) & 0xFF);
-                    buf[idx + 2] = (byte) ((abgr >> 16) & 0xFF);
-                    buf[idx + 3] = (byte) ((abgr >> 24) & 0xFF);
-                }
+            AtlasSpriteRegion.from(sprite, w, h).copyRgba(buf, w, img);
         }
         return buf;
     }
