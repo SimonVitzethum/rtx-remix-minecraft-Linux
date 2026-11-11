@@ -35,7 +35,9 @@ live real chunks. Failed/stale results leave the last published subtree intact a
 eligible for another build. A partially captured column is also rejected if it changed.
 Merges consume an immutable set of published subtrees; merged DAGs carry the world
 session through upload, and old-session readbacks never become the new world's texture.
-GPU upload retains its existing 4 MiB/frame slicing and idle-buffer swap. Sky-light
+GPU upload retains its existing 4 MiB/frame slicing and idle-buffer swap. An upload
+finishes its selected DAG before selecting the newest merged replacement; incoming
+merges cannot keep restarting the slice cursor and starving image publication. Sky-light
 release also shuts down the far field before the next world's dome is selected. Fixed
 Nether/End skies use their own texture and cannot acquire the preceding Overworld's
 composite, even though they do not execute an atmospheric far-field tick.

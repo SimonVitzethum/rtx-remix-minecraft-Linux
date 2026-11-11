@@ -262,6 +262,8 @@ public final class FarField {
     private int camChunkX = Integer.MIN_VALUE, camChunkZ = Integer.MIN_VALUE;
     private volatile int lastRadius = 6;
     private Build current, uploading;
+    private boolean uploadComplete;
+    private int uploadFrames;
     private boolean skyDirty, hasSky, dagDirty;
     private long lastRenderMs;
     private Vec3 lastRenderCam;
@@ -352,17 +354,27 @@ public final class FarField {
             built.compareAndSet(b, null);
             b = null;
         }
-        if (b != null && b != current) {
-            if (uploading != b) {
-                gpu.beginUpload(b.words);
-                uploading = b;
+        // Finish the selected DAG even when newer merges arrive. Restarting slices for every merge can starve publication.
+        if (uploading == null && b != null && b != current) {
+            gpu.beginUpload(b.words);
+            uploading = b;
+            uploadComplete = false;
+            uploadFrames = 0;
+        }
+        if (uploading != null) {
+            if (!uploadComplete) {
+                uploadComplete = gpu.uploadSlice(uploading.nodes, 1 << 20);
+                uploadFrames++;
             }
-            boolean done = gpu.uploadSlice(b.nodes, 1 << 20);
-            if (done && !gpu.inFlight()) {
+            if (uploadComplete && !gpu.inFlight()) {
                 gpu.commitUpload();
-                current = b;
+                current = uploading;
                 uploading = null;
                 dagDirty = true;
+                if (Boolean.getBoolean("rtxremix.farfield.diagnostics")) {
+                    LOGGER.info("FarField upload: session {} generation {}, {} words in {} copy frames", current.session,
+                            current.generation, current.words, uploadFrames);
+                }
             }
         }
 
