@@ -23,7 +23,7 @@ class LabPBRConverterTest {
             byte[] height = new byte[4 * 2];
             java.util.Arrays.fill(height, (byte) 33);
             LabPBRConverter.blitHeight(height, 4, normal, albedo, 1, 1, 2, 1);
-            assertEquals(0, unsigned(height[5]));
+            assertEquals(200, unsigned(height[5]));
             assertEquals(200, unsigned(height[6]));
             assertEquals(33, unsigned(height[4]));
             assertEquals(33, unsigned(height[7]));

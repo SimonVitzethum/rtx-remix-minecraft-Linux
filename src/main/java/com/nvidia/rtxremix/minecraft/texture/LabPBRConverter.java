@@ -80,19 +80,34 @@ public final class LabPBRConverter {
     }
 
     /**
-     * Blits _n alpha as R8 height. Fully transparent albedo pixels have no raised surface,
-     * so they use the bottom of the height field instead of casting POM shadows across cutout holes.
-     * All nonzero-opacity pixels retain their authored height.
+     * Blits _n alpha as R8 height, preserving every nonzero-opacity texel's authored value.
+     * Fully transparent texels use the lowest visible height, so cutout holes cannot stand
+     * above the visible surface and the raymarch need not descend beyond its actual relief.
      */
     public static void blitHeight(byte[] dst, int atlasW, NativeImage n, byte[] albedoRGBA,
                                   int ox, int oy, int w, int h) {
         int[] pixels = n.getPixelsABGR();
         int nw = n.getWidth(), nh = n.getHeight();
+        int lowestVisible = 255;
+        boolean hasTransparent = false;
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 int target = (oy + y) * atlasW + ox + x;
-                dst[target] = albedoRGBA[target * 4 + 3] == 0
-                        ? 0 : (byte) (pixels[(y % nh) * nw + x % nw] >>> 24);
+                int height = pixels[(y % nh) * nw + x % nw] >>> 24;
+                dst[target] = (byte) height;
+                if (albedoRGBA[target * 4 + 3] == 0) {
+                    hasTransparent = true;
+                } else {
+                    lowestVisible = Math.min(lowestVisible, height);
+                }
+            }
+        }
+        if (hasTransparent) {
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int target = (oy + y) * atlasW + ox + x;
+                    if (albedoRGBA[target * 4 + 3] == 0) dst[target] = (byte) lowestVisible;
+                }
             }
         }
     }
