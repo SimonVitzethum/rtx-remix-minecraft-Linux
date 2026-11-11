@@ -1,0 +1,61 @@
+/*
+ * Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-License-Identifier: MIT
+ */
+#pragma once
+
+struct AtlasTile
+{
+  vec2 minTexel;
+  vec2 maxTexel;
+  vec2 atlasSize;
+
+  bool isValid()
+  {
+    return all(maxTexel > minTexel) && all(minTexel >= 0.0f) && all(maxTexel <= atlasSize);
+  }
+
+  vec2 sizeUv()
+  {
+    return (maxTexel - minTexel) / atlasSize;
+  }
+
+  vec2 toLocal(vec2 uv)
+  {
+    return (uv * atlasSize - minTexel) / (maxTexel - minTexel);
+  }
+
+  vec2 sampleUv(vec2 local, float mipLevel = 0.0f)
+  {
+    // Preserve the two endpoints of a face, while repeating coordinates beyond it.
+    vec2 wrapped = local;
+    if (local.x < 0.0f || local.x > 1.0f)
+    {
+      wrapped.x = frac(local.x);
+    }
+    if (local.y < 0.0f || local.y > 1.0f)
+    {
+      wrapped.y = frac(local.y);
+    }
+    const vec2 inset = 0.5f * exp2(ceil(mipLevel));
+    return clamp(minTexel + wrapped * (maxTexel - minTexel), minTexel + inset, maxTexel - inset) / atlasSize;
+  }
+
+  float maxMipLevel()
+  {
+    // Only aligned mip cells contain texels exclusively from this tile.
+    const uint edges = uint(minTexel.x) | uint(minTexel.y) | uint(maxTexel.x) | uint(maxTexel.y);
+    return float(firstbitlow(edges));
+  }
+};
+
+AtlasTile atlasTileCreate(uint2 packedBounds, vec2 atlasSize)
+{
+  const vec2 minUv = vec2(packedBounds.x & 0xffffu, packedBounds.x >> 16u) / 65535.0f;
+  const vec2 maxUv = vec2(packedBounds.y & 0xffffu, packedBounds.y >> 16u) / 65535.0f;
+  AtlasTile tile;
+  tile.minTexel = round(minUv * atlasSize);
+  tile.maxTexel = round(maxUv * atlasSize);
+  tile.atlasSize = atlasSize;
+  return tile;
+}

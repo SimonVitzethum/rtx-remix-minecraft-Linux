@@ -168,10 +168,10 @@ void evalNEEPrimary(
   // Note: Only the POM visibility evaluation inside the trace reads the texture coordinates and the tangent frame.
   const bool needsPomVisibilityInputs = isValidLightSample && pomOpaqueSurfaceEncountered && cb.pomMode != DisplacementMode::Off;
 
-  float2 textureCoordinates = float2(0.0f, 0.0f);
+  uint4 displacementData = uint4(0u);
   if (needsPomVisibilityInputs)
   {
-    textureCoordinates = SharedTextureCoord[compactedCoordinate];
+    displacementData = SharedTextureCoord[compactedCoordinate];
   }
 
   if (isValidLightSample)
@@ -188,7 +188,7 @@ void evalNEEPrimary(
       lightSample.position, rayMask,
       sampledTransportPortalIndex, geometryFlags.portalSpace, pomOpaqueSurfaceEncountered,
       minimalRayInteraction.coneRadius, viewRay.spreadAngle, 1.0, geometryFlags.isViewModel, false,
-      sharedSurfaceIndex, textureCoordinates,
+      sharedSurfaceIndex, displacementData,
       isThinOpaqueSubsurface,
       opaqueSurfaceMaterialInteraction.shadingNormal);
   }

@@ -832,7 +832,8 @@ void integratePathVertex(
         evalNEESecondary(
           lightSample, invalidRayPortalIndex, pathState.portalSpace, pathState.rayMask, pomOpaqueSurfaceEncountered,
           isViewModel, ray, rayInteraction, surfaceInteraction, opaqueSurfaceMaterialInteraction,
-          diffuseLight, specularLight, rayInteraction.surfaceIndex, surfaceInteraction.textureCoordinates);
+          diffuseLight, specularLight, rayInteraction.surfaceIndex,
+          uint4(asuint(surfaceInteraction.textureCoordinates), surfaceInteraction.texcoordBoundsPacked));
 
         // Create a NEE Cache task for lights with non-zero contributions.
         // Both light task and emissive triangle task are using the same buffer, skip some pixels so that triangle tasks on them won't be overwritten by light tasks.

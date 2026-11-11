@@ -42,7 +42,7 @@ Texture2D<uint> SharedMaterialData0;
 Texture2D<uint> SharedMaterialData1;
 
 [[vk::binding(INTEGRATE_DIRECT_BINDING_SHARED_TEXTURE_COORD_INPUT)]]
-Texture2D<float2> SharedTextureCoord;
+Texture2D<uint4> SharedTextureCoord;
 
 [[vk::binding(INTEGRATE_DIRECT_BINDING_SHARED_SURFACE_INDEX_INPUT)]]
 Texture2D<uint> SharedSurfaceIndex;

@@ -21,6 +21,8 @@
 */
 #pragma once
 
+#include "rtx/utility/atlas_tile.slangh"
+
 #include "opaque_surface_material_blending.slangh"
 
 // Opaque Surface Material Interaction Constants
@@ -255,28 +257,10 @@ float pomGetNumSamples(float3 direction)
   return lerp(maxSamples, minSamples, abs(direction.z));
 }
 
-// Linux port: POM inside one tile of a texture atlas (Minecraft's block atlas holds every block sprite in one height texture).
-// The tile rectangle comes from the per-vertex texcoord bounds (UNORM16 uv of the sprite corners). The march runs in tile local
-// coordinates (0..1 across the sprite, so one unit is one block face and displaceIn/displaceOut are in tile units), samples are
-// wrapped inside the tile (tileable sprites continue seamlessly) and kept half a texel inside it so neither the march nor bilinear
-// filtering reads the neighbouring sprites. The returned texcoord is an atlas uv that always lies inside the tile.
-float2 pomUnpackUnorm16x2(uint packedUv)
+float pomSampleHeightTile(uint16_t idx, uint16_t samplerIndex, AtlasTile tile, float2 local)
 {
-  return float2(float(packedUv & 0xFFFFu), float(packedUv >> 16u)) * (1.0f / 65535.0f);
-}
-
-float2 pomWrapInTile(float2 local, float2 halfTexel)
-{
-  float2 wrapped = local;
-  if (local.x < 0.0f || local.x > 1.0f) wrapped.x = local.x - floor(local.x);
-  if (local.y < 0.0f || local.y > 1.0f) wrapped.y = local.y - floor(local.y);
-  return clamp(wrapped, halfTexel, 1.0f - halfTexel);
-}
-
-float pomSampleHeightTile(uint16_t idx, uint16_t samplerIndex, float2 tileMinUv, float2 tileSizeUv, float2 halfTexel, float2 local)
-{
-  const float2 uv = tileMinUv + pomWrapInTile(local, halfTexel) * tileSizeUv;
-  return 1.0f - textures[nonuniformEXT(uint(idx))].SampleLevel(samplers[nonuniformEXT(uint(samplerIndex))], uv, 0).r;
+  return 1.0f - textures[nonuniformEXT(uint(idx))].SampleLevel(
+    samplers[nonuniformEXT(uint(samplerIndex))], tile.sampleUv(local), 0).r;
 }
 
 float3 pomCalculateTexcoordTile(
@@ -285,24 +269,22 @@ float3 pomCalculateTexcoordTile(
   float3 viewDir,
   inout uint iterations)
 {
-  uint atlasWidth, atlasHeight, atlasLevels = 0;
+  uint atlasWidth;
+  uint atlasHeight;
+  uint atlasLevels;
   textures[nonuniformEXT(uint(opaqueSurfaceMaterial.heightTextureIndex))].GetDimensions(0, atlasWidth, atlasHeight, atlasLevels);
-  const float2 atlasSize = float2(atlasWidth, atlasHeight);
-  const float2 boundsMin = round(pomUnpackUnorm16x2(surfaceInteraction.texcoordBoundsPacked.x) * atlasSize);
-  const float2 boundsMax = round(pomUnpackUnorm16x2(surfaceInteraction.texcoordBoundsPacked.y) * atlasSize);
+  const AtlasTile tile = atlasTileCreate(surfaceInteraction.texcoordBoundsPacked, float2(atlasWidth, atlasHeight));
   iterations = 0;
-  if (any(boundsMax <= boundsMin))
+  if (!tile.isValid())
   {
     return float3(surfaceInteraction.textureCoordinates, 1.0f);
   }
-  const float2 tileSizeTexels = boundsMax - boundsMin;
-  const float2 tileMinUv = boundsMin / atlasSize;
-  const float2 tileSizeUv = tileSizeTexels / atlasSize;
-  const float2 halfTexel = 0.5f / tileSizeTexels;
 
-  // viewDir is in texture space with the raw tangent/bitangent scaled by the longer of the two (genTangSpace), so its xy are
-  // already in units of the surface's longer edge: for a block face that is the tile local coordinate system.
-  const float3 localView = viewDir;
+  // genTangSpace normalizes the atlas derivatives by their longer edge. Restore the tile's aspect ratio.
+  const float2 tileSizeUv = tile.sizeUv();
+  const float tileBasisScale = max(length(surfaceInteraction.rawTangent) * tileSizeUv.x,
+    length(surfaceInteraction.rawBitangent) * tileSizeUv.y);
+  const float3 localView = normalize(float3(viewDir.xy * tileBasisScale / tileSizeUv, viewDir.z));
 
   const float totalHeight = opaqueSurfaceMaterial.displaceIn + opaqueSurfaceMaterial.displaceOut;
   const float neutralHeight = opaqueSurfaceMaterial.displaceIn / totalHeight;
@@ -310,9 +292,9 @@ float3 pomCalculateTexcoordTile(
   const float layerSize = rcp(numLayers);
   const float2 step = pomGetStep(localView, layerSize, totalHeight);
 
-  float2 currLocal = (surfaceInteraction.textureCoordinates - tileMinUv) / tileSizeUv;
+  float2 currLocal = tile.toLocal(surfaceInteraction.textureCoordinates);
   currLocal = currLocal + (step * numLayers * (1.f - neutralHeight));
-  float currHeight = pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tileMinUv, tileSizeUv, halfTexel, currLocal);
+  float currHeight = pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tile, currLocal);
 
   float currDepth = 0.0f, prevHeight = 0.0f;
   while (currDepth < currHeight && iterations < uint(numLayers) + 2u)
@@ -320,15 +302,15 @@ float3 pomCalculateTexcoordTile(
     iterations++;
     currLocal -= step;
     prevHeight = currHeight;
-    currHeight = pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tileMinUv, tileSizeUv, halfTexel, currLocal);
+    currHeight = pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tile, currLocal);
     currDepth += layerSize;
   }
 
   const float depthNminus1 = prevHeight - currDepth + layerSize;
   const float depthN = currHeight - currDepth;
-  const float weight = saturate(depthN / (depthN - depthNminus1));
+  const float weight = iterations > 0u ? saturate(depthN / (depthN - depthNminus1)) : 0.0f;
   currLocal += step * weight;
-  return float3(tileMinUv + pomWrapInTile(currLocal, halfTexel) * tileSizeUv, currHeight);
+  return float3(tile.sampleUv(currLocal), currHeight);
 }
 
 float3 pomCalculateTexcoord(
@@ -390,16 +372,25 @@ float3 pomCalculateTexcoord(
 
 float pomSampleVisibility(
   OpaqueSurfaceMaterial opaqueSurfaceMaterial,
-  float2 texcoord,
+  uint4 displacementData,
   float3 rayDirection)
 {
+  const float2 texcoord = asfloat(displacementData.xy);
+  uint width;
+  uint height;
+  uint levels;
+  textures[nonuniformEXT(uint(opaqueSurfaceMaterial.heightTextureIndex))].GetDimensions(0, width, height, levels);
+  const AtlasTile tile = atlasTileCreate(displacementData.zw, float2(width, height));
+  const bool tiled = tile.isValid();
   // Don't actually care about neutral height here - this function just checks if a ray from a texcoord successfully exits
   // the geometry described by the heightmap.  Doesn't (currently) matter how high that geometry is relative to the original surface.
   float totalHeight = opaqueSurfaceMaterial.displaceIn + opaqueSurfaceMaterial.displaceOut;
   // NOTE: pomTraceRay could be used here, but testing found it was more expensive and had worse artifacts when
   // doing visibility testing.
-  float2 currTexcoord = texcoord;
-  float currHeight = pomSampleHeight(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, currTexcoord);
+  float2 currTexcoord = tiled ? tile.toLocal(texcoord) : texcoord;
+  float currHeight = tiled
+    ? pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tile, currTexcoord)
+    : pomSampleHeight(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, currTexcoord);
   float currDepth = currHeight;
   float numLayers = pomGetNumSamples(rayDirection);
   float layerSize = rcp(numLayers);
@@ -409,7 +400,9 @@ float pomSampleVisibility(
   while (currDepth > 0.0f)
   {
     currTexcoord += step;
-    currHeight = pomSampleHeight(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, currTexcoord);
+    currHeight = tiled
+      ? pomSampleHeightTile(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, tile, currTexcoord)
+      : pomSampleHeight(opaqueSurfaceMaterial.heightTextureIndex, opaqueSurfaceMaterial.samplerIndex, currTexcoord);
     currDepth -= layerSize;
 
     if (currHeight < currDepth)
@@ -425,7 +418,7 @@ float opaqueSurfaceMaterialInteractionCalcHeightThroughput(
   MinimalSurfaceInteraction minimalSurfaceInteraction,
   vec3 rayDirection,
   OpaqueSurfaceMaterial opaqueSurfaceMaterial,
-  float2 texcoord)
+  uint4 displacementData)
 {
   // rebuild tangent space
   const f16mat3 worldToTangent = f16mat3(
@@ -433,7 +426,7 @@ float opaqueSurfaceMaterialInteractionCalcHeightThroughput(
     minimalSurfaceInteraction.geometryBitangent,
     minimalSurfaceInteraction.geometryNormal);
   const vec3 lightDirTangentSpace = normalize(mul(worldToTangent, rayDirection));
-  return pomSampleVisibility(opaqueSurfaceMaterial, texcoord, lightDirTangentSpace);
+  return pomSampleVisibility(opaqueSurfaceMaterial, displacementData, lightDirTangentSpace);
 }
 #endif
 
@@ -672,21 +665,6 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreateImpl<let 
     opaqueSurfaceMaterialInteraction.flags |= OPAQUE_SURFACE_MATERIAL_INTERACTION_FLAG_HAS_HEIGHT_TEXTURE;
   }
 
-  // Linux port: keep every material sample one texel inside the sprite's atlas tile. Neighbouring sprites of the atlas are
-  // unrelated (and the mod's atlas has no padding), so a bilinear footprint that crosses the tile edge shows up as dark or
-  // wrongly coloured seams along the block edges.
-  if (any(surfaceInteraction.texcoordBoundsPacked != 0u) && opaqueSurfaceMaterial.albedoOpacityTextureIndex != BINDING_INDEX_INVALID)
-  {
-    uint clampWidth, clampHeight, clampLevels = 0;
-    textures[nonuniformEXT(uint(opaqueSurfaceMaterial.albedoOpacityTextureIndex))].GetDimensions(0, clampWidth, clampHeight, clampLevels);
-    const float2 clampAtlasSize = float2(clampWidth, clampHeight);
-    const float2 clampMin = round(pomUnpackUnorm16x2(surfaceInteraction.texcoordBoundsPacked.x) * clampAtlasSize);
-    const float2 clampMax = round(pomUnpackUnorm16x2(surfaceInteraction.texcoordBoundsPacked.y) * clampAtlasSize);
-    if (all(clampMax > clampMin + 2.0f))
-    {
-      surfaceInteraction.textureCoordinates = clamp(surfaceInteraction.textureCoordinates * clampAtlasSize, clampMin + 1.0f, clampMax - 1.0f) / clampAtlasSize;
-    }
-  }
 #endif
 
   // Sample from each Opaque Surface Material texture
