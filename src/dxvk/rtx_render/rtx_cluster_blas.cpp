@@ -212,6 +212,12 @@ namespace dxvk {
     bottomDesc.clusterReferencesStride = 8;
     bottomDesc.clusterReferences = addresses->getDeviceAddress();
 
+    // Command-list ownership starts before recording, including cancellation and shader failures.
+    ctx->getCommandList()->trackResource<DxvkAccess::Write>(temporary);
+    ctx->getCommandList()->trackResource<DxvkAccess::Write>(retained);
+    ctx->getCommandList()->trackResource<DxvkAccess::Read>(positions);
+    ctx->getCommandList()->trackResource<DxvkAccess::Read>(indices);
+
     ScopedGpuProfileZone(ctx, "Terrain cluster AS build");
     barriers.recordCommands(ctx->getCommandList());
     ctx->writeToBuffer(metadata, 0, controlOffset, descriptors.data());
@@ -253,10 +259,6 @@ namespace dxvk {
     command.srcInfosCount = metadata->getDeviceAddress() + controlOffset + 4;
     vkd->vkCmdBuildClusterAccelerationStructureIndirectNV(buffer, &command);
     buildBarrier();
-    ctx->getCommandList()->trackResource<DxvkAccess::Write>(temporary);
-    ctx->getCommandList()->trackResource<DxvkAccess::Write>(retained);
-    ctx->getCommandList()->trackResource<DxvkAccess::Read>(positions);
-    ctx->getCommandList()->trackResource<DxvkAccess::Read>(indices);
     entry.dynamicBlas = result;
     ++m_builds;
     m_clusters += plan.clusters;
