@@ -46,7 +46,8 @@ struct AtlasTile
   float maxMipLevel()
   {
     // Coarse levels are safe when at least one whole mip cell fits inside each tile dimension.
-    float level = floor(log2(min(maxTexel.x - minTexel.x, maxTexel.y - minTexel.y)));
+    const float atlasAlignment = float(firstbitlow(uint(atlasSize.x) | uint(atlasSize.y)));
+    float level = min(atlasAlignment, floor(log2(min(maxTexel.x - minTexel.x, maxTexel.y - minTexel.y))));
     float scale = exp2(level);
     while (any(floor(maxTexel / scale) <= ceil(minTexel / scale)))
     {

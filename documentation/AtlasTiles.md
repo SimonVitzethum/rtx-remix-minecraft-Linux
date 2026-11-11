@@ -17,7 +17,9 @@ Material reads use the same tile for albedo, opacity, normals, emission, and
 other PBR channels. Sampling repeats outside a tile while preserving the two
 endpoints of an ordinary face. Every anisotropic tap is constrained to a valid
 bilinear footprint. Only complete mip cells inside the content rectangle are
-used: a mip containing two sprites cannot be repaired by clamping UVs. This also
+used: a mip containing two sprites cannot be repaired by clamping UVs. Levels
+also require atlas dimensions divisible by their cell size, so normalized UVs
+address the same base texels on non-power-of-two textures. This also
 allows coarse filtering for unaligned sprites by excluding their partially
 covered edge cells. It can bias the edge color at coarse levels and adds sampling
 cost. Authoring aligned atlases or supplying tile-specific mip chains would
