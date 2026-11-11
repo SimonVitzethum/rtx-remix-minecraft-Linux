@@ -244,8 +244,9 @@ float pomSampleHeight(uint16_t idx, uint16_t samplerIndex, float2 texcoord)
 
 float2 pomGetStep(float3 direction, float layerSize, float totalHeight)
 {
-  // convert tangent space direction to texcoord
-  return direction.xy / direction.z * totalHeight * layerSize;
+  // Keep grazing rays finite before periodic atlas coordinates are evaluated.
+  const float z = direction.z < 0.0f ? min(direction.z, -1.0e-5f) : max(direction.z, 1.0e-5f);
+  return direction.xy / z * totalHeight * layerSize;
 }
 
 float pomGetNumSamples(float3 direction)
