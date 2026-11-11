@@ -465,10 +465,9 @@ public final class BlockQuadEmitter {
             color = tintFrapiColor(color, getBlockTint(tintIndex));
         }
 
-        String layerName = blockLayerGlass ? "glass" : layerName(quad.chunkLayer());
-
         TextureAtlasSprite sprite = blockSpriteFinder().find(quad);
         Identifier spriteId = sprite.contents().name();
+        String layerName = blockLayerGlass ? "glass" : layerName(quad.chunkLayer(), spriteId);
         // Redstone dust is modelled with force_translucent textures (flat, tinted, mostly transparent quads).
         // Remix's translucent material is refractive glass: the dust turned clear and, unpowered, invisible.
         // It is a decal, so it takes the alpha-tested layer; the coplanar overlay quad becomes a decal.
@@ -484,7 +483,11 @@ public final class BlockQuadEmitter {
                 layerName);
     }
 
-    private static String layerName(ChunkSectionLayer layer) {
+    static String layerName(ChunkSectionLayer layer, Identifier spriteId) {
+        // Portal sheets blend their animated RGBA over the world and enclose no glass medium.
+        if (spriteId.equals(Identifier.withDefaultNamespace("block/nether_portal"))) {
+            return "blended";
+        }
         return switch (layer) {
             case SOLID -> "solid";
             case CUTOUT -> "cutout";
@@ -1023,6 +1026,7 @@ public final class BlockQuadEmitter {
         // translucent material with the frame as a diffuse layer.
         // Stained glass is already translucent and keeps vanilla's layer.
         if (state.is(Blocks.GLASS) || state.is(Blocks.GLASS_PANE)) return "glass";
+        if (state.is(Blocks.NETHER_PORTAL)) return "blended";
         // 26.3 has no per-block render type: the layer lives on each quad. A held
         // block has no quads in hand here, so judge by its model's material flags
         // and the transparency of its particle sprite.

@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import net.minecraft.resources.Identifier;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -203,6 +204,23 @@ class DirectQuadWriterTest {
         assertNotEquals(BlockTextureManager.layerType("translucent"), BlockTextureManager.layerType("glass"),
                 "glass needs its own atlas material slot");
         assertTrue(BlockTextureManager.layerType("glass") < BlockTextureManager.LAYER_COUNT);
+    }
+
+    @Test
+    void portalSheetsKeepBothFacesInTheirOwnAlphaBlendedBucket() {
+        Identifier portal = Identifier.withDefaultNamespace("block/nether_portal");
+        String layer = BlockQuadEmitter.layerName(ChunkSectionLayer.TRANSLUCENT, portal);
+        assertEquals("blended", layer);
+        assertEquals("translucent", BlockQuadEmitter.layerName(ChunkSectionLayer.TRANSLUCENT, CUTOUT_SPRITE));
+        DirectQuadWriter writer = new DirectQuadWriter();
+        writer.beginSection();
+        stageQuad(writer, FRONT_POSITIONS, FRONT_UVS, 1.0f, portal, 0xFFFFFFFF, layer);
+        stageQuad(writer, BACK_POSITIONS, DISTINCT_BACK_UVS, -1.0f, portal, 0xFFFFFFFF, layer);
+        writer.flushBlock(null);
+        var sheet = surface(writer.buildMeshData(), layer);
+        assertEquals(ChunkManager.CAT_TRANSLUCENT, sheet.category());
+        assertEquals(8, sheet.vertexCount());
+        assertNotEquals(BlockTextureManager.layerType("translucent"), BlockTextureManager.layerType(layer));
     }
 
     private static SectionMeshData.Surface surface(SectionMeshData meshData, String bucketKey) {

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import com.nvidia.rtxremix.MaterialInfo;
+import com.nvidia.rtxremix.MaterialInfoOpaqueEXT;
 import org.junit.jupiter.api.Test;
 
 class BlockTextureManagerTranslucentMaterialTest {
@@ -29,6 +30,18 @@ class BlockTextureManagerTranslucentMaterialTest {
         assertEquals(202, material.normalTexture);
         assertEquals(303, material.emissiveTexture);
         assertEquals(25.0f, material.emissiveIntensity);
+    }
+
+    @Test
+    void alphaBlendedSheetsUseAuthoredCoverageWithoutAnAlphaCutoffOrDrawCallOverride() {
+        var builder = MaterialInfoOpaqueEXT.builder().useDrawCallAlphaState(true);
+        BlockTextureManager.configureAlphaLayer(builder, BlockTextureManager.L_BLEND);
+        var material = builder.build();
+        assertEquals(0, material.useDrawCallAlphaState);
+        assertEquals(1, material.blendType_hasvalue);
+        assertEquals(MaterialInfoOpaqueEXT.BLEND_TYPE_ALPHA, material.blendType_value);
+        assertEquals(7, material.alphaTestType);
+        assertEquals(0, material.alphaReferenceValue);
     }
 
     @Test

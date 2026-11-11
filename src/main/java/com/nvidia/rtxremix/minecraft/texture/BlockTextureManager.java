@@ -81,7 +81,7 @@ public class BlockTextureManager {
     // 26.3's ChunkSectionLayer is SOLID/CUTOUT/TRANSLUCENT (mipmapping is no longer a layer
     // property), so BlockQuadEmitter never emits "cutout_mipped"; L_CUTOUT_MIPPED stays for
     // the name mapping and is built but unused.
-    public static final int L_SOLID = 0, L_CUTOUT = 1, L_CUTOUT_MIPPED = 2, L_TRANS = 3, L_GLASS = 4, LAYER_COUNT = 5;
+    public static final int L_SOLID = 0, L_CUTOUT = 1, L_CUTOUT_MIPPED = 2, L_TRANS = 3, L_GLASS = 4, L_BLEND = 5, LAYER_COUNT = 6;
 
     private static BlockTextureManager INSTANCE;
 
@@ -638,7 +638,7 @@ public class BlockTextureManager {
         MaterialInfoOpaqueEXT.Builder ob = MaterialInfoOpaqueEXT.builder()
                 .albedoConstant(1f, 1f, 1f).roughnessConstant(1f).metallicConstant(1f)
                 .useDrawCallAlphaState(true);
-        if (lt != L_SOLID) ob.alphaTestType(4).alphaReferenceValue(128);
+        configureAlphaLayer(ob, lt);
         if (roughnessTex != null) ob.roughnessTexture(roughnessTex.getHandle());
         if (metallicTex != null)  ob.metallicTexture(metallicTex.getHandle());
         if (ATLAS_POM_ENABLED && heightTex != null) ob.heightTexture(heightTex.getHandle()).displaceIn(POM_DISPLACE_IN);
@@ -653,6 +653,16 @@ public class BlockTextureManager {
                     .emissiveIntensity(emissionIntensity);
         }
         return mb.opaqueExt(ob.build()).build();
+    }
+
+    /** Alpha-blended surfaces carry coverage directly, without a refractive volume. */
+    static void configureAlphaLayer(MaterialInfoOpaqueEXT.Builder material, int layer) {
+        if (layer == L_BLEND) {
+            material.useDrawCallAlphaState(false).alphaTestType(7)
+                    .blendType(MaterialInfoOpaqueEXT.BLEND_TYPE_ALPHA);
+        } else if (layer != L_SOLID) {
+            material.alphaTestType(4).alphaReferenceValue(128);
+        }
     }
 
     /**
@@ -1148,7 +1158,7 @@ public class BlockTextureManager {
 
         MaterialInfoOpaqueEXT.Builder ob = MaterialInfoOpaqueEXT.builder()
                 .albedoConstant(1f, 1f, 1f).useDrawCallAlphaState(true);
-        if (lt != L_SOLID) ob.alphaTestType(4).alphaReferenceValue(128);
+        configureAlphaLayer(ob, lt);
 
         MaterialInfo.Builder mb = MaterialInfo.builder()
                 .albedoTexture(se.albedo.getHandle()).filterMode(0);
@@ -1205,6 +1215,7 @@ public class BlockTextureManager {
             case "cutout_mipped" -> L_CUTOUT_MIPPED;
             case "translucent" -> L_TRANS;
             case "glass" -> L_GLASS;
+            case "blended" -> L_BLEND;
             default -> L_SOLID;
         };
     }
