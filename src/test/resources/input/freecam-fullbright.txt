@@ -15,6 +15,8 @@
 14 anchor
 16 state
 17 shot marker freecam_body
+17.5 move c c 0 0
+17.7 move c c 40 -15
 18 kdown w
 18 kdown d
 18 kdown space
@@ -33,7 +35,11 @@
 25 down right
 26 up left
 26 up right
+25.5 expect no-interaction
 27 expect stationary
+27 expect camera-moved
+27 expect camera-turned
+27 expect hotbar-unchanged
 27 state
 28 scmd damage @p 2
 30 expect freecam off

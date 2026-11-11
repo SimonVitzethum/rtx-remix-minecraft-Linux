@@ -313,7 +313,8 @@ For a headless regression, copy
 `<dedicated-test-game-dir>/rtxremix-test-script.txt`, then load a disposable
 single-player world. The fixture builds at fixed coordinates and modifies that
 world. `expect` failures appear as `Step failed` in the game log. Check actual
-F4/B key routing, player motion isolation, damage exit, and debug-key contexts.
+F4/B key routing, player motion/look and hotbar isolation, camera mouse deltas, interaction
+suppression, damage exit, and debug-key contexts.
 F3+F4 needs game-master permission to display the switcher; without it vanilla
 reports its permission denial and Freecam must still remain off.
 

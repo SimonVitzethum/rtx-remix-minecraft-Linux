@@ -37,6 +37,7 @@ import java.util.List;
  * fb on|off [VARIANT [KEYRAD BACKRAD EVDROP]]   fullbright (variant 1..3) and tunables
  * anchor / expect stationary   save and verify player position and view direction
  * expect freecam on|off / fullbright LEVEL / no-conflict KEY_ID KEY_ID   assert state
+ * expect camera-moved|camera-turned|hotbar-unchanged|no-interaction   verify input routing
  * state                    log player/camera pose, freecam speed and fullbright fade
  * kdown / kup NAME         hold or release a key (also space, shift, ctrl)
  * shot [marker] NAME       mark a screenshot; optional file acknowledgement yields without blocking rendering
@@ -44,7 +45,7 @@ import java.util.List;
  * diag                     log client/server loaded chunk counts and view distances
  * close                    close the menu like Alt+X does
  * altx                     Alt+X chord through KeyboardHandler.keyPress (toggles the developer menu)
- * move X Y                 cursor in window coordinates; "c" is the window centre; X and Y may be fractions like 0.5
+ * move X Y [DX DY]         cursor in window coordinates; "c" is the window centre; X and Y may be fractions like 0.5
  * click [left|right]       press and release at the current position
  * down / up [button]       press or release only
  * scroll DY                wheel
@@ -73,6 +74,10 @@ public final class RemixInputTestScript {
     private static net.minecraft.world.phys.Vec3 anchor;
     private static float anchorYaw;
     private static float anchorPitch;
+    private static net.minecraft.world.phys.Vec3 anchorCamera;
+    private static float anchorCameraYaw;
+    private static float anchorCameraPitch;
+    private static int anchorSlot;
 
     private RemixInputTestScript() {
     }
@@ -232,12 +237,23 @@ public final class RemixInputTestScript {
                 anchor = mc.player.position();
                 anchorYaw = mc.player.getYRot();
                 anchorPitch = mc.player.getXRot();
+                var camera = mc.gameRenderer.mainCamera();
+                anchorCamera = camera.position();
+                anchorCameraYaw = camera.yRot();
+                anchorCameraPitch = camera.xRot();
+                anchorSlot = mc.player.getInventory().getSelectedSlot();
             }
             case "expect" -> {
                 boolean ok = switch (w[1]) {
                     case "freecam" -> com.nvidia.rtxremix.minecraft.camera.Freecam.isActive() == w[2].equals("on");
                     case "stationary" -> anchor != null && mc.player.position().distanceToSqr(anchor) < 0.0001
                             && mc.player.getYRot() == anchorYaw && mc.player.getXRot() == anchorPitch;
+                    case "camera-moved" -> anchorCamera != null
+                            && mc.gameRenderer.mainCamera().position().distanceToSqr(anchorCamera) > 0.01;
+                    case "camera-turned" -> Math.abs(mc.gameRenderer.mainCamera().yRot() - anchorCameraYaw) > 0.01f
+                            || Math.abs(mc.gameRenderer.mainCamera().xRot() - anchorCameraPitch) > 0.01f;
+                    case "hotbar-unchanged" -> mc.player.getInventory().getSelectedSlot() == anchorSlot;
+                    case "no-interaction" -> !mc.player.isUsingItem() && !mc.player.isSwinging() && !mc.gameMode.isDestroying();
                     case "fullbright" -> Math.abs(com.nvidia.rtxremix.minecraft.light.Fullbright.level()
                             - Float.parseFloat(w[2])) < 0.01f;
                     case "no-conflict" -> {
@@ -278,7 +294,9 @@ public final class RemixInputTestScript {
             case "move" -> {
                 cursorX = coordinate(w[1], window.getScreenWidth());
                 cursorY = coordinate(w[2], window.getScreenHeight());
-                mc.mouseHandler.onMove(h, cursorX, cursorY, 0.0, 0.0);
+                mc.mouseHandler.onMove(h, cursorX, cursorY,
+                        w.length > 3 ? Double.parseDouble(w[3]) : 0.0,
+                        w.length > 4 ? Double.parseDouble(w[4]) : 0.0);
             }
             case "click" -> {
                 int button = button(w);
