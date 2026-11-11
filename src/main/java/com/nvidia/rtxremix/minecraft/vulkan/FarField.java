@@ -21,12 +21,10 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.EmptyBlockGetter;
-import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
@@ -39,10 +37,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -72,6 +69,8 @@ public final class FarField {
     public static final int MAX_RADIUS_CHUNKS = 64;
 
     private static volatile FarField instance;
+    /** Serializes disk ownership across world swaps and off/on cycles without waiting on the render thread. */
+    private static CompletableFuture<Void> previousCacheFlush = CompletableFuture.completedFuture(null);
     private static boolean configRead;
     private static volatile boolean enabled;
     private static volatile int radius = 0, distance = 256;
@@ -190,26 +189,61 @@ public final class FarField {
 
     /** Merged DAG: {@code nodes[0 .. words)} valid. */
     private record Build(int[] nodes, int words, int root, int levels, int originSx, int originSz, int minY,
-                         int subtrees, int nodeCount, double mergeMs) {}
-
-    private record Entry(long sig, FarSubtree.Result res) {}
+                         int subtrees, int nodeCount, double mergeMs, long session, int generation) {}
 
     /** Loaded client chunks of one column, filled on the render thread. */
     private static final class ColumnIn {
         final LevelChunk[] chunks = new LevelChunk[256];
         final byte[] cls = new byte[256]; // 1 = hole (inside the path-traced radius), 2 = exact
-        long sig;
+        final long[] revisions = new long[256];
         int loaded;
+
+        long signature() {
+            long signature = 0;
+            for (int i = 0; i < chunks.length; i++) {
+                if (chunks[i] != null) signature = signature * 1000003L + i * 4L + cls[i]
+                        + 0x9E3779B9L * (cls[i] == 2 ? revisions[i] : System.identityHashCode(chunks[i]));
+            }
+            return signature;
+        }
+
+        boolean stillCurrent(ClientLevel level) {
+            for (int i = 0; i < chunks.length; i++) {
+                LevelChunk chunk = chunks[i];
+                if (chunk == null) continue;
+                if (FarChunkSnapshot.signature(chunk) != revisions[i]) return false;
+                if (!BobbyCompat.isFake(chunk) && level.getChunkSource().getChunkNow(chunk.getPos().x(), chunk.getPos().z()) != chunk) return false;
+            }
+            return true;
+        }
     }
+
+    /** One partially captured column, bounded to 256 chunks; capture is sliced across client frames. */
+    private static final class Capture {
+        final int sx, sz, lg, minY, slabs;
+        final long key, signature;
+        final FarSurfaceTiles tile;
+        final ColumnIn input;
+        final FarChunkSnapshot[] snapshots = new FarChunkSnapshot[256];
+        int next;
+
+        Capture(int sx, int sz, int lg, int minY, int slabs, long key, long signature, FarSurfaceTiles tile, ColumnIn input) {
+            this.sx = sx; this.sz = sz; this.lg = lg; this.minY = minY; this.slabs = slabs;
+            this.key = key; this.signature = signature; this.tile = tile; this.input = input;
+        }
+    }
+
+    private record Recorded(LevelChunk chunk, long signature) {}
 
     private final FarFieldGpu gpu;
     private final ByteBuffer skyCopy = ByteBuffer.allocateDirect(SKY_W * SKY_H * 8).order(ByteOrder.nativeOrder());
     private final ByteBuffer push = ByteBuffer.allocateDirect(FarFieldGpu.PUSH_BYTES).order(ByteOrder.nativeOrder());
     private final AtomicReference<Build> built = new AtomicReference<>();
-    private final ConcurrentHashMap<Long, Entry> cache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Boolean> inProgress = new ConcurrentHashMap<>();
-    private final AtomicInteger pendingTasks = new AtomicInteger();
-    private final AtomicInteger epoch = new AtomicInteger();
+    private final FarBuildCache<FarSubtree.Result> cache;
+    private int epoch;
+    private volatile long session;
+    private Capture capturing;
+    private long snapshotNanos, snapshotsTaken, staleCaptures;
     private final AtomicLong taskNanos = new AtomicLong();
     private final AtomicInteger tasksDone = new AtomicInteger();
     private final java.util.concurrent.ThreadPoolExecutor pool;
@@ -221,7 +255,10 @@ public final class FarField {
     private int lastFakeCount;
     private FarTileSource source;
     /** Loaded real chunks handed to the multiplayer cache (render thread): position -> chunk object recorded last. */
-    private final HashMap<Long, LevelChunk> tracked = new HashMap<>();
+    private final HashMap<Long, Recorded> tracked = new HashMap<>();
+    private final java.util.ArrayDeque<Long> recordQueue = new java.util.ArrayDeque<>();
+    private final java.util.HashSet<Long> recordQueued = new java.util.HashSet<>();
+    private long deferredRecords;
     private int camChunkX = Integer.MIN_VALUE, camChunkZ = Integer.MIN_VALUE;
     private volatile int lastRadius = 6;
     private Build current, uploading;
@@ -230,7 +267,6 @@ public final class FarField {
     private Vec3 lastRenderCam;
     private int minY, worldHeight;
     private long[] wantedKeys = new long[0];
-    private int wantedLevels, wantedOriginSx, wantedOriginSz;
     private volatile boolean wantedChanged;
 
     private RemixTexture texture;
@@ -241,11 +277,15 @@ public final class FarField {
     private float[] lastAmbient = {0.1f, 0.1f, 0.1f};
     private double lastRenderGpuMs;
     private long renders;
+    private Build renderedBuild;
 
     private FarField() {
         gpu = new FarFieldGpu(width, width / 2);
+        buildThreads = Math.clamp(buildThreads, 1, 4);
+        lodThreads = Math.clamp(lodThreads, 1, 2);
+        cache = new FarBuildCache<>(buildThreads * 2);
         pool = new java.util.concurrent.ThreadPoolExecutor(buildThreads, buildThreads, 0L, java.util.concurrent.TimeUnit.SECONDS,
-                new java.util.concurrent.LinkedBlockingQueue<>(), r -> {
+                new java.util.concurrent.ArrayBlockingQueue<>(buildThreads * 2 + 1), r -> {
                     Thread t = new Thread(r, "RemixFarFieldBuild");
                     t.setDaemon(true);
                     t.setPriority(Thread.NORM_PRIORITY - 1);
@@ -295,18 +335,23 @@ public final class FarField {
 
         // 1. finished readback -> Remix
         ByteBuffer pixels = gpu.poll();
-        if (pixels != null) {
+        if (pixels != null && current != null) {
             publish(api, pixels);
             renders++;
             lastRenderGpuMs = gpu.lastGpuMs();
             if (renders <= 5 || renders % 20 == 0) {
-                LOGGER.info("FarField render #{}: gpu {} ms (wall to fence {} ms), dag {} KiB", renders,
-                        String.format("%.2f", lastRenderGpuMs), String.format("%.2f", gpu.lastFlightMs()), gpu.dagBytes() >> 10);
+                LOGGER.info("FarField render #{}: session {} generation {}, gpu {} ms (wall to fence {} ms), dag {} KiB", renders,
+                        renderedBuild.session, renderedBuild.generation, String.format("%.2f", lastRenderGpuMs),
+                        String.format("%.2f", gpu.lastFlightMs()), gpu.dagBytes() >> 10);
             }
         }
 
         // 2. new merged DAG -> GPU: sliced copy into the spare buffer (<= 1M words = 4 MiB per frame), swap while idle
         Build b = built.get();
+        if (b != null && b.session != session) {
+            built.compareAndSet(b, null);
+            b = null;
+        }
         if (b != null && b != current) {
             if (uploading != b) {
                 gpu.beginUpload(b.words);
@@ -326,10 +371,18 @@ public final class FarField {
             lastPlanMs = now;
             plan(level, cam);
         }
-        if (now - lastStatMs > 10_000 && source != null && (source.pending() > 0 || pendingTasks.get() > 0)) {
+        epoch += cache.drain();
+        captureSlice(level);
+        recordSlice(level);
+        if (now - lastStatMs > 10_000 && source != null) {
             lastStatMs = now;
             LOGGER.info("FarField progress: lod tiles generated {} (disk {}, pending {}), subtree tasks pending {}, cached subtrees {}",
-                    source.generatedCount(), source.diskCount(), source.pending(), pendingTasks.get(), cache.size());
+                    source.generatedCount(), source.diskCount(), source.pending(), cache.pending(), cache.size());
+            LOGGER.info("FarField snapshots: {} copies, {} ms owner CPU, stale captures {}, active column {}, worker slots {}/{}, record backlog {}, deferred admissions {}",
+                    snapshotsTaken, String.format("%.2f", snapshotNanos / 1e6), staleCaptures,
+                    capturing == null ? 0 : 1, cache.pending(), buildThreads * 2, recordQueue.size(), deferredRecords);
+            LOGGER.info("FarField observed-to-subtree-publication: mean {} ms, max {} ms (includes initial population)",
+                    String.format("%.2f", cache.meanPublicationMs()), String.format("%.2f", cache.maxPublicationMs()));
         }
 
         // 4. render when something changed
@@ -348,17 +401,31 @@ public final class FarField {
 
     private void newLevel(ClientLevel level) {
         levelKey = level;
-        cache.clear();
+        session++;
+        capturing = null;
+        cache.reset();
+        wantedKeys = new long[0];
+        wantedChanged = true;
+        epoch = 0;
+        lastPlanMs = 0;
+        lastRenderCam = null;
         built.set(null);
         current = null;
         uploading = null;
+        if (texture != null && !texture.isDeleted()) texture.destroy();
+        texture = null;
         mergedEpoch = -1;
-        if (source != null) source.close();
+        if (source != null) {
+            source.close();
+            if (source instanceof FarCacheSource cs) previousCacheFlush = cs.flushed();
+        }
         source = null;
         minY = level.getMinY();
         worldHeight = level.getHeight();
         MinecraftServer server = Minecraft.getInstance().getSingleplayerServer();
         tracked.clear();
+        recordQueue.clear();
+        recordQueued.clear();
         if (server == null) {
             if (!cacheOn) {
                 LOGGER.info("FarField: no integrated server and the chunk cache is off, only loaded chunks");
@@ -370,7 +437,7 @@ public final class FarField {
                 name = name.replaceAll("[^A-Za-z0-9._-]", "_");
                 Path dir = FabricLoader.getInstance().getGameDir().resolve("rtxremix-farcache").resolve(name)
                         .resolve(level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
-                source = new FarCacheSource(dir, cacheMb, minY);
+                source = new FarCacheSource(dir, cacheMb, null, previousCacheFlush);
                 LOGGER.info("FarField: multiplayer chunk cache {} (limit {} MB){}", dir, cacheMb,
                         BobbyCompat.isPresent() ? ", Bobby fake chunks are read as well" : "");
             } catch (RuntimeException | Error e) {
@@ -385,7 +452,8 @@ public final class FarField {
             Path dir = FabricLoader.getInstance().getGameDir().resolve("rtxremix-farlod")
                     .resolve(world + "-" + Long.toHexString(sl.getSeed()))
                     .resolve(level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
-            source = new FarLodSource(sl, dir, lodThreads);
+            // Received chunks override procedural noise, retaining edits after they leave the client radius.
+            source = new FarCacheSource(dir.resolve("received"), cacheMb, new FarLodSource(sl, dir, lodThreads), previousCacheFlush);
             LOGGER.info("FarField: LOD source from the integrated server, cache {}", dir);
         } catch (RuntimeException | Error e) {
             LOGGER.error("FarField: LOD source init failed", e);
@@ -412,12 +480,11 @@ public final class FarField {
         HashMap<Long, ColumnIn> loaded = new HashMap<>();
         int lm = rd + 2;
         java.util.HashSet<Long> seen = new java.util.HashSet<>();
-        int recordBudget = 128;
         for (int dx = -lm; dx <= lm; dx++) {
             for (int dz = -lm; dz <= lm; dz++) {
                 LevelChunk c = level.getChunkSource().getChunkNow(camChunkX + dx, camChunkZ + dz);
                 if (c == null) continue;
-                recordBudget = addLoaded(loaded, seen, c, camChunkX + dx, camChunkZ + dz, R, recordBudget);
+                addLoaded(loaded, seen, c, camChunkX + dx, camChunkZ + dz, R);
             }
         }
         if (BobbyCompat.isPresent()) {
@@ -429,16 +496,16 @@ public final class FarField {
             for (LevelChunk c : fakes) {
                 int cx = c.getPos().x(), cz = c.getPos().z();
                 if (!seen.add(((long) cx << 32) | (cz & 0xFFFFFFFFL))) continue;
-                addLoaded(loaded, seen, c, cx, cz, R, recordBudget);
+                addLoaded(loaded, seen, c, cx, cz, R);
             }
         }
-        if (source instanceof FarCacheSource cs) {
-            // chunks that left the client: record their last state once more
-            var it = tracked.entrySet().iterator();
-            while (it.hasNext()) {
-                var e = it.next();
-                if (!seen.contains(e.getKey()) && cs.record(e.getValue())) it.remove();
-            }
+        // The unload event also covers chunks that depart between planning passes.
+        var records = tracked.entrySet().iterator();
+        while (records.hasNext()) {
+            var item = records.next();
+            Recorded old = item.getValue();
+            if (level.getChunkSource().getChunkNow(old.chunk.getPos().x(), old.chunk.getPos().z()) == old.chunk) continue;
+            if (FarChunkSnapshot.signature(old.chunk) == old.signature) records.remove();
         }
 
         // wanted columns, nearest first
@@ -454,7 +521,7 @@ public final class FarField {
         }
         java.util.Arrays.sort(order, 0, cnt);
         long[] wanted = new long[cnt];
-        int budget = buildThreads * 16 - pendingTasks.get();
+        int budget = buildThreads * 2 - cache.pending();
         int slabs = (worldHeight + 255) / 256;
         for (int i = 0; i < cnt; i++) {
             long o = order[i];
@@ -464,15 +531,11 @@ public final class FarField {
             wanted[i] = key;
             ColumnIn in = loaded.get(key);
             int lgUsed = -1;
-            FarLodSource.Tile tile = null;
+            FarSurfaceTiles tile = null;
             if (source != null && (in == null || in.loaded < 256)) {
-                int desired = dChunks < 64 ? 2 : dChunks < 192 ? 3 : 4;
-                int tz;
+                int desired = dChunks < 32 ? 1 : dChunks < 64 ? 2 : dChunks < 192 ? 3 : 4;
                 for (int lg = desired; lg <= FarLodSource.MAX_LG && tile == null; lg++) {
-                    int tx0 = Math.floorDiv(sx * 256, FarLodSource.TILE_CELLS << lg);
-                    tz = Math.floorDiv(sz * 256, FarLodSource.TILE_CELLS << lg);
-                    if (lg == desired) tile = source.get(lg, tx0, tz);
-                    else if (source.has(lg, tx0, tz)) tile = source.get(lg, tx0, tz);
+                    tile = FarSurfaceTiles.request(source, lg, sx, sz, lg == desired);
                     if (tile != null) lgUsed = lg;
                 }
                 if (tile == null) {
@@ -480,34 +543,16 @@ public final class FarField {
                             Math.floorDiv(sz * 256, FarLodSource.TILE_CELLS << FarLodSource.MAX_LG));
                 }
             }
-            long sig = (lgUsed + 2L) * 0x100000001B3L ^ (in == null ? 0L : in.sig) ^ ((long) (in == null ? 0 : in.loaded) << 50)
-                    ^ (tile == null ? 0L : 0x5555L + tile.version * 0x9E3779B97F4A7C15L);
-            Entry e = cache.get(key);
-            if (e != null && e.sig == sig) continue;
-            if (budget <= 0 || inProgress.putIfAbsent(key, Boolean.TRUE) != null) continue;
-            budget--;
-            pendingTasks.incrementAndGet();
-            final int fsx = sx, fsz = sz, flg = lgUsed;
-            final FarLodSource.Tile ftile = tile;
-            final ColumnIn fin = in;
-            final long fsig = sig;
-            final int fMinY = minY;
-            pool.execute(() -> {
-                long t0 = System.nanoTime();
-                try {
-                    FarSubtree.Result r = buildSubtree(fsx, fsz, flg, ftile, fin, fMinY, slabs);
-                    cache.put(key, new Entry(fsig, r));
-                    epoch.incrementAndGet();
-                } catch (Throwable t) {
-                    LOGGER.error("FarField subtree {},{} failed", fsx, fsz, t);
-                    cache.put(key, new Entry(fsig, new FarSubtree.Result(new int[8], 1, new int[slabs], 0)));
-                } finally {
-                    inProgress.remove(key);
-                    pendingTasks.decrementAndGet();
-                    taskNanos.addAndGet(System.nanoTime() - t0);
-                    tasksDone.incrementAndGet();
-                }
-            });
+            long sig = (lgUsed + 2L) * 0x100000001B3L ^ (in == null ? 0L : in.signature()) ^ ((long) (in == null ? 0 : in.loaded) << 50)
+                    ^ (tile == null ? 0L : 0x5555L + tile.signature() * 0x9E3779B97F4A7C15L);
+            cache.observe(key, sig);
+            if (!cache.needsBuild(key) || budget <= 0 || (in == null && tile == null)) continue;
+            if (in != null) {
+                if (capturing == null) capturing = new Capture(sx, sz, lgUsed, minY, slabs, key, sig, tile, in);
+            } else {
+                submit(new Capture(sx, sz, lgUsed, minY, slabs, key, sig, tile, null), level);
+                budget--;
+            }
         }
         int keyHash = java.util.Arrays.hashCode(wanted) * 31 + levels * 7 + originSx * 13 + originSz;
         if (keyHash != mergedKeyHash) {
@@ -516,25 +561,30 @@ public final class FarField {
             // drop cached columns no longer wanted
             java.util.HashSet<Long> keep = new java.util.HashSet<>(cnt * 2);
             for (long k : wanted) keep.add(k);
-            cache.keySet().removeIf(k -> !keep.contains(k));
+            cache.retain(keep);
+            if (capturing != null && !keep.contains(capturing.key)) capturing = null;
             if (source != null) source.trim((D + 64) * 16);
         }
         wantedKeys = wanted;
-        wantedLevels = levels;
-        wantedOriginSx = originSx;
-        wantedOriginSz = originSz;
 
         long now = System.currentTimeMillis();
-        if (!merging && (wantedChanged || epoch.get() != mergedEpoch) && now - lastMergeMs > 400 && epoch.get() > 0) {
+        if (!merging && (wantedChanged || epoch != mergedEpoch) && now - lastMergeMs > 400 && epoch > 0) {
             wantedChanged = false;
-            mergedEpoch = epoch.get();
+            mergedEpoch = epoch;
             lastMergeMs = now;
             merging = true;
             final long[] fw = wanted;
+            final long mergeSession = session;
+            final int mergeGeneration = mergedEpoch;
+            final HashMap<Long, FarSubtree.Result> entries = new HashMap<>();
+            for (long key : wanted) {
+                var value = cache.get(key);
+                if (value != null) entries.put(key, value.data());
+            }
             final int fl = levels, fox = originSx, foz = originSz, fy = minY, fslabs = slabs;
             pool.execute(() -> {
                 try {
-                    built.set(merge(fw, fl, fox, foz, fy, fslabs));
+                    built.set(merge(entries, fw, fl, fox, foz, fy, fslabs, mergeSession, mergeGeneration));
                 } catch (Throwable t) {
                     LOGGER.error("FarField merge failed", t);
                 } finally {
@@ -544,39 +594,128 @@ public final class FarField {
         }
     }
 
-    /** Adds one client chunk to its column; real chunks go to the multiplayer cache (at most {@code recordBudget} per call). */
-    private int addLoaded(HashMap<Long, ColumnIn> loaded, java.util.Set<Long> seen, LevelChunk c, int cx, int cz, int R, int recordBudget) {
+    /** Groups loaded chunks and coalesces surface-record requests without copying world data during planning. */
+    private void addLoaded(HashMap<Long, ColumnIn> loaded, java.util.Set<Long> seen, LevelChunk c, int cx, int cz, int R) {
         long pk = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
         seen.add(pk);
         long k = subKey(Math.floorDiv(cx, 16), Math.floorDiv(cz, 16));
         ColumnIn in = loaded.computeIfAbsent(k, x -> new ColumnIn());
         int slot = (Math.floorMod(cz, 16) << 4) | Math.floorMod(cx, 16);
         int d = Math.max(Math.abs(cx - camChunkX), Math.abs(cz - camChunkZ));
+        long revision = FarChunkSnapshot.signature(c);
         in.chunks[slot] = c;
+        in.revisions[slot] = revision;
         in.cls[slot] = (byte) (d < R - 1 ? 1 : 2);
         in.loaded++;
-        in.sig = in.sig * 1000003L + slot * 4 + in.cls[slot] + 0x9E3779B9L * System.identityHashCode(c);
-        if (source instanceof FarCacheSource cs && recordBudget > 0 && !BobbyCompat.isFake(c) && tracked.get(pk) != c) {
-            if (cs.record(c)) {
-                tracked.put(pk, c);
-                recordBudget--;
-            }
-        }
-        return recordBudget;
+        if (source instanceof FarCacheSource && !BobbyCompat.isFake(c)) queueRecord(c, revision);
     }
 
-    private Build merge(long[] wanted, int levels, int originSx, int originSz, int minY, int slabs) {
+    /** Client-thread unload hook: retain the final received state until the bounded snapshot stage admits it. */
+    public static void onChunkUnload(ClientLevel level, LevelChunk chunk) {
+        FarField field = instance;
+        if (field != null && field.levelKey == level && field.source instanceof FarCacheSource && !BobbyCompat.isFake(chunk)) {
+            if (!field.queueRecord(chunk, FarChunkSnapshot.signature(chunk))) {
+                LOGGER.warn("FarField: surface-record backlog full at unload of {}; last persisted surface retained", chunk.getPos());
+            }
+        }
+    }
+
+    private boolean queueRecord(LevelChunk chunk, long revision) {
+        long key = subKey(chunk.getPos().x(), chunk.getPos().z());
+        Recorded old = tracked.get(key);
+        if (old != null && old.chunk == chunk && old.signature == revision) return true;
+        if (!recordQueued.contains(key)) {
+            if (recordQueue.size() >= 1024) { deferredRecords++; return false; }
+            recordQueued.add(key);
+            recordQueue.addLast(key);
+        }
+        if (old == null || old.chunk != chunk) tracked.put(key, new Recorded(chunk, Long.MIN_VALUE));
+        return true;
+    }
+
+    private void recordSlice(ClientLevel level) {
+        if (!(source instanceof FarCacheSource source)) return;
+        long deadline = System.nanoTime() + 2_000_000L;
+        int budget = 8;
+        while (!recordQueue.isEmpty() && budget > 0 && source.recordBacklog() < 32 && System.nanoTime() < deadline) {
+            long key = recordQueue.removeFirst();
+            recordQueued.remove(key);
+            Recorded old = tracked.get(key);
+            if (old == null) continue;
+            long revision = FarChunkSnapshot.signature(old.chunk);
+            if (revision != old.signature) {
+                if (!source.record(snapshot(old.chunk))) throw new IllegalStateException("Far-field record admission changed on owner thread");
+                tracked.put(key, new Recorded(old.chunk, revision));
+                budget--;
+            }
+            if (level.getChunkSource().getChunkNow(old.chunk.getPos().x(), old.chunk.getPos().z()) != old.chunk) tracked.remove(key);
+        }
+    }
+
+    private FarChunkSnapshot snapshot(LevelChunk chunk) {
+        long start = System.nanoTime();
+        FarChunkSnapshot snapshot = new FarChunkSnapshot(chunk);
+        snapshotNanos += System.nanoTime() - start;
+        snapshotsTaken++;
+        return snapshot;
+    }
+
+    private void captureSlice(ClientLevel level) {
+        Capture capture = capturing;
+        if (capture == null || !cache.hasCapacity()) return;
+        long deadline = System.nanoTime() + 2_000_000L;
+        int budget = 8;
+        while (capture.next < 256 && budget > 0 && System.nanoTime() < deadline) {
+            int slot = capture.next++;
+            if (capture.input.cls[slot] != 2) continue;
+            LevelChunk chunk = capture.input.chunks[slot];
+            if (FarChunkSnapshot.signature(chunk) != capture.input.revisions[slot]) {
+                capturing = null;
+                staleCaptures++;
+                return;
+            }
+            capture.snapshots[slot] = snapshot(chunk);
+            budget--;
+        }
+        if (capture.next == 256) {
+            capturing = null;
+            if (capture.input.stillCurrent(level)) submit(capture, level);
+            else staleCaptures++;
+        }
+    }
+
+    private void submit(Capture capture, ClientLevel level) {
+        // The validator is invoked only by the render thread, never by a worker.
+        FarBuildCache.Ticket ticket = cache.begin(capture.key, capture.signature, () -> capture.input == null || capture.input.stillCurrent(level));
+        if (ticket == null) return;
+        byte[] classes = capture.input == null ? null : capture.input.cls;
+        pool.execute(() -> {
+            long start = System.nanoTime();
+            FarSubtree.Result result = null;
+            try {
+                result = buildSubtree(capture.sx, capture.sz, capture.lg, capture.tile, classes, capture.snapshots, capture.minY, capture.slabs);
+            } catch (RuntimeException t) {
+                LOGGER.error("FarField subtree {},{} failed", capture.sx, capture.sz, t);
+            } finally {
+                cache.finish(ticket, result);
+                taskNanos.addAndGet(System.nanoTime() - start);
+                tasksDone.incrementAndGet();
+            }
+        });
+    }
+
+    private Build merge(Map<Long, FarSubtree.Result> entries, long[] wanted, int levels, int originSx, int originSz, int minY, int slabs, long mergeSession, int generation) {
         long t0 = System.nanoTime();
         FarFieldDag dag = new FarFieldDag();
         HashMap<Long, int[]> roots = new HashMap<>();
         int present = 0;
         for (long k : wanted) {
-            Entry e = cache.get(k);
-            if (e == null || e.res.nodeCount() <= 1 && allZero(e.res.roots())) continue;
-            int off = dag.append(e.res.nodes(), e.res.nodeCount());
+            FarSubtree.Result result = entries.get(k);
+            if (result == null || result.nodeCount() <= 1 && allZero(result.roots())) continue;
+            int off = dag.append(result.nodes(), result.nodeCount());
             int[] r = new int[slabs];
             for (int i = 0; i < slabs; i++) {
-                int v = e.res.roots()[i];
+                int v = result.roots()[i];
                 r[i] = (v == 0 || (v & FarFieldDag.LEAF) != 0) ? v : v + off;
             }
             roots.put(k, r);
@@ -589,7 +728,7 @@ public final class FarField {
         LOGGER.info("FarField merge: {} subtrees, {} nodes ({} MiB), cube {} blocks, merge {} ms (avg subtree build {} ms over {} tasks)",
                 present, dag.nodeCount(), (long) words * 4 >> 20, 1 << levels, String.format("%.1f", ms),
                 String.format("%.1f", taskNanos.get() / 1e6 / tasks), tasks);
-        return new Build(dag.rawNodes(), words, root, levels, originSx, originSz, minY, present, dag.nodeCount(), ms);
+        return new Build(dag.rawNodes(), words, root, levels, originSx, originSz, minY, present, dag.nodeCount(), ms, mergeSession, generation);
     }
 
     private static boolean allZero(int[] a) {
@@ -618,34 +757,25 @@ public final class FarField {
 
     // ---- one 256 x 256 column on a worker thread ----
 
-    private FarSubtree.Result buildSubtree(int sx, int sz, int lg, FarLodSource.Tile tile, ColumnIn in, int minY, int slabs) {
+    private static FarSubtree.Result buildSubtree(int sx, int sz, int lg, FarSurfaceTiles tile, byte[] classes, FarChunkSnapshot[] snapshots, int minY, int slabs) {
         int useLg = lg < 0 ? 4 : lg;
         int n = 256 >> useLg;
         short[] top = null, rgb = null;
         if (tile != null) {
             top = new short[n * n];
             rgb = new short[n * n];
-            int tileBlocks = FarLodSource.TILE_CELLS << lg;
-            int ox = (Math.floorMod(sx * 256, tileBlocks)) >> lg, oz = (Math.floorMod(sz * 256, tileBlocks)) >> lg;
-            for (int j = 0; j < n; j++) {
-                for (int i = 0; i < n; i++) {
-                    int src = (oz + j) * FarLodSource.TILE_CELLS + ox + i;
-                    short t = tile.top[src];
-                    top[j * n + i] = t == FarLodSource.EMPTY ? t : (short) (t - minY);
-                    rgb[j * n + i] = tile.rgb[src];
-                }
-            }
+            tile.copy(top, rgb, minY);
         }
         short[][][] exact = null;
-        if (in != null) {
+        if (classes != null) {
             exact = new short[256][][];
             int cells = Math.max(1, 16 >> useLg);
             for (int slot = 0; slot < 256; slot++) {
-                if (in.cls[slot] == 0) continue;
+                if (classes[slot] == 0) continue;
                 int cx = slot & 15, cz = slot >> 4;
                 // holes (client chunks inside the path-traced radius) keep the coarse LOD terrain as a backdrop (seen only where the
                 // path-traced chunk is not meshed yet); exact chunks replace it with their own voxels
-                if (top != null && in.cls[slot] == 2) {
+                if (top != null && classes[slot] == 2) {
                     for (int j = 0; j < cells; j++) {
                         for (int i = 0; i < cells; i++) {
                             int ci = (cx * 16 >> useLg) + i, cj = (cz * 16 >> useLg) + j;
@@ -653,13 +783,8 @@ public final class FarField {
                         }
                     }
                 }
-                if (in.cls[slot] == 2) {
-                    try {
-                        exact[slot] = voxelizeChunk(in.chunks[slot]);
-                    } catch (RuntimeException e) {
-                        exact[slot] = null; // chunk changed under us; the next signature change rebuilds it
-                    }
-                    if (exact[slot] == null) exact[slot] = new short[0][];
+                if (classes[slot] == 2) {
+                    exact[slot] = snapshots[slot].voxelize();
                 }
             }
         }
@@ -680,55 +805,6 @@ public final class FarField {
         else if (st.is(Blocks.GRASS_BLOCK)) kind = KIND_GRASS;
         else if (st.getBlock() instanceof LeavesBlock && color == MapColor.PLANT) kind = KIND_FOLIAGE;
         return 0x80000000 | (kind << 24) | (color.col & 0xFFFFFF);
-    }
-
-    /** 1-block RGB565 voxels of a client chunk: sections indexed from the world bottom, null = air, length 1 = uniform. */
-    private static short[][] voxelizeChunk(LevelChunk chunk) {
-        Biome biome = chunk.getNoiseBiome(chunk.getPos().getMiddleBlockX() >> 2, 64 >> 2, chunk.getPos().getMiddleBlockZ() >> 2).value();
-        int grass = FarLodSource.scale(biome.getGrassColor(chunk.getPos().getMiddleBlockX(), chunk.getPos().getMiddleBlockZ()), 0.85f);
-        int foliage = FarLodSource.scale(biome.getFoliageColor(), 0.8f);
-        int water = FarLodSource.scale(biome.getWaterColor(), 0.85f);
-        IdentityHashMap<BlockState, Short> cache = new IdentityHashMap<>();
-        LevelChunkSection[] secs = chunk.getSections();
-        short[][] out = new short[secs.length][];
-        for (int i = 0; i < secs.length; i++) {
-            LevelChunkSection sec = secs[i];
-            if (sec == null || sec.hasOnlyAir()) continue;
-            short[] data = new short[4096];
-            boolean uniform = true;
-            short first = 0;
-            int solid = 0;
-            for (int y = 0; y < 16; y++) {
-                for (int z = 0; z < 16; z++) {
-                    for (int x = 0; x < 16; x++) {
-                        BlockState st = sec.getBlockState(x, y, z);
-                        Short m = cache.get(st);
-                        if (m == null) {
-                            int c = classify(st);
-                            int rgb = c & 0xFFFFFF;
-                            if (c != 0) {
-                                switch ((c >> 24) & 0x7F) {
-                                    case KIND_GRASS -> rgb = grass;
-                                    case KIND_FOLIAGE -> rgb = foliage;
-                                    case KIND_WATER -> rgb = water;
-                                    default -> { }
-                                }
-                            }
-                            m = c == 0 ? (short) 0 : FarLodSource.rgb565(rgb);
-                            cache.put(st, m);
-                        }
-                        int idx = (y << 8) | (z << 4) | x;
-                        data[idx] = m;
-                        if (idx == 0) first = m;
-                        else if (m != first) uniform = false;
-                        if (m != 0) solid++;
-                    }
-                }
-            }
-            if (solid == 0) continue;
-            out[i] = uniform ? new short[]{first} : data;
-        }
-        return out;
     }
 
     private void render(Vec3 cam) {
@@ -757,6 +833,7 @@ public final class FarField {
         push.putInt(SKY_W).putInt(SKY_H).putInt(shadowsOn ? 1 : 0).putInt(0);
         push.flip();
         gpu.dispatch(push);
+        renderedBuild = b;
     }
 
     private void publish(RemixAPI api, ByteBuffer pixels) {
@@ -776,8 +853,14 @@ public final class FarField {
     }
 
     private void close() {
+        session++;
+        capturing = null;
+        cache.reset();
         pool.shutdownNow();
-        if (source != null) source.close();
+        if (source != null) {
+            source.close();
+            if (source instanceof FarCacheSource cs) previousCacheFlush = cs.flushed();
+        }
         gpu.close();
         if (texture != null && !texture.isDeleted()) texture.destroy();
     }

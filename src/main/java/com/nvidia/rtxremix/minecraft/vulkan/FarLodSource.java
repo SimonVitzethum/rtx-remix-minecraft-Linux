@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicLong;
 final class FarLodSource implements FarTileSource {
     private static final Logger LOGGER = LoggerFactory.getLogger(FarLodSource.class);
     static final int TILE_CELLS = 64;
-    static final int MIN_LG = 2, MAX_LG = 4;
+    static final int MIN_LG = 1, MAX_LG = 4;
     /** Marks a column without terrain (no solid block in the world). */
     static final short EMPTY = Short.MIN_VALUE;
     private static final int MAGIC = 0x464C4F44, VERSION = 2;
@@ -80,7 +80,8 @@ final class FarLodSource implements FarTileSource {
     private record Job(long key, int lg, int tx, int tz, double priority) implements Comparable<Job> {
         @Override
         public int compareTo(Job o) {
-            return Double.compare(priority, o.priority);
+            int order = Double.compare(priority, o.priority);
+            return order != 0 ? order : Long.compare(key, o.key);
         }
     }
 
@@ -128,7 +129,7 @@ final class FarLodSource implements FarTileSource {
         long k = key(lg, tx, tz);
         Tile t = tiles.get(k);
         if (t != null) return t;
-        if (queued.putIfAbsent(k, Boolean.TRUE) == null) {
+        if (!closed && queued.size() < 4096 && queued.putIfAbsent(k, Boolean.TRUE) == null) {
             double size = TILE_CELLS << lg;
             double dx = (tx + 0.5) * size - centerX, dz = (tz + 0.5) * size - centerZ;
             queue.add(new Job(k, lg, tx, tz, Math.max(Math.abs(dx), Math.abs(dz))));
@@ -162,6 +163,7 @@ final class FarLodSource implements FarTileSource {
     @Override
     public void close() {
         closed = true;
+        queue.clear();
         for (Thread t : threads) t.interrupt();
     }
 
@@ -188,10 +190,13 @@ final class FarLodSource implements FarTileSource {
                     writeFile(job, t);
                     generated.incrementAndGet();
                 }
-                tiles.put(job.key, t);
-                epoch.incrementAndGet();
+                if (!closed) {
+                    tiles.put(job.key, t);
+                    epoch.incrementAndGet();
+                }
             } catch (Throwable t) {
                 LOGGER.error("FarLod tile {} failed", job, t);
+            } finally {
                 queued.remove(job.key);
             }
         }
