@@ -221,12 +221,16 @@ namespace dxvk {
   bool MemoryAssetData::patch(uint32_t dstX, uint32_t dstY, uint32_t width, uint32_t height, const uint8_t* pixels, uint32_t rowPitch) {
     std::lock_guard<std::mutex> lock(m_mutex);
     const VkExtent2D extent = m_extents[0];
-    if (dstX + width > extent.width || dstY + height > extent.height) {
+    if (!pixels || !width || !height || dstX > extent.width || dstY > extent.height
+        || width > extent.width - dstX || height > extent.height - dstY) {
       return false;
     }
 
     const size_t rowBytes = static_cast<size_t>(width) * m_format.bytesPerPixel;
     const size_t pitch = rowPitch ? rowPitch : rowBytes;
+    if (pitch < rowBytes) {
+      return false;
+    }
     for (uint32_t row = 0; row < height; ++row) {
       std::memcpy(m_levels[0].data() + (static_cast<size_t>(dstY + row) * extent.width + dstX) * m_format.bytesPerPixel,
                   pixels + row * pitch, rowBytes);

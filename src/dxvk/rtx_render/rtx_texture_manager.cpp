@@ -238,7 +238,7 @@ namespace dxvk {
 
       DxvkImageViewCreateInfo viewInfo{};
       {
-        viewInfo.type = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.type = desc.numLayers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
         viewInfo.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
         viewInfo.minLevel = 0;
@@ -472,6 +472,10 @@ namespace dxvk {
 
     MemoryAssetData::DirtyUploadResult reconcileDirty(DxvkContext* ctx, MemoryAssetData& memory,
                                                      const Rc<DxvkImage>& image, size_t budget) {
+      auto lock = std::unique_lock{ m_immediateMutex, std::try_to_lock };
+      if (!lock.owns_lock()) {
+        return { true, false, 0 };
+      }
       m_synchronousAlloc.trim();
       return memory.uploadDirty(ctx, image, budget, &m_synchronousAlloc);
     }
@@ -487,6 +491,7 @@ namespace dxvk {
 
     // Small immediate requests have their own bounded pool so they cannot wait on the producer.
     RtxStagingRing            m_synchronousAlloc;
+    dxvk::mutex               m_immediateMutex;
 
     std::atomic<bool>         m_requiresShutdown { false };
     std::atomic<bool>         m_processing { false };
@@ -504,13 +509,23 @@ namespace dxvk {
   void AsyncRunner::queueAdd(const Rc<ManagedTexture>& tex, bool async) {
     assert(tex->m_state == ManagedTexture::State::kQueuedForUpload);
     auto upload = planUpload(tex);
-    if (!upload->bytes || (!async && upload->bytes <= m_synchronousAlloc.budget())) {
-      m_synchronousAlloc.trim();
-      auto ready = makeStagingForTextureAsset(m_synchronousAlloc, upload);
-      if (ready.upload) {
-        auto lock = std::unique_lock{ m_readyTextures_mutex };
-        m_readyTextures.push_back(std::move(ready));
-        return;
+    if (!upload->bytes) {
+      ReadyToCopy ready;
+      ready.upload = std::move(upload);
+      auto lock = std::unique_lock{ m_readyTextures_mutex };
+      m_readyTextures.push_back(std::move(ready));
+      return;
+    }
+    if (!async && upload->bytes <= m_synchronousAlloc.budget()) {
+      auto immediate = std::unique_lock{ m_immediateMutex, std::try_to_lock };
+      if (immediate.owns_lock()) {
+        m_synchronousAlloc.trim();
+        auto ready = makeStagingForTextureAsset(m_synchronousAlloc, upload);
+        if (ready.upload) {
+          auto lock = std::unique_lock{ m_readyTextures_mutex };
+          m_readyTextures.push_back(std::move(ready));
+          return;
+        }
       }
     }
     auto process = std::unique_lock{ m_texturesToProcess_mutex };
@@ -525,7 +540,12 @@ namespace dxvk {
 
 
   std::vector<ReadyToCopy> AsyncRunner::retrieveReadyToUploadTextures() {
-    m_synchronousAlloc.trim();
+    {
+      auto immediate = std::unique_lock{ m_immediateMutex, std::try_to_lock };
+      if (immediate.owns_lock()) {
+        m_synchronousAlloc.trim();
+      }
+    }
     auto lock = std::unique_lock{ m_readyTextures_mutex };
     std::vector<ReadyToCopy> ready;
     size_t bytes = 0;
