@@ -25,6 +25,12 @@ class HardcodedVertexTest {
     }
 
     @Test
+    void legacyHalfPackingPreservesSubnormalBoundsAndNanEncoding() {
+        assertEquals(0x7e000200, HardcodedVertex.packHalf2x16(0x1.0p-15f, Float.NaN));
+        assertEquals(0x7c000001, HardcodedVertex.packHalf2x16(0x1.0p-24f, Float.POSITIVE_INFINITY));
+    }
+
+    @Test
     void nativeLayoutKeepsBoundsAtBytes36And40AndStride64() {
         HardcodedVertex vertex = new HardcodedVertex();
         vertex.setTexcoordBounds(0.25f, 0.5f, 0.75f, 1.0f);

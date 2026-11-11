@@ -32,7 +32,8 @@ public class HardcodedVertex {
 
     /** Packs two floats into a single int as two IEEE 754 binary16 values. */
     public static int packHalf2x16(float x, float y) {
-        return (floatToHalf(x) & 0xFFFF) | ((floatToHalf(y) & 0xFFFF) << 16);
+        return Short.toUnsignedInt(Float.floatToFloat16(x))
+                | (Short.toUnsignedInt(Float.floatToFloat16(y)) << 16);
     }
 
     /**
@@ -45,16 +46,6 @@ public class HardcodedVertex {
 
     private static int unorm16(float f) {
         return Math.max(0, Math.min(65535, Math.round(f * 65535.0f)));
-    }
-
-    private static int floatToHalf(float f) {
-        int bits = Float.floatToRawIntBits(f);
-        int sign = (bits >>> 16) & 0x8000;
-        int expo = ((bits >>> 23) & 0xFF) - 112;
-        int mant = bits & 0x7FFFFF;
-        if (expo <= 0) return sign;
-        if (expo >= 31) return sign | 0x7C00;
-        return sign | (expo << 10) | (mant >>> 13);
     }
 
     public HardcodedVertex() {}
