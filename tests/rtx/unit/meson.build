@@ -70,7 +70,8 @@ exe = executable('test_texture_upload', files('test_texture_upload.cpp'),
 test('test_texture_upload', exe, env : test_env)
 tests += exe
 
-exe = executable('test_texture_upload_package', files('test_texture_upload_package.cpp'),
+exe = executable('test_texture_upload_package', files('test_texture_upload_package.cpp', '../../../src/dxvk/dxvk_format.cpp'),
+  include_directories : test_include_path, cpp_args : ['-DXXH_INLINE_ALL'],
   dependencies : dependency('threads'), override_options : ['cpp_std='+dxvk_cpp_std])
 test('test_texture_upload_package', exe, env : test_env)
 tests += exe

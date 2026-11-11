@@ -314,6 +314,7 @@ dxvk_src = files([
   'rtx_render/rtx_option_layer_gui.h',
   'rtx_render/rtx_options.cpp',
   'rtx_render/rtx_options.h',
+  'rtx_render/rtx_packaged_asset_data.h',
   'rtx_render/rtx_pathtracer_gbuffer.cpp',
   'rtx_render/rtx_pathtracer_gbuffer.h',
   'rtx_render/rtx_pathtracer_integrate_direct.cpp',

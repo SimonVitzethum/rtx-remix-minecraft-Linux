@@ -34,7 +34,9 @@ Previously resident images remain usable during promotion.
 The transaction retains the source asset and image description. Hot reload or a
 new demotion cancels obsolete transactions. Source caches are evicted after each
 subresource and on cancellation/failure. Uncompressed package blobs are read
-directly into each staging range without caching the complete mip. Shared package
+directly into each staging range without caching the complete mip. CPU reads compute
+checked offsets for individual mips within a shared tail blob and reject ranges
+that cross a mip boundary. Shared package
 file seeks and reads are serialized. Mutable memory textures lock each byte
 copy. Animated writes made during a base upload retain their dirty rectangles;
 the final batch drains those rectangles in bounded row bands using the immediate
@@ -66,6 +68,9 @@ therefore still require a texture budget large enough for their actual GPU image
 24576x16384 textures without allocating giant arrays. Small real byte copies test
 partial compressed blocks, depth slices, edge bounds and insufficient row budgets.
 Overflow cases cover block rounding, products and mip-chain accumulation.
+`test_texture_upload_package.cpp` exercises the production package asset reader
+with distinct RGBA and BC mip contents, shared tail blobs, byte guards, invalid
+ranges, and concurrent data/metadata reads.
 Production validation also needs a native game run that exercises GPU retirement,
 atlas animation, hot reload and memory pressure. Planned slice sizes are not
 measurements of physical memory usage, GPU transfer time or frame time.
