@@ -32,8 +32,7 @@ public class HardcodedVertex {
 
     /** Packs two floats into a single int as two IEEE 754 binary16 values. */
     public static int packHalf2x16(float x, float y) {
-        return Short.toUnsignedInt(Float.floatToFloat16(x))
-                | (Short.toUnsignedInt(Float.floatToFloat16(y)) << 16);
+        return floatToHalf(x) | (floatToHalf(y) << 16);
     }
 
     /**
@@ -46,6 +45,33 @@ public class HardcodedVertex {
 
     private static int unorm16(float f) {
         return Math.max(0, Math.min(65535, Math.round(f * 65535.0f)));
+    }
+
+    private static int floatToHalf(float value) {
+        int bits = Float.floatToRawIntBits(value);
+        int sign = (bits >>> 16) & 0x8000;
+        int exponent = (bits >>> 23) & 0xff;
+        int mantissa = bits & 0x7fffff;
+        if (exponent == 255) {
+            return sign | 0x7c00 | (mantissa == 0 ? 0 : 0x200);
+        }
+        int halfExponent = exponent - 112;
+        if (halfExponent >= 31) return sign | 0x7c00;
+        if (halfExponent <= 0) {
+            if (halfExponent < -10) return sign;
+            mantissa |= 0x800000;
+            int shift = 14 - halfExponent;
+            int result = mantissa >>> shift;
+            int remainder = mantissa & ((1 << shift) - 1);
+            int midpoint = 1 << (shift - 1);
+            if (remainder > midpoint || (remainder == midpoint && (result & 1) != 0)) result++;
+            return sign | result;
+        }
+        // Round to nearest, with ties going to the even significand.
+        mantissa += 0xfff + ((mantissa >>> 13) & 1);
+        if ((mantissa & 0x800000) != 0) halfExponent++;
+        if (halfExponent >= 31) return sign | 0x7c00;
+        return sign | (halfExponent << 10) | ((mantissa >>> 13) & 0x3ff);
     }
 
     public HardcodedVertex() {}

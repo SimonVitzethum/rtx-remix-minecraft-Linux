@@ -31,6 +31,28 @@ class HardcodedVertexTest {
     }
 
     @Test
+    void legacyHalfPackingMatchesTheJdkReferenceIncludingRoundingBoundaries() {
+        for (int half = 0; half <= 0xffff; half++) {
+            float value = Float.float16ToFloat((short) half);
+            if (!Float.isNaN(value)) {
+                assertEquals(half, HardcodedVertex.packHalf2x16(value, 0) & 0xffff);
+            }
+        }
+        java.util.Random random = new java.util.Random(20);
+        for (int i = 0; i < 10000; i++) {
+            float value = Float.intBitsToFloat(random.nextInt());
+            if (!Float.isNaN(value)) {
+                assertEquals(Short.toUnsignedInt(Float.floatToFloat16(value)),
+                        HardcodedVertex.packHalf2x16(value, 0) & 0xffff);
+            }
+        }
+        assertEquals(0x3c00, HardcodedVertex.packHalf2x16(1 + 0x1.0p-11f, 0));
+        assertEquals(0x3c02, HardcodedVertex.packHalf2x16(1 + 3 * 0x1.0p-11f, 0));
+        assertEquals(0, HardcodedVertex.packHalf2x16(0x1.0p-25f, 0));
+        assertEquals(2, HardcodedVertex.packHalf2x16(3 * 0x1.0p-25f, 0));
+    }
+
+    @Test
     void nativeLayoutKeepsBoundsAtBytes36And40AndStride64() {
         HardcodedVertex vertex = new HardcodedVertex();
         vertex.setTexcoordBounds(0.25f, 0.5f, 0.75f, 1.0f);
