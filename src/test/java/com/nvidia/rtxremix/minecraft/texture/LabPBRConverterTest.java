@@ -14,6 +14,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LabPBRConverterTest {
 
     @Test
+    void heightPreservesAuthoredReliefButDoesNotOccludeFullyTransparentCutouts() {
+        try (var normal = new com.mojang.blaze3d.platform.NativeImage(2, 1, false)) {
+            normal.setPixelABGR(0, 0, 0xff808080);
+            normal.setPixelABGR(1, 0, 0xc8808080);
+            byte[] albedo = new byte[4 * 2 * 4];
+            albedo[(1 * 4 + 2) * 4 + 3] = 1; // Partial opacity still carries its authored height.
+            byte[] height = new byte[4 * 2];
+            java.util.Arrays.fill(height, (byte) 33);
+            LabPBRConverter.blitHeight(height, 4, normal, albedo, 1, 1, 2, 1);
+            assertEquals(0, unsigned(height[5]));
+            assertEquals(200, unsigned(height[6]));
+            assertEquals(33, unsigned(height[4]));
+            assertEquals(33, unsigned(height[7]));
+        }
+    }
+
+    @Test
     void applyAoToPatchSamplesTheAoTableAtTheUploadSourceOffset() {
         ByteBuffer src = ByteBuffer.allocate(8);
         putPixel(src, 0, 100, 150, 200, 250);

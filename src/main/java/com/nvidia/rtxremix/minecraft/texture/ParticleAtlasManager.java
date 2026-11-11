@@ -143,7 +143,7 @@ public class ParticleAtlasManager {
                 try {
                     if (nImg != null) {
                         LabPBRConverter.blitNormal(normalAtlas, atlasW, nImg, pixX, pixY, pixW, pixH);
-                        LabPBRConverter.blitHeight(heightAtlas, atlasW, nImg, pixX, pixY, pixW, pixH);
+                        LabPBRConverter.blitHeight(heightAtlas, atlasW, nImg, albedoRGBA, pixX, pixY, pixW, pixH);
                         LabPBRConverter.applyAO(albedoRGBA, atlasW, nImg, pixX, pixY, pixW, pixH);
                         hasAnyNormal = true;
                         hasAnyHeight = true;

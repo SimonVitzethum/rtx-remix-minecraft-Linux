@@ -2384,7 +2384,7 @@ public class RemixEntitySubmitter {
                 try {
                     if (nImg != null) {
                         LabPBRConverter.blitNormal(normalData, w, nImg, x, y, spriteW, spriteH);
-                        LabPBRConverter.blitHeight(heightData, w, nImg, x, y, spriteW, spriteH);
+                        LabPBRConverter.blitHeight(heightData, w, nImg, pixels, x, y, spriteW, spriteH);
                         LabPBRConverter.applyAO(pixels, w, nImg, x, y, spriteW, spriteH);
                         LabPBRConverter.applyAO(sssAlbedoData, w, nImg, x, y, spriteW, spriteH);
                         hasNormal = true;
@@ -2600,7 +2600,7 @@ public class RemixEntitySubmitter {
             byte[] normalData = new byte[w * h * 4];
             byte[] heightData = new byte[w * h];
             LabPBRConverter.blitNormal(normalData, w, nImg, 0, 0, w, h);
-            LabPBRConverter.blitHeight(heightData, w, nImg, 0, 0, w, h);
+            LabPBRConverter.blitHeight(heightData, w, nImg, albedoRGBA, 0, 0, w, h);
             textures.normal = uploadAndOwn(textures, "entity_n_" + textureName, normalData, w, h,
                     TextureFormat.RGBA8_UNORM, TexturePurpose.NORMAL_DX);
             textures.height = uploadAndOwn(textures, "entity_h_" + textureName, heightData, w, h,

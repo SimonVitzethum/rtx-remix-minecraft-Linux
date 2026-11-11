@@ -519,7 +519,7 @@ public class BlockTextureManager {
             try {
                 if (nI != null) {
                     LabPBRConverter.blitNormal(normalAtlas, atlasW, nI, se.pixX, se.pixY, se.pixW, se.pixH);
-                    LabPBRConverter.blitHeight(heightAtlas, atlasW, nI, se.pixX, se.pixY, se.pixW, se.pixH);
+                    LabPBRConverter.blitHeight(heightAtlas, atlasW, nI, albedoRGBA, se.pixX, se.pixY, se.pixW, se.pixH);
                     LabPBRConverter.applyAO(albedoRGBA, atlasW, nI, se.pixX, se.pixY, se.pixW, se.pixH);
                     LabPBRConverter.applyAO(sssAlbedoAtlas, atlasW, nI, se.pixX, se.pixY, se.pixW, se.pixH);
                     hasAnyNormal = true;
@@ -1063,7 +1063,7 @@ public class BlockTextureManager {
         if (nI != null) {
             byte[] nd = new byte[w * h * 4], hd = new byte[w * h];
             LabPBRConverter.blitNormal(nd, w, nI, 0, 0, w, h);
-            LabPBRConverter.blitHeight(hd, w, nI, 0, 0, w, h);
+            LabPBRConverter.blitHeight(hd, w, nI, alb, 0, 0, w, h);
             se.normal = upload(api, p + "n", nd, w, h, TextureFormat.RGBA8_UNORM, TexturePurpose.NORMAL_DX);
             se.height = upload(api, p + "h", hd, w, h, TextureFormat.R8_UNORM, TexturePurpose.HEIGHTMAP);
         }
