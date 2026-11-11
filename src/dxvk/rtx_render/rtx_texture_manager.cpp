@@ -672,7 +672,7 @@ namespace dxvk {
             }
           }
           Logger::info(str::format("[TextureStaging] ", upload->asset->info().extent.width, "x",
-            upload->asset->info().extent.height, ": packed ", upload->bytes, " bytes in ", bandCount,
+            upload->asset->info().extent.height, ": planned ", upload->bytes, " bytes, packed ", bandCount,
             " bands, peak slice ", peakBytes, " bytes, producer elapsed ",
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), " ms"));
         }
@@ -1117,7 +1117,7 @@ namespace dxvk {
           }
         }
         if (kUploadBytesPerFrame - remainingBytes >= 4 * Megabytes) {
-          Logger::info(str::format("[TextureStaging] Frame ", m_device->getCurrentFrameId(), ": recorded ",
+          Logger::info(str::format("[TextureStaging] Frame ", m_device->getCurrentFrameId(), ": budgeted ",
             kUploadBytesPerFrame - remainingBytes, " bytes, CPU ",
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - recordStart).count(), " ms"));
         }
