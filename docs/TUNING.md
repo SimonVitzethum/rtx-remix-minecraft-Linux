@@ -290,3 +290,44 @@ directory for an installed client. Portable Prism keeps the former at
 
 Textures, material maps, and block light rules come from resource packs, not
 from properties. Their formats are in [Resource Packs](RESOURCE_PACKS.md).
+
+## Freecam And Fullbright Validation
+
+`FreecamCameraMixin` applies its pose at `Camera.alignWithEntity` return, before
+26.3 prepares the cull frustum. Vanilla traversal, Remix camera submission,
+terrain capture/build order, and light/entity culling share that camera. Server
+chunk delivery remains centred on the player. The camera requires no proxy
+entity or separate visibility traversal.
+
+`Fullbright` uses one normalized smoothstep envelope for lights, sky ambient,
+and exposure. Its two sphere radiances default to 100/50, with volumetric
+radiance disabled for camera-following emitters. Exposure is a temporary conf
+layer at priority 12000, above shipped biome/zone profiles and below explicit
+user overrides. Acquire reads a small generated conf synchronously; the file is
+then deleted. Post-processing changes replace that layer, and world clear or
+renderer shutdown releases it. Fade-out disables the layer rather than writing
+baseline values into User Settings.
+
+For a headless regression, copy
+`src/test/resources/input/freecam-fullbright.txt` to
+`<dedicated-test-game-dir>/rtxremix-test-script.txt`, then load a disposable
+single-player world. The fixture builds at fixed coordinates and modifies that
+world. `expect` failures appear as `Step failed` in the game log. Check actual
+F4/B key routing, player motion isolation, damage exit, and debug-key contexts.
+F3+F4 needs game-master permission to display the switcher; without it vanilla
+reports its permission denial and Freecam must still remain off.
+
+Screenshot steps emit `shot marker NAME`. To synchronize an external virtual
+surface capture, create `shot-ack-enable` in the test game directory and write
+`shot-ack-NAME` after each PNG is complete. Remove stale acknowledgements before
+a run. Waiting yields to rendering, has a 30-second timeout, and does not consume
+the scripted settling time of subsequent steps. Without acknowledgement mode,
+markers simply log. Never capture the real desktop for this test.
+
+The fixture builds the complete room before teleporting into it and gives
+terrain and exposure time to settle. Compare room off/on/off at the same pose
+and open-night off/on after at least 15 seconds per state. Inspect texture and
+shadow detail as well as brightness: a readable wall that has clipped to white
+is a regression. Repeat on OpenGL and Vulkan, preserving the same options and
+world. Unit tests cover transition timing and reversal; they cannot establish
+image quality or prove a native light/config-layer call succeeded.

@@ -50,6 +50,13 @@ terrain once, rather than rebuilding every block light at each drag position.
 It has its own Reset: the Lighting page's Reset does not reach into it, but
 Reset All on the landing page does.
 
+**Fullbright** adds two soft camera-following fill lights, lifts dark-scene
+exposure, and increases night ambient light. **B** toggles it for the current
+session; the Lighting page also exposes the toggle and a strength from 0 to 2.
+The enable transition lasts 0.8 seconds in either direction. Lighting Reset
+includes these controls. Explicit Image & Exposure overrides keep precedence
+over Fullbright's exposure layer; its fill lights still work.
+
 ## Image & Exposure
 
 This page adjusts tonemapping and eye adaptation. Taking control of a value

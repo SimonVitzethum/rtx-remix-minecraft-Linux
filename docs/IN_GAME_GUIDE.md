@@ -156,6 +156,8 @@ folder. Camera commands are unavailable while a benchmark is running.
 
 | Key or action | What it does |
 |---|---|
+| Freecam (default `F4`) | Detach the camera; press again to return. WASD and the mouse move/look, Space/Shift move up/down, scroll changes speed, and Sprint multiplies speed by four |
+| Toggle Fullbright (default `B`) | Fade night vision on or off; its strength is under RTX Remix Settings > Lighting |
 | Toggle RTX Rendering (default `F8`) | Turn path tracing off, or back on, without opening chat. The new state shows above the hotbar |
 | `Alt+X` | Open the RTX Remix runtime's own developer overlay, or close whichever Remix overlay is open, including the Graphics Settings menu that the button on the settings screen opens; each menu's own close button closes it too. What you change in either overrides the mod's settings. While one is open, Minecraft receives no keyboard or mouse input at all, Escape included; close the menu or press `Alt+X` to return |
 | Toggle Held Lights (default `G`) | Put out everything lit in your hands, a torch's flame and light or a Copper Beacon's beam, and light it again |
@@ -171,6 +173,14 @@ what other players hold stays lit whatever you press. By default, an open flame
 goes out while any holder's head is under water and returns on surfacing.
 `R` is only intercepted while a recording is armed or running, and `=` and `-`
 only while one is running. None is intercepted while a menu is open.
+
+Freecam leaves your player in the world and displays its body without first-person
+hands. Movement and attack/use/mining input control no player actions while it is
+active. Existing mining and item use stop on entry. Damage, death, respawn, or
+leaving the world returns you to the player. The camera uses already loaded
+terrain; moving it does not load distant chunks from the server. The original
+camera perspective returns when you exit. Vanilla's F3+F4 game-mode switcher and
+F3+B hitboxes remain available.
 
 ## New Blocks And Effects
 
