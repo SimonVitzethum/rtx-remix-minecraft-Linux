@@ -186,6 +186,8 @@ namespace dxvk {
     surface.texcoordBufferIndex = geo.texcoordBufferIndex;
     surface.texcoordOffset      = geo.texcoordBuffer.offsetFromSlice();
     surface.texcoordStride      = geo.texcoordBuffer.stride();
+    surface.hasTexcoordBounds = m_linkedBlas->input.getGeometryData().hasTexcoordBounds &&
+      surface.texcoordStride == sizeof(remixapi_HardcodedVertex);
     surface.previousPositionBufferIndex = geo.previousPositionBufferIndex;
     surface.indexBufferIndex    = geo.indexBufferIndex;
     surface.indexStride         = geo.indexBuffer.stride();

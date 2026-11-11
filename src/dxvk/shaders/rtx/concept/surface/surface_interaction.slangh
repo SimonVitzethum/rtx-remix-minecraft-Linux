@@ -658,9 +658,8 @@ SurfaceInteraction surfaceInteractionCreateImpl<let GenerateTangents : bool, let
 
     surfaceInteraction.textureCoordinates = sanitizedInterpolatedTextureCoordinates;
 
-#ifdef OPAQUE_MATERIAL_USE_POM
-    // Atlas tile bounds of the first vertex (all four vertices of a quad carry the same bounds), see texcoordBoundsPacked.
-    if (surface.texcoordBufferIndex != BINDING_INDEX_INVALID && surface.texcoordStride == 64 &&
+    // API bounds are normalized to UNORM16 before upload and are shared by all triangle vertices.
+    if (surface.hasTexcoordBounds && surface.texcoordBufferIndex != BINDING_INDEX_INVALID &&
         surface.texcoordGenerationMode == uint(TexGenMode::None))
     {
       const uint boundsElementIndex = (idx[0] * uint(surface.texcoordStride) + surface.texcoordOffset) / 4 + 3;
@@ -668,7 +667,6 @@ SurfaceInteraction surfaceInteractionCreateImpl<let GenerateTangents : bool, let
         asuint(BUFFER_ARRAY(geometries, surface.texcoordBufferIndex, boundsElementIndex + 0)),
         asuint(BUFFER_ARRAY(geometries, surface.texcoordBufferIndex, boundsElementIndex + 1)));
     }
-#endif
 
     if (GenerateTangents)
     {
