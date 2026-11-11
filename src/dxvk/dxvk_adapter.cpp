@@ -356,7 +356,9 @@ namespace dxvk {
           DxvkDeviceFeatures  enabledFeatures) {
     DxvkDeviceExtensions devExtensions;
 
+    // NV-DXVK start: Include the optional cluster acceleration structure extension
     std::array<DxvkExt*, 46> devExtensionList = {{
+    // NV-DXVK end
       &devExtensions.amdMemoryOverallocationBehaviour,
       &devExtensions.amdShaderFragmentMask,
       &devExtensions.ext4444Formats,
@@ -399,7 +401,9 @@ namespace dxvk {
       &devExtensions.nvRayTracingInvocationReorder,
       &devExtensions.khrSynchronization2,
       &devExtensions.extOpacityMicromap,
+      // NV-DXVK start: Optional cluster acceleration structures
       &devExtensions.nvClusterAccelerationStructure,
+      // NV-DXVK end
       &devExtensions.nvLowLatency,
       &devExtensions.nvxBinaryImport,
       &devExtensions.nvxImageViewHandle,

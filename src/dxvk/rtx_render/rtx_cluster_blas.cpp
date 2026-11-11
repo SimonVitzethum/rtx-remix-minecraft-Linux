@@ -223,7 +223,7 @@ namespace dxvk {
     ctx->bindResourceBuffer(1, DxvkBufferSlice(indices));
     ctx->bindResourceBuffer(2, DxvkBufferSlice(packed));
     ctx->bindShader(VK_SHADER_STAGE_COMPUTE_BIT, ClusterPackShader::getShader());
-    const ::ClusterPackArgs args {plan.triangles * 3, geo.vertexCount, uint32_t(tri.vertexStride), indexStride, uint32_t(vertexOffset), uint32_t(indexOffset)};
+    const ClusterPackArgs args {plan.triangles * 3, geo.vertexCount, uint32_t(tri.vertexStride), indexStride, uint32_t(vertexOffset), uint32_t(indexOffset)};
     ctx->pushConstants(0, sizeof(args), &args);
     ctx->dispatch((args.indexCount + 63) / 64, 1, 1);
     auto buildBarrier = [&] {
