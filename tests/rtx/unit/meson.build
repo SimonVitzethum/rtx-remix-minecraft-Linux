@@ -66,6 +66,11 @@ test('test_render_target_motion_integration', exe, env : test_env)
 tests += exe
 
 if host_machine.system() == 'linux'
+  exe = executable('test_ngx_vulkan_dispatch', files('test_ngx_vulkan_dispatch.cpp'),
+    include_directories : test_include_path, override_options : ['cpp_std='+dxvk_cpp_std])
+  test('test_ngx_vulkan_dispatch', exe, env : test_env)
+  tests += exe
+
   exe = executable('test_renderpass_compatibility', files('test_renderpass_compatibility.cpp'),
     include_directories : test_include_path, dependencies : test_unit_deps, link_with : dxvk_lib,
     override_options : ['cpp_std='+dxvk_cpp_std])

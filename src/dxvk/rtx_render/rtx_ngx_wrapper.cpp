@@ -43,6 +43,9 @@
 #endif
 
 #include "rtx_ngx_wrapper.h"
+#ifdef REMIX_LINUX_NATIVE
+#include "rtx_ngx_vulkan.h"
+#endif
 #include "rtx_matrix_helpers.h"
 
 #include <nvsdk_ngx.h>
@@ -220,7 +223,11 @@ namespace dxvk
     result = NGX_CALL(NVSDK_NGX_VULKAN_Init(
       RtxOptions::applicationId(), logFolder.c_str(),
       vkInstance, vkPhysicalDevice, vkDevice,
+#ifdef REMIX_LINUX_NATIVE
+      ngx::getInstanceProcAddr, ngx::getDeviceProcAddr,
+#else
       nullptr, nullptr,
+#endif
       &featureCommonInfo));
 
     if (NVSDK_NGX_FAILED(result)) {
