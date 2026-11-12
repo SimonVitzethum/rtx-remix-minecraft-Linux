@@ -337,9 +337,9 @@ public final class RemixInputTestScript {
                 if (previous != null && previous.section == section && previous.state != state && previous.revision >= revision) {
                     throw new IllegalStateException("Content changed without advancing its section revision at " + pos);
                 }
-                LOGGER.info("probe {}: pos={} block={} chunk={} section={} revision={} previousRevision={} lifetime={}",
+                LOGGER.info("probe {}: pos={} block={} chunk={} section={} revision={} previousRevision={} lifetime={} clock={}",
                         w[1], pos, block, System.identityHashCode(chunk), System.identityHashCode(section), revision,
-                        previous == null ? -1 : previous.revision, lifetime);
+                        previous == null ? -1 : previous.revision, lifetime, System.nanoTime());
                 probes.put(w[1], new Probe(chunk, section, state, revision));
             }
             case "diag" -> {

@@ -710,6 +710,9 @@ public final class FarField {
         byte[] classes = capture.input == null ? null : capture.input.cls;
         pool.execute(() -> {
             long start = System.nanoTime();
+            boolean diagnostics = Boolean.getBoolean("rtxremix.farfield.diagnostics");
+            if (diagnostics) LOGGER.info("FarField build start: session {} key {},{} signature {} clock {}", jobSession,
+                    capture.sx, capture.sz, capture.signature, start);
             FarSubtree.Result result = null;
             try {
                 if (session != jobSession) return;
@@ -719,6 +722,8 @@ public final class FarField {
             } catch (RuntimeException t) {
                 LOGGER.error("FarField subtree {},{} failed", capture.sx, capture.sz, t);
             } finally {
+                if (diagnostics) LOGGER.info("FarField build end: session {} key {},{} signature {} clock {} result {}", jobSession,
+                        capture.sx, capture.sz, capture.signature, System.nanoTime(), result != null);
                 cache.finish(ticket, result);
                 taskNanos.addAndGet(System.nanoTime() - start);
                 tasksDone.incrementAndGet();
