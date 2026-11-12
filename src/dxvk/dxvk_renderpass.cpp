@@ -150,15 +150,9 @@ namespace dxvk {
       renderStages |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
                    |  VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
 
-      VkImageAspectFlags loadAspects = 0;
-
-      if (ops.depthOps.loadOpD == VK_ATTACHMENT_LOAD_OP_LOAD)
-        loadAspects |= VK_IMAGE_ASPECT_DEPTH_BIT;
-      if (ops.depthOps.loadOpS == VK_ATTACHMENT_LOAD_OP_LOAD)
-        loadAspects |= VK_IMAGE_ASPECT_STENCIL_BIT;
-
-      if (loadAspects & imageFormatInfo(m_format.depth.format)->aspectMask)
-        renderAccess |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+      // NV-DXVK start: Keep dependencies identical across attachment operation variants.
+      renderAccess |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+      // NV-DXVK end
       
       if (m_format.depth.layout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
         renderAccess |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -176,8 +170,9 @@ namespace dxvk {
       renderStages |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
       renderAccess |= VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-      if (ops.colorOps[i].loadOp == VK_ATTACHMENT_LOAD_OP_LOAD)
-        renderAccess |= VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+      // NV-DXVK start: Keep dependencies identical across attachment operation variants.
+      renderAccess |= VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+      // NV-DXVK end
     }
 
     if (renderStages) {
@@ -187,10 +182,8 @@ namespace dxvk {
         0, renderAccess };
     }
 
-    if (ops.barrier.srcStages & (
-          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-          VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT |
-          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT)) {
+    // NV-DXVK start: Render pass compatibility includes the complete dependency list.
+    if (renderStages & VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) {
       subpassDeps[subpassDepCount++] = { 0, 0,
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
@@ -199,14 +192,15 @@ namespace dxvk {
         VK_DEPENDENCY_BY_REGION_BIT };
     }
 
-    if (ops.barrier.srcStages && ops.barrier.dstStages) {
+    if (renderStages) {
       subpassDeps[subpassDepCount++] = {
         0, VK_SUBPASS_EXTERNAL,
-        ops.barrier.srcStages,
-        ops.barrier.dstStages,
-        ops.barrier.srcAccess,
-        ops.barrier.dstAccess, 0 };
+        renderStages,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        renderAccess,
+        VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, 0 };
     }
+    // NV-DXVK end
     
     VkRenderPassCreateInfo info;
     info.sType                        = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
