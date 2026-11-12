@@ -5915,14 +5915,13 @@ namespace dxvk {
     if (m_execBarriers.isImageDirty(image, subresources, DxvkAccess::Write))
       m_execBarriers.recordCommands(m_cmd);
 
-    VkPipelineStageFlags srcStages = 0;
-
-    if (image->isInUse())
-      srcStages = dstStages;
-
+    // NV-DXVK start: Discarding contents still orders earlier writes before the layout transition.
+    VkPipelineStageFlags srcStages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkAccessFlags srcAccess = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     m_execAcquires.accessImage(image, subresources,
-      VK_IMAGE_LAYOUT_UNDEFINED, srcStages, 0,
+      VK_IMAGE_LAYOUT_UNDEFINED, srcStages, srcAccess,
       dstLayout, dstStages, dstAccess);
+    // NV-DXVK end
   }
 
   // NV-DXVK start: use EXT_debug_utils
