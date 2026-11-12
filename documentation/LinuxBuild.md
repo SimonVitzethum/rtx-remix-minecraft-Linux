@@ -172,6 +172,13 @@ retirement when their combined duration reaches 100 ms. These are CPU wall
 durations and include host scheduling or memory pressure. Frame identifiers
 are runtime present counters and can advance for generated frames.
 
+`StagingCapacity` counts general DXVK staging requests, allocation bytes, wraps,
+large dedicated spills, maximum request and offset, and allocation CPU time.
+These counters are cumulative per CS thread, not live/in-flight byte estimates.
+This allocator creates referenced chunks on wrap without forcing a flush or
+wait; its zero forced-operation fields describe this allocator only. Texture
+streaming uses its separate bounded lease pool and unchanged byte budgets.
+
 `SubmitMemory` reports allocated and assigned bytes per runtime Vulkan heap,
 including buffer, acceleration-structure and replacement-geometry categories.
 Assigned memory includes references held by in-flight work. These counters do
