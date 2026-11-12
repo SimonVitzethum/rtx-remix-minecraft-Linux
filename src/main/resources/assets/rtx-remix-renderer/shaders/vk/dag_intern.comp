@@ -14,9 +14,10 @@ layout(std430,binding=5) buffer Status {
   uint nodeCount; uint errors; uint capacityFailures; uint probeFailures;
   uint collisions; uint duplicates; uint inserted; uint collapsed;
 };
+layout(std430,binding=7) readonly buffer Control { uint control[]; };
 layout(push_constant) uniform Parameters {
-  uint mode; uint count; uint tableMask; uint nodeCapacity;
-  uint maxProbes; uint hashMask; uint groupStride; uint committedNodes;
+  uint mode; uint tableMask; uint nodeCapacity; uint maxProbes;
+  uint hashMask; uint groupStride; uint unused0; uint unused1;
 } p;
 const uint TAG=0x80000000u;
 uint linearId() { return (gl_WorkGroupID.y*p.groupStride+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x; }
@@ -29,13 +30,12 @@ bool sameKey(uint id, uint entry) {
 }
 void main() {
   uint id=linearId();
+  if(id>=control[0]) return;
   if(p.mode==2u) {
-    if(id>p.tableMask) return;
-    uint entry=slots[id];
-    if((entry&TAG)!=0u) slots[id]=values[(entry&~TAG)-1u];
+    uint slot=canonical[id];
+    if(slot!=0u && (slot&TAG)==0u) slots[slot-1u]=values[id];
     return;
   }
-  if(id>=p.count) return;
   if(p.mode==1u) {
     uint winner=canonical[id];
     if((winner&TAG)!=0u) values[id]=values[(winner&~TAG)-1u];
@@ -48,7 +48,7 @@ void main() {
   for(uint k=0u;k<8u;++k) {
     uint c=keys[id].child[k];
     isUniform=isUniform && c==first;
-    if(c!=0u && (c&TAG)==0u && c>=p.committedNodes) atomicOr(errors,4u);
+    if(c!=0u && (c&TAG)==0u && c>=control[1]) atomicOr(errors,4u);
     hash=hash*0x9E3779B1u+c+(hash>>15u);
   }
   if(isUniform) { values[id]=first; atomicAdd(collapsed,1u); return; }
@@ -57,6 +57,7 @@ void main() {
     uint slot=(hash+probe)&p.tableMask;
     uint entry=atomicCompSwap(slots[slot],0u,TAG|(id+1u));
     if(entry==0u) {
+      canonical[id]=slot+1u;
       uint index=atomicAdd(nodeCount,1u);
       if(index>=p.nodeCapacity) {
         values[id]=0u; atomicOr(errors,1u); atomicAdd(capacityFailures,1u); return;

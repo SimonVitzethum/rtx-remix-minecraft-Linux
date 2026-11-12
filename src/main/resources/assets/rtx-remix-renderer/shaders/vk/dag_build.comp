@@ -1,0 +1,175 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#version 450
+layout(local_size_x=64) in;
+struct Node { uint child[8]; };
+layout(std430,binding=0) buffer Candidates { Node keys[]; };
+layout(std430,binding=2) readonly buffer Nodes { Node nodes[]; };
+layout(std430,binding=4) readonly buffer Values { uint values[]; };
+layout(std430,binding=5) buffer Status { uint state[]; };
+layout(std430,binding=6) buffer Work { uvec4 work[]; };
+layout(std430,binding=7) buffer Control { uint control[]; };
+layout(std430,binding=8) buffer Surface { uint surface[]; };
+layout(std430,binding=9) buffer Exact { uint exact[]; };
+layout(std430,binding=10) buffer Dispatch { uint dispatch[]; };
+layout(std430,binding=11) readonly buffer Voxels { uint voxels[]; };
+layout(std430,binding=12) buffer Micro { uint micro[]; };
+layout(push_constant) uniform Parameters {
+  uint mode; uint level; uint lg; uint slabs;
+  uint slab; uint workCapacity; uint cx; uint sy;
+  uint cz; uint groupStride; uint pyramidLevel; uint unused;
+} p;
+const uint LEAF=0x80000000u, TERMINAL=0xffffffffu;
+const uint MIN_BASE=16384u, MAX_BASE=38229u;
+uint linearId() { return (gl_WorkGroupID.y*p.groupStride+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x; }
+uint pyramidOffset(uint k) {
+  uint offset=0u, n=256u>>p.lg;
+  for(uint i=0u;i<k;++i) { offset+=n*n; n>>=1u; }
+  return offset;
+}
+uint microOffset(uint level) {
+  uint offset=0u;
+  for(uint i=1u;i<level;++i) { uint n=16u>>i; offset+=n*n*n; }
+  return offset;
+}
+void command(uint count) {
+  uint groups=(count+63u)/64u;
+  dispatch[0]=min(groups,p.groupStride);
+  dispatch[1]=groups==0u ? 1u : (groups+p.groupStride-1u)/p.groupStride;
+  dispatch[2]=1u;
+}
+void prepare(uint count) {
+  control[0]=state[1]==0u ? count : 0u;
+  control[1]=state[0];
+  command(control[0]);
+}
+void main() {
+  uint id=linearId();
+  if(p.mode==0u) {
+    uint n=(256u>>p.lg)>>p.pyramidLevel;
+    if(id>=n*n) return;
+    int low,high;
+    if(p.pyramidLevel==0u) {
+      int height=int(surface[id])>>16;
+      if(height!=-32768 && (height<0 || height>int(p.slabs*256u))) atomicOr(state[1],16u);
+      low=height==-32768 ? -1000000 : height;
+      high=low;
+    } else {
+      uint previous=pyramidOffset(p.pyramidLevel-1u), previousN=n*2u;
+      uint x=id%n,z=id/n;
+      low=2147483647; high=-2147483647;
+      for(uint i=0u;i<4u;++i) {
+        uint index=previous+(z*2u+(i>>1u))*previousN+x*2u+(i&1u);
+        low=min(low,int(surface[MIN_BASE+index]));
+        high=max(high,int(surface[MAX_BASE+index]));
+      }
+    }
+    uint index=pyramidOffset(p.pyramidLevel)+id;
+    surface[MIN_BASE+index]=uint(low); surface[MAX_BASE+index]=uint(high);
+    return;
+  }
+  if(p.mode==1u) {
+    if(id!=0u) return;
+    control[2]=1u;
+    for(uint i=0u;i<9u;++i) { control[3u+i]=0u;control[12u+i]=0u; }
+    control[20]=1u;
+    work[0]=uvec4(0u,TERMINAL,0u,0u);
+    return;
+  }
+  if(p.mode==2u) {
+    if(id!=0u) return;
+    prepare(control[12u+p.level]);
+    if(p.level!=0u) { control[3u+p.level-1u]=control[2];control[12u+p.level-1u]=0u; }
+    return;
+  }
+  if(p.mode==4u) {
+    if(id==0u) prepare(control[12u+p.level]);
+    return;
+  }
+  if(p.mode==9u) {
+    uint n=16u>>p.level;
+    if(id==0u) prepare(n*n*n);
+    return;
+  }
+  if(state[1]!=0u || id>=control[0]) return;
+  if(p.mode==7u) {
+    uint n=16u>>p.level;
+    uint x=id%n,y=(id/n)%n,z=id/(n*n);
+    for(uint i=0u;i<8u;++i) {
+      uint xx=x*2u+(i&1u),yy=y*2u+((i>>1u)&1u),zz=z*2u+((i>>2u)&1u);
+      uint value;
+      if(p.level==1u) {
+        uint voxel=(yy<<8u)|(zz<<4u)|xx;
+        value=(voxels[voxel>>1u]>>((voxel&1u)*16u))&65535u;
+        value=value==0u ? 0u : LEAF|value;
+      } else value=micro[microOffset(p.level-1u)+(zz*(n*2u)+yy)*(n*2u)+xx];
+      keys[id].child[i]=value;
+    }
+    return;
+  }
+  if(p.mode==8u) {
+    micro[microOffset(p.level)+id]=values[id];
+    if(p.level==4u && id==0u) {
+      exact[(p.cz*16u+p.cx)*p.slabs*16u+p.sy]=values[0];
+      exact[p.slabs*4096u+p.cz*16u+p.cx]=1u;
+    }
+    return;
+  }
+  uint index=control[3u+p.level]+id;
+  if(index>=p.workCapacity) { atomicOr(state[1],8u);return; }
+  if(p.mode==6u) {
+    work[index].z=values[id];
+    if(p.level==8u && id==0u) control[21u+p.slab]=values[0];
+    return;
+  }
+  if(p.mode==5u) {
+    uint childBase=work[index].y, value=work[index].z;
+    for(uint i=0u;i<8u;++i) {
+      keys[id].child[i]=childBase!=TERMINAL ? work[childBase+i].z
+          : (value==0u || (value&LEAF)!=0u ? value : nodes[value].child[i]);
+    }
+    return;
+  }
+  if(p.mode!=3u) return;
+  uint packed=work[index].x;
+  uint x=packed&255u,y=(packed>>8u)&255u,z=(packed>>16u)&255u;
+  uint size=1u<<p.level;
+  bool splitExact=false;
+  if(p.level>=4u) {
+    uint count=0u,cx=x>>4u,cz=z>>4u,side=size>>4u;
+    for(uint dz=0u;dz<side;++dz) for(uint dx=0u;dx<side;++dx)
+      count+=exact[p.slabs*4096u+(cz+dz)*16u+cx+dx];
+    if(count!=0u) {
+      if(p.level==4u) {
+        work[index].z=exact[(cz*16u+cx)*p.slabs*16u+(p.slab*256u+y)/16u];
+        return;
+      }
+      splitExact=true;
+    }
+  }
+  if(!splitExact) {
+    uint k=p.level>p.lg ? p.level-p.lg : 0u;
+    uint shift=max(p.level,p.lg);
+    uint cell=pyramidOffset(k)+(z>>shift)*((256u>>p.lg)>>k)+(x>>shift);
+    int low=int(surface[MIN_BASE+cell]),high=int(surface[MAX_BASE+cell]);
+    int bottom=int(p.slab*256u+y),top=bottom+int(size);
+    if(high<=bottom) return;
+    if(low-top>=int(1u<<p.lg)) { work[index].z=LEAF|0x6B4Du;return; }
+    if(p.level<=p.lg && low>=top) {
+      work[index].z=LEAF|(surface[(z>>p.lg)*(256u>>p.lg)+(x>>p.lg)]&65535u);
+      return;
+    }
+  }
+  if(p.level==0u) { atomicOr(state[1],16u);return; }
+  uint base=atomicAdd(control[2],8u);
+  if(base>p.workCapacity || 8u>p.workCapacity-base) { atomicOr(state[1],8u);atomicAdd(state[2],1u);return; }
+  atomicAdd(control[12u+p.level-1u],8u);
+  work[index].y=base;
+  uint halfSize=size>>1u;
+  for(uint i=0u;i<8u;++i) {
+    uint xx=x+(i&1u)*halfSize,yy=y+((i>>1u)&1u)*halfSize,zz=z+((i>>2u)&1u)*halfSize;
+    work[base+i]=uvec4(xx|(yy<<8u)|(zz<<16u),TERMINAL,0u,0u);
+  }
+}
