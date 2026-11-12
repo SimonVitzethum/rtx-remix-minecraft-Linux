@@ -196,8 +196,6 @@ public final class VulkanWeatherPass implements AutoCloseable {
         int rain = Math.min(rainQuads, quads);
         int snow = quads - rain;
 
-        // The Remix depth belongs to the other device: take it over for the draw and hand it back afterwards.
-        interop.externalOwnershipTransfer(cb, stack, depthImage, false);
         uploadVertices(cb, stack);
         com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder.memoryBarrier(cb, stack);
 
@@ -232,7 +230,6 @@ public final class VulkanWeatherPass implements AutoCloseable {
         KHRDynamicRendering.vkCmdEndRenderingKHR(cb);
 
         com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder.memoryBarrier(cb, stack);
-        interop.externalOwnershipTransfer(cb, stack, depthImage, true);
     }
 
     private void draw(VkCommandBuffer cb, MemoryStack stack, boolean rain, AbstractTexture texture,

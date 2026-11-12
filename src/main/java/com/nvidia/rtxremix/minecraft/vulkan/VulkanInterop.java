@@ -477,7 +477,7 @@ public final class VulkanInterop implements AutoCloseable {
         return clientTracker.clientDoneValue();
     }
 
-    /** The imported primary-depth VkImage, or 0 (not consumed yet: the Remix weather pass is OpenGL only). */
+    /** The imported primary-depth VkImage, or 0. */
     public long depthImage() {
         return depth == null ? 0L : depth.image;
     }
@@ -497,11 +497,7 @@ public final class VulkanInterop implements AutoCloseable {
         return color == null ? 0L : color.image;
     }
 
-    /**
-     * Hands a shared image to (release) or takes it back from (acquire) the other device: a queue family ownership
-     * transfer with VK_QUEUE_FAMILY_EXTERNAL, which also makes the driver flush or decompress what the copy wrote,
-     * so the runtime's device sees the pixels (without it Remix kept reading its own previous output).
-     */
+    /** Acquires each imported image once per native submission, including frames without a world composite. */
     private void acquireSharedImages(VkCommandBuffer cb, MemoryStack stack, long doneValue) {
         if (color != null && colorTracker.registerWait(doneValue)) {
             externalOwnershipTransfer(cb, stack, color.image, false);
@@ -511,10 +507,11 @@ public final class VulkanInterop implements AutoCloseable {
         }
     }
 
-    void externalOwnershipTransfer(VkCommandBuffer cb, MemoryStack stack, long image, boolean release) {
+    /** Transfers exclusive ownership between this graphics queue and the runtime's external device. */
+    private void externalOwnershipTransfer(VkCommandBuffer cb, MemoryStack stack, long image, boolean release) {
         int family = device.graphicsQueue().queueFamilyIndex();
         VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
-                .srcAccessMask(release ? VK12.VK_ACCESS_MEMORY_WRITE_BIT : 0)
+                .srcAccessMask(release ? VK12.VK_ACCESS_MEMORY_READ_BIT | VK12.VK_ACCESS_MEMORY_WRITE_BIT : 0)
                 .dstAccessMask(release ? 0 : VK12.VK_ACCESS_MEMORY_READ_BIT | VK12.VK_ACCESS_MEMORY_WRITE_BIT)
                 .oldLayout(VK12.VK_IMAGE_LAYOUT_GENERAL)
                 .newLayout(VK12.VK_IMAGE_LAYOUT_GENERAL)
