@@ -868,6 +868,14 @@ namespace dxvk {
             VkImageLayout             srcLayout,
             VkImageLayout             dstLayout);
 
+    // NV-DXVK start: Explicit ownership for images shared with other queues or APIs.
+    /** Records this queue's half of an ownership transfer, after pending image barriers. */
+    void transferImageOwnership(
+      const Rc<DxvkImage>& image,
+      uint32_t srcQueueFamily,
+      uint32_t dstQueueFamily);
+    // NV-DXVK end
+
     // NV-DXVK start: replaced buffers do not play well with rtx
     /**
      * \brief Updates a buffer

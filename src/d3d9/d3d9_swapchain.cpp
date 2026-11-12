@@ -508,6 +508,7 @@ namespace dxvk {
       m_interop.submitted = false;
 
       m_parent->EmitCs([cSrc = m_interop.image,
+                        cDepth = m_interop.depthImage,
                         cDst = m_backBuffers[0]->GetCommonTexture()->GetImage(),
                         cClientDone = m_interop.clientDone,
                         cValue = m_interop.clientDoneValue,
@@ -515,6 +516,13 @@ namespace dxvk {
         if (cValue > 0 && cClientDone != nullptr) {
           ctx->getCommandList()->addWaitSemaphore(cClientDone->handle(), cValue);
         }
+#ifdef REMIX_LINUX_NATIVE
+        const uint32_t family = ctx->getDevice()->queues().graphics.queueFamily;
+        ctx->transferImageOwnership(cSrc, VK_QUEUE_FAMILY_EXTERNAL, family);
+        if (cDepth != nullptr) {
+          ctx->transferImageOwnership(cDepth, VK_QUEUE_FAMILY_EXTERNAL, family);
+        }
+#endif
 
         const DxvkFormatInfo* dstFormatInfo = imageFormatInfo(cDst->info().format);
         const DxvkFormatInfo* srcFormatInfo = imageFormatInfo(cSrc->info().format);
@@ -2248,6 +2256,13 @@ namespace dxvk {
           }
         }
 
+#ifdef REMIX_LINUX_NATIVE
+        const uint32_t family = ctx->getDevice()->queues().graphics.queueFamily;
+        ctx->transferImageOwnership(cDst, family, VK_QUEUE_FAMILY_EXTERNAL);
+        if (cDepthDst != nullptr) {
+          ctx->transferImageOwnership(cDepthDst, family, VK_QUEUE_FAMILY_EXTERNAL);
+        }
+#endif
         ctx->getCommandList()->addSignalSemaphore(cDone->handle(), signalValue);
         ctx->flushCommandList();
       });

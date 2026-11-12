@@ -2151,6 +2151,36 @@ namespace dxvk {
   }
 
 
+  // NV-DXVK start: Explicit ownership for images shared with other queues or APIs.
+  void DxvkContext::transferImageOwnership(
+    const Rc<DxvkImage>& image,
+    uint32_t srcQueueFamily,
+    uint32_t dstQueueFamily) {
+    if (srcQueueFamily == dstQueueFamily) {
+      return;
+    }
+    const uint32_t localFamily = m_device->queues().graphics.queueFamily;
+    assert(srcQueueFamily == localFamily || dstQueueFamily == localFamily);
+    this->spillRenderPass(true);
+    m_execAcquires.recordCommands(m_cmd);
+    m_execBarriers.recordCommands(m_cmd);
+
+    VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+    barrier.srcAccessMask = srcQueueFamily == localFamily ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : 0;
+    barrier.dstAccessMask = dstQueueFamily == localFamily ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : 0;
+    barrier.oldLayout = image->info().layout;
+    barrier.newLayout = image->info().layout;
+    barrier.srcQueueFamilyIndex = srcQueueFamily;
+    barrier.dstQueueFamilyIndex = dstQueueFamily;
+    barrier.image = image->handle();
+    barrier.subresourceRange = image->getAvailableSubresources();
+    m_cmd->cmdPipelineBarrier(DxvkCmdBuffer::ExecBuffer,
+      VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+      0, 0, nullptr, 0, nullptr, 1, &barrier);
+    m_cmd->trackResource<DxvkAccess::Write>(image);
+  }
+  // NV-DXVK end
+
   void DxvkContext::performClear(
     const Rc<DxvkImageView>&        imageView,
           int32_t                   attachmentIndex,
