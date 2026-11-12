@@ -310,6 +310,7 @@ public final class VulkanInterop implements AutoCloseable {
         VkCommandBuffer cb = encoder.allocateAndBeginTransientCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             externalOwnershipTransfer(cb, stack, color.image, false);
+            if (depth != null) externalOwnershipTransfer(cb, stack, depth.image, false);
             // Remix's image has Vulkan row order (row 0 on top), Minecraft's Vulkan render target keeps GL's bottom-up rows.
             recordCopy(cb, stack, color.image, color.width, color.height, targetImage, target.width, target.height, true);
             if (weatherPass != null && depth != null) {
@@ -348,6 +349,7 @@ public final class VulkanInterop implements AutoCloseable {
                 recordCopy(cb, stack, targetImage, target.width, target.height, color.image, color.width, color.height, false);
             }
             externalOwnershipTransfer(cb, stack, color.image, true);
+            if (depth != null) externalOwnershipTransfer(cb, stack, depth.image, true);
             check(VK12.vkEndCommandBuffer(cb), "vkEndCommandBuffer(present copy)");
         }
         try (VulkanQueue.Submission submission = device.graphicsQueue().beginSubmit()) {
