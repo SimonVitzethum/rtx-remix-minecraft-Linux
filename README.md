@@ -4,6 +4,12 @@
 Minecraft Java Edition 26.3 integration. It produces `libremixapi.so`; Wine and
 Proton are not required. Wayland, X11 and headless presentation are supported.
 
+The companion Minecraft 26.3 integration has an **end-to-end Vulkan render
+path**, including Minecraft targets/HUD, Remix path tracing and presentation,
+sky, rain/snow composition and FarField. Its Vulkan backend uses no hidden
+OpenGL rendering context. The optional OpenGL backend is a separate choice.
+See the [Vulkan integration guide](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/blob/main/docs/VULKAN_INTEROP.md).
+
 The source for this runtime is published on
 [`runtime/native-linux`](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/tree/runtime/native-linux).
 The companion Minecraft mod and JNI bridge are on
@@ -36,6 +42,10 @@ Laptop GPU, 8 GiB VRAM**, NVIDIA **615.78.08**, Linux and Java **25.0.5**.
 The CPU-built DAG reference used **1920×1080 output / 960×540 internal**, DLSS
 Ray Reconstruction, up to two generated frames, Simplista 64x R36, RD32/SD8
 and requested DAG distance 512.
+
+**Upscaling and Frame Generation were enabled:** these figures use 960×540
+internal rendering upscaled to 1920×1080. They are not measurements of native
+1920×1080 rendering with upscaling disabled.
 
 | Phase | Rendered FPS | Native presents/s including FG | Render-span p99 |
 |---|---:|---:|---:|
