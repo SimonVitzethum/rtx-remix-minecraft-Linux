@@ -230,6 +230,7 @@ dxvk_src = files([
   'rtx_render/rtx_env.h',
   'rtx_render/rtx_file_watch.cpp',
   'rtx_render/rtx_file_watch.h',
+  'rtx_render/rtx_file_watch_linux.h',
   'rtx_render/rtx_game_capturer.cpp',
   'rtx_render/rtx_game_capturer.h',
   'rtx_render/rtx_game_capturer_utils.h',

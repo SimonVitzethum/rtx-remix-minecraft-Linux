@@ -21,46 +21,167 @@
 */
 
 #ifdef REMIX_LINUX_NATIVE
-#include "rtx_file_watch.h"
-
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <functional>
-#include <filesystem>
+#include <unordered_map>
 #include <vector>
 
+#include "rtx_file_watch_linux.h"
+#include "rtx_file_watch.h"
+#include "rtx_options.h"
+#include "rtx_texture.h"
+#include "rtx_texture_manager.h"
 #include "../../util/thread.h"
 
-// Texture hot-reload through OS file notifications is not available on native Linux yet. The watcher keeps its
-// callback registry so that the registration API stays valid, but never reports changes.
 namespace dxvk {
   struct FileWatchTexturesImpl {
+    LinuxDirectoryWatch watch;
+    std::mutex mutex;
+    std::condition_variable wake;
+    bool stop = false;
+    RtxTextureManager* textureManager = nullptr;
+    std::unordered_map<std::filesystem::path, std::vector<Rc<ManagedTexture>>> textures;
     std::vector<std::pair<FileWatch::FileWatchCallbackId, FileWatch::FileChangedFn>> callbacks;
     FileWatch::FileWatchCallbackId nextId = 1;
   };
 
-  FileWatch::FileWatch() : m_impl(std::make_unique<FileWatchTexturesImpl>()) { }
-  FileWatch::~FileWatch() { }
-  void FileWatch::setTextureManager(RtxTextureManager*) { }
-  void FileWatch::clearTextureManager(RtxTextureManager*) { }
-  void FileWatch::installDir(const char*) { }
-  void FileWatch::removeAllWatchDirs() { }
-  void FileWatch::watchTexture(RtxTextureManager*, const Rc<ManagedTexture>&) { }
-  void FileWatch::endThreadLocked() { }
+  FileWatch::FileWatch() : m_impl(std::make_unique<FileWatchTexturesImpl>()) {
+    if (!m_impl->watch.valid()) {
+      Logger::warn("filewatch: inotify initialization failed");
+      return;
+    }
+    m_fileCheckingThread = std::make_unique<dxvk::thread>([impl = m_impl.get()] {
+      env::setThreadName("rtx-texture-filewatch");
+      while (true) {
+        auto lock = std::unique_lock{ impl->mutex };
+        impl->wake.wait_for(lock, std::chrono::milliseconds(std::clamp(
+          RtxOptions::TextureManager::hotReloadRateMs(), 1u, 1000u)), [impl] { return impl->stop; });
+        if (impl->stop) {
+          return;
+        }
+        const auto changed = impl->watch.takeChanges();
+        const auto callbacks = impl->callbacks;
+        for (const auto& path : changed) {
+          const auto found = impl->textures.find(path);
+          // Keep manager dispatch under the same mutex as clearTextureManager, so teardown
+          // waits for the last dispatch before deleting its upload queues.
+          if (impl->textureManager && found != impl->textures.end()) {
+            Logger::info(str::format("filewatch: file changed, reloading ", found->second.size(),
+              " managed textures: ", path.string()));
+            for (const auto& texture : found->second) {
+              impl->textureManager->requestHotReload(texture);
+            }
+          }
+        }
+        lock.unlock();
+        for (const auto& path : changed) {
+          for (const auto& callback : callbacks) {
+            try {
+              callback.second(path);
+            } catch (const std::exception& error) {
+              Logger::err(str::format("filewatch: callback failed: ", error.what()));
+            }
+          }
+        }
+      }
+    });
+    m_fileCheckingThread->set_priority(ThreadPriority::Lowest);
+  }
+
+  FileWatch::~FileWatch() {
+    auto lock = std::unique_lock{ m_mutex };
+    endThreadLocked();
+  }
+
+  void FileWatch::endThreadLocked() {
+    if (m_impl) {
+      auto lock = std::unique_lock{ m_impl->mutex };
+      m_impl->stop = true;
+      m_impl->wake.notify_all();
+    }
+    if (m_fileCheckingThread) {
+      m_fileCheckingThread->join();
+      m_fileCheckingThread.reset();
+    }
+    m_impl.reset();
+  }
+
+  void FileWatch::setTextureManager(RtxTextureManager* manager) {
+    auto lock = std::unique_lock{ m_impl->mutex };
+    if (m_impl->textureManager != manager) {
+      m_impl->textures.clear();
+      m_impl->textureManager = manager;
+    }
+  }
+
+  void FileWatch::clearTextureManager(RtxTextureManager* manager) {
+    auto lock = std::unique_lock{ m_impl->mutex };
+    if (m_impl->textureManager == manager) {
+      m_impl->textureManager = nullptr;
+      m_impl->textures.clear();
+    }
+  }
+
+  void FileWatch::installDir(const char* directory) {
+    if (!directory) {
+      return;
+    }
+    auto lock = std::unique_lock{ m_impl->mutex };
+    if (!m_impl->watch.addDirectory(directory)) {
+      Logger::warn(str::format("filewatch: cannot watch all directories under ", directory));
+    }
+  }
+
+  void FileWatch::removeAllWatchDirs() {
+    auto lock = std::unique_lock{ m_impl->mutex };
+    m_impl->watch.clear();
+    m_impl->textures.clear();
+  }
+
+  void FileWatch::watchTexture(RtxTextureManager* manager, const Rc<ManagedTexture>& texture) {
+    if (!RtxOptions::TextureManager::hotReload() || !texture.ptr() || !texture->m_assetData.ptr()) {
+      return;
+    }
+    const auto* filename = texture->m_assetData->info().filename;
+    if (!filename || !filename[0]) {
+      return;
+    }
+    std::error_code error;
+    const auto path = std::filesystem::canonical(filename, error);
+    if (error) {
+      return;
+    }
+    auto lock = std::unique_lock{ m_impl->mutex };
+    if (m_impl->textureManager != manager) {
+      return;
+    }
+    auto& textures = m_impl->textures[path];
+    if (std::find(textures.begin(), textures.end(), texture) == textures.end()) {
+      // Watch the parent so atomic replacement does not detach a per-file watch.
+      if (!m_impl->watch.addDirectory(path.parent_path())) {
+        Logger::warn(str::format("filewatch: cannot watch texture parent ", path.parent_path().string()));
+      }
+      textures.push_back(texture);
+    }
+  }
 
   FileWatch::FileWatchCallbackId FileWatch::addFileChangedCallback(FileChangedFn fn) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    auto lock = std::unique_lock{ m_impl->mutex };
     const auto id = m_impl->nextId++;
     m_impl->callbacks.emplace_back(id, std::move(fn));
     return id;
   }
 
   void FileWatch::removeFileChangedCallback(FileWatchCallbackId id) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    auto& cb = m_impl->callbacks;
-    for (auto it = cb.begin(); it != cb.end(); ++it) {
-      if (it->first == id) { cb.erase(it); break; }
-    }
+    auto lock = std::unique_lock{ m_impl->mutex };
+    auto& callbacks = m_impl->callbacks;
+    callbacks.erase(std::remove_if(callbacks.begin(), callbacks.end(),
+      [id](const auto& callback) { return callback.first == id; }), callbacks.end());
   }
 }
+
 #else
 #include "rtx_file_watch.h"
 
