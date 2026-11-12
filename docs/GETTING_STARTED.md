@@ -31,13 +31,13 @@ needed. Java-only development artifacts and sources go to `build/intermediates/`
 they are not installable native distributions. `./gradlew test jar` remains
 available while native releases are being prepared.
 
-**Current release blocker:** the coordinated combined runtime API freeze and four
-matching native packages are pending. `build` deliberately fails at
-`verifyNativeBundles` with every missing platform. There is currently no
-honestly installable four-platform artifact, no published bundle URLs/hashes,
-and no established universal Linux ABI/driver minimum. An upstream API 0.16.2
-Windows package cannot fill this gap. See
-[Native bundle production](NATIVE_DISTRIBUTION.md) for the exact release gates.
+**Native release readiness is separate:** the Java mod builds while the coordinated
+runtime freeze and four matching native packages are pending. At launch only the
+current platform is resolved. If its package is unpublished, the bootstrap reports
+the specific platform and prevents renderer initialization. No bundle URLs/hashes
+or universal Linux ABI/driver minima are invented. API 0.16.2 packages are not
+compatible replacements. `./gradlew verifyNativeDistribution` remains a strict
+all-platform maintainer gate. See [Native bundle production](NATIVE_DISTRIBUTION.md).
 
 The default selects Linux x86-64, Linux ARM64, Windows x86-64 and pure Windows
 ARM64. `-Parch=linux64`, `linuxarm64`, `win64` or `arm64` selects a developer
@@ -198,9 +198,9 @@ interactive readiness from the settled image.
 ## Other Commands
 
 ```powershell
-.\gradlew.bat build                         # universal JAR in build/libs/ (native release gate)
+.\gradlew.bat build                         # portable mod JAR in build/libs/
 .\gradlew.bat test                          # JUnit suites
-.\gradlew.bat package -Parch=win64           # single-platform JAR in build/libs/ (native release gate)
+.\gradlew.bat package -Parch=win64           # optional platform-filtered developer JAR
 .\gradlew.bat releaseArchive -Parch=win64    # installer bundle ZIP in build/distributions/
 .\gradlew.bat stageReleaseAssets             # the four release files in build/release-assets/
 ```
@@ -404,10 +404,10 @@ removes its stale registration.
 
 ## Linux
 
-The root POSIX wrapper is executable. Use JDK 25 and `./gradlew test jar` for
-Java work. The strict `./gradlew build` needs the four frozen native bundles,
-including on Linux; `-Parch=linux64` or `linuxarm64` limits a developer build but
-still requires a matching verified native package.
+The root POSIX wrapper is executable. Use JDK 25 and `./gradlew build` for the
+portable mod JAR. No native compiler or package is required. The explicit
+`./gradlew verifyNativeDistribution` gate requires all four frozen native bundles;
+`-Parch=` does not narrow that release gate.
 
 For native source iteration, build the companion runtime with its own
 [Linux guide](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/blob/runtime/native-linux/documentation/LinuxBuild.md),

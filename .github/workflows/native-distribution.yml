@@ -61,4 +61,4 @@ jobs:
           distribution: temurin
           java-version: '25'
       - name: Build and verify the one drop-in JAR for all four platforms
-        run: ./gradlew build --no-daemon --max-workers=1
+        run: ./gradlew verifyNativeDistribution --no-daemon --max-workers=1

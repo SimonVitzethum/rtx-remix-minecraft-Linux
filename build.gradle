@@ -572,7 +572,7 @@ jar {
 
 // A single manifest binds each bundle to the runtime API, bridge ABI, source
 // revisions, hashes, file inventory and platform contract. Missing platforms are
-// release blockers, never silently omitted from a universal artifact.
+// release blockers. The portable Java build retains their explicit unavailable status.
 def nativeManifest = file('packaging/native-bundles/manifest.properties')
 def nativeBundleDir = providers.gradleProperty('nativeBundlesDir')
         .map { file(it) }.orElse(layout.buildDirectory.dir('native-bundles').map { it.asFile })
@@ -587,7 +587,15 @@ def verifyNativeBundles = tasks.register('verifyNativeBundles', JavaExec) {
             buildArches.join(','), projectDir.absolutePath
 }
 
-fetchRuntimeTexturesTask.configure { mustRunAfter verifyNativeBundles }
+def verifyNativeBootstrap = tasks.register('verifyNativeBootstrap', JavaExec) {
+    group = 'verification'
+    description = 'Checks the portable native bootstrap contract without fetching or compiling native code'
+    dependsOn 'classes'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.nvidia.rtxremix.minecraft.NativeBundles'
+    maxHeapSize = '256m'
+    args 'bootstrap', nativeManifest.absolutePath
+}
 
 def verifyFabricApi = tasks.register('verifyFabricApi') {
     def api = configurations.detachedConfiguration(dependencies.create(fabricApiCoordinate))
@@ -618,9 +626,9 @@ tasks.named('sourcesJar') {
 }
 
 def packageJarTask = tasks.register('packageJar', Zip) {
-    description = 'Assembles the installable universal mod JAR with verified native bundles and Fabric API'
+    description = 'Assembles the portable Fabric mod JAR with custom bindings and verified bootstrap metadata'
     group = 'build'
-    dependsOn remapJarTask, verifyNativeBundles, fetchRuntimeTexturesTask
+    dependsOn remapJarTask, verifyNativeBootstrap, fetchRuntimeTexturesTask
     archiveBaseName.set(projectArchiveName)
     archiveVersion.set(resolvedBuildVersion)
     archiveExtension.set('jar')
@@ -642,7 +650,7 @@ def packageJarTask = tasks.register('packageJar', Zip) {
 }
 def packageJarArchive = packageJarTask.flatMap { it.archiveFile }
 def verifyPackageJarTask = tasks.register('verifyPackageJar', JavaExec) {
-    description = 'Checks the final drop-in JAR, nested Fabric API and every selected native inventory'
+    description = 'Checks the portable mod JAR, nested Fabric API and any bundled native inventories'
     group = 'verification'
     dependsOn packageJarTask
     classpath = sourceSets.main.runtimeClasspath
@@ -658,10 +666,22 @@ def verifyPackageJarTask = tasks.register('verifyPackageJar', JavaExec) {
             while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count)
         }
         new File(archive.path + '.sha256').text = digest.digest().encodeHex().toString() + '  ' + archive.name + '\n'
-        logger.lifecycle("Installable mod: ${archive}")
+        logger.lifecycle("Portable Fabric mod: ${archive}")
     }
 }
 tasks.named('build') { dependsOn verifyPackageJarTask }
+// Complete distribution readiness is explicit and always covers all four targets.
+tasks.register('verifyNativeDistribution', JavaExec) {
+    group = 'verification'
+    description = 'Strict maintainer gate: require and audit compatible packages for every native target'
+    dependsOn verifyPackageJarTask
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.nvidia.rtxremix.minecraft.NativeBundles'
+    maxHeapSize = '256m'
+    args 'verify', nativeManifest.absolutePath, nativeBundleDir.get().absolutePath,
+            'linux64,linuxarm64,win64,arm64', projectDir.absolutePath
+}
+
 tasks.register('package') {
     description = 'Alias for the standard installable build'
     group = 'build'
@@ -825,7 +845,7 @@ def worldArchiveTask = tasks.register('worldArchive', Zip) {
 def stageReleaseArchiveTask = tasks.register('stageReleaseArchive', Sync) {
     description = 'Stages the verified JAR, the pack and world zips, and the installer in build/release'
     group = 'build'
-    dependsOn 'package'
+    dependsOn 'package', 'verifyNativeDistribution'
     into layout.buildDirectory.dir('release')
     duplicatesStrategy = DuplicatesStrategy.FAIL
 

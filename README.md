@@ -92,23 +92,29 @@ We hope the community helps fill it out. If something breaks,
 [report it](docs/PLAYING.md#reporting-a-bug); if you can fix it, see
 [Contributing](#contributing).
 
-## Universal drop-in distribution (release gate pending)
+## Portable mod JAR and native release readiness
 
-The root `./gradlew build` (Windows: `gradlew.bat build`) now targets one
-`build/libs/rtx-remix-renderer-universal.jar` for Linux and Windows on both
-x86-64 and ARM64. Fabric API 0.165.2+26.3 is nested inside it. Minecraft 26.3,
-Fabric Loader >=0.19.5 and Java 25 remain launcher prerequisites. The player
-installation requires no C/C++ compiler; native selection and installation are
-automatic, and shader compilation is permitted.
+`./gradlew build` (Windows: `gradlew.bat build`) produces one
+`build/libs/rtx-remix-renderer-universal.jar` containing the custom Java/JNI
+binding contract, Fabric API 0.165.2+26.3, renderer assets, runtime textures,
+configuration and licenses. It needs Java 25 and never compiles or requires
+native packages. Minecraft 26.3 and Fabric Loader >=0.19.5 are launcher prerequisites.
 
-**No four-platform combined-API release exists yet.** The build refuses to label a
-partial distribution as universal: the runtime source/ABI freeze and all four
-matching precompiled packages are still release gates. Historical Linux tests
-used API 0.16.2; its runtime requires **glibc 2.44**, and the tested
-Vulkan **1.4.351** / NVIDIA **615.78.08** versions do not establish a lower driver
-minimum. Windows/ARM64 hardware validation remains outstanding. This does not
-promise every Linux ABI or driver. See [the exact package and compatibility
-contract](docs/NATIVE_DISTRIBUTION.md) and [build instructions](docs/GETTING_STARTED.md).
+At launch the bootstrap resolves only the current Linux/Windows x86-64/ARM64
+platform. It verifies a bundled compatible runtime/bridge or downloads an
+explicitly pinned HTTPS package. Players need no C/C++ compiler. An unpublished
+platform package produces a concrete startup error before renderer initialization.
+The native RTX libraries are still physically required.
+
+**Building the portable JAR does not establish RTX compatibility on all four
+platforms.** `./gradlew verifyNativeDistribution` separately requires all four
+matching native packages and validates their ABI, inventories, hashes and
+licenses. Release archives depend on this stricter gate. CPU loader/API probes
+and GPU/driver hardware validation are additional release requirements.
+The packages are currently unavailable. Historical Linux API 0.16.2 runtime
+builds require **glibc 2.44**; tested Vulkan **1.4.351** / NVIDIA **615.78.08**
+versions do not establish lower driver minima. See the
+[package and compatibility contract](docs/NATIVE_DISTRIBUTION.md).
 
 External texture/resource packs stay local and are not included in the mod
 JAR. The renderer's own assets, baseline textures and two required runtime DDS

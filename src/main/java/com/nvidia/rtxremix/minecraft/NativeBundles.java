@@ -64,6 +64,22 @@ final class NativeBundles {
         String bridgeFile() { return platform.startsWith("linux") ? "remixbridge.so" : "remixbridge.dll"; }
     }
 
+    /** The portable Java artifact may describe unpublished native platforms explicitly. */
+    static void verifyBootstrapManifest(Path path) throws IOException {
+        Properties p = properties(path);
+        require("1".equals(p.getProperty("schema")), "Unsupported native manifest schema");
+        require(String.join(",", PLATFORMS).equals(p.getProperty("platforms")), "Manifest must declare all four platforms");
+        require(Set.of("pending", "final").contains(required(p, "freeze")), "Invalid native source freeze state");
+        List<String> available = new ArrayList<>();
+        for (String platform : PLATFORMS) {
+            String status = required(p, platform + ".status");
+            require(status.equals("available") || status.equals("unavailable"), "Invalid native platform status: " + platform);
+            if (status.equals("available")) available.add(platform);
+            else required(p, platform + ".reason");
+        }
+        if (!available.isEmpty()) manifest(path, available);
+    }
+
     static Map<String, Bundle> manifest(Path path, List<String> selected) throws IOException {
         Properties p = properties(path);
         require("1".equals(p.getProperty("schema")), "Unsupported native manifest schema");
@@ -75,7 +91,7 @@ final class NativeBundles {
                 missing.add(arch + ": " + p.getProperty(arch + ".reason", "no verified bundle published"));
             }
         }
-        require(missing.isEmpty(), "Universal native distribution is incomplete:\n" + String.join("\n", missing));
+        require(missing.isEmpty(), "Compatible RTX Remix native package is not published for the requested platform(s):\n" + String.join("\n", missing));
         require("final".equals(p.getProperty("freeze")), "Native API/source freeze is pending");
         Properties contract = sourceContract();
         for (String key : java.util.List.of("api", "bridgeAbi", "interfacePointers", "headerSha256", "bridgeSourceSha256")) {
@@ -520,6 +536,8 @@ final class NativeBundles {
         } else if (args.length == 5 && args[0].equals("unpack")) {
             Bundle b = manifest(Path.of(args[1]), List.of(args[3])).get(args[3]);
             validate(Path.of(args[2]).resolve(b.platform + ".zip"), b, Path.of(args[4]));
+        } else if (args.length == 2 && args[0].equals("bootstrap")) {
+            verifyBootstrapManifest(Path.of(args[1]));
         } else if (args.length == 4 && args[0].equals("jar")) {
             verifyJar(Path.of(args[1]), List.of(args[2].split(",")), Path.of(args[3]));
         } else throw new IllegalArgumentException("Use verify <manifest> <bundleDir> <platforms> <repo> or jar <jar> <platforms> <repo>");
@@ -529,7 +547,15 @@ final class NativeBundles {
         Path temp = Files.createTempDirectory(jar.toAbsolutePath().getParent(), "native-verify-");
         try (var fs = java.nio.file.FileSystems.newFileSystem(jar)) {
             Path top = fs.getPath("/");
-            var bundles = manifest(top.resolve("native/manifest.properties"), platforms);
+            Path manifestPath = top.resolve("native/manifest.properties");
+            verifyBootstrapManifest(manifestPath);
+            require(properties(manifestPath).equals(properties(root.resolve("packaging/native-bundles/manifest.properties"))),
+                    "Packaged native manifest differs from source");
+            List<String> bundledPlatforms = new ArrayList<>();
+            for (String platform : platforms) {
+                if (Files.exists(top.resolve("native/bundles/" + platform + ".zip"))) bundledPlatforms.add(platform);
+            }
+            var bundles = bundledPlatforms.isEmpty() ? Map.<String, Bundle>of() : manifest(manifestPath, bundledPlatforms);
             verifyTextures(top.resolve("native/textures"), top.resolve("runtime-textures.properties"));
             require(hash(top.resolve("runtime-textures.properties")).equals(hash(root.resolve("src/main/resources/runtime-textures.properties"))),
                     "Packaged runtime texture inventory differs from source");
@@ -548,8 +574,10 @@ final class NativeBundles {
                 try { validate(local, b, null); }
                 finally { Files.deleteIfExists(local); }
             }
-            try (var stream = Files.list(top.resolve("native/bundles"))) {
-                require(stream.count() == platforms.size(), "Unexpected native platform payload");
+            if (Files.exists(top.resolve("native/bundles"))) {
+                try (var stream = Files.list(top.resolve("native/bundles"))) {
+                    require(stream.count() == bundledPlatforms.size(), "Unexpected native platform payload");
+                }
             }
             for (String file : List.of("native/rtx.conf", "rtx-remix-shipped-payload.sha256",
                     "native/textures/overcast_thunderstorm_bc6u.dds", "native/textures/water_normals_flipbook.dds")) {
@@ -566,7 +594,7 @@ final class NativeBundles {
             }
             Set<String> allowedNative = new HashSet<>(List.of("native/manifest.properties", "native/rtx.conf",
                     "native/textures/overcast_thunderstorm_bc6u.dds", "native/textures/water_normals_flipbook.dds"));
-            for (String platform : platforms) allowedNative.add("native/bundles/" + platform + ".zip");
+            for (String platform : bundledPlatforms) allowedNative.add("native/bundles/" + platform + ".zip");
             try (var stream = Files.walk(root.resolve("packaging/rtx-remix"))) {
                 for (Path source : stream.filter(Files::isRegularFile).toList()) {
                     allowedNative.add("native/rtx-remix/" + root.resolve("packaging/rtx-remix")

@@ -33,15 +33,16 @@ runs JVM tests without native compilers or runtime staging. Explicit native
 producer tasks and `setupRuntime` remain available; `runClient` depends on
 runtime setup.
 
-`./gradlew build` produces the installable universal JAR in `build/libs/`,
-including Fabric API, runtime textures, licenses and verified native archives
-for Linux/Windows x86-64/ARM64. `verifyNativeBundles` and `verifyPackageJar` are
-mandatory. Combined-API packages are currently unavailable, so standard builds
-fail with a precise four-platform blocker until the manifest can be frozen.
-Never substitute the older Packman API 0.16.2 payload. `-Parch=` is an explicit
-single-platform developer option. `package` aliases `build` without a task cycle.
-Java-only JARs live in `build/intermediates/`. Source/release gates and minimum
-ABI/driver facts are in [Native Distribution](docs/NATIVE_DISTRIBUTION.md).
+`./gradlew build` produces the portable universal Fabric mod JAR in `build/libs/`,
+including custom Java/JNI binding metadata, Fabric API, textures, assets and
+licenses. It does not require or compile native packages. `verifyNativeBootstrap`
+and `verifyPackageJar` are mandatory. `verifyNativeDistribution` is the separate
+strict all-four-platform gate and is required by release archives. Its packages
+are currently unavailable. Never substitute Packman API 0.16.2 payloads.
+Startup resolves only the selected platform and refuses unverified/unavailable
+natives. A Java build is not evidence of four-platform RTX compatibility.
+`package` aliases `build`; Java development JARs live in `build/intermediates/`.
+See [Native Distribution](docs/NATIVE_DISTRIBUTION.md).
 
 A release carries four files, which `stageReleaseAssets` collects: the JAR;
 the RTX Remix Materials and RTX Remix Showcase World zips, which

@@ -1,10 +1,17 @@
 # Native distribution contract
 
-`./gradlew build` targets **one** `build/libs/rtx-remix-renderer-universal.jar`
-with four platform archives, Fabric API 0.165.2+26.3, the mod's assets, runtime
-DDS textures, shipped configuration/history and license texts. The SHA-256
-sidecar names that exact file. The standard build includes final JAR verification;
-`package` is only an alias. Development JARs/sources live in `build/intermediates/`.
+`./gradlew build` produces **one** `build/libs/rtx-remix-renderer-universal.jar`
+with custom Java/JNI bindings, a verified native bootstrap contract, Fabric API
+0.165.2+26.3, mod assets, runtime DDS textures, configuration and licenses.
+It does not fetch, compile or require unpublished native packages. Any archives
+already present for packaging are fully verified. The SHA-256 sidecar names the
+exact JAR; `verifyPackageJar` remains mandatory. `package` aliases `build`.
+
+`./gradlew verifyNativeDistribution` is the explicit all-platform maintainer
+gate. It requires the four frozen runtime/bridge packages and verifies every
+inventory. Release archives depend on it. Matching-platform CPU JNI/API probes
+and separate GPU/driver hardware validation are also required for native release
+readiness. A portable Java build does not certify RTX operation on four platforms.
 
 ## Current evidence and release blockers
 
@@ -15,11 +22,12 @@ sidecar names that exact file. The standard build includes final JAR verificatio
 | Windows x86-64 | Not available | Official API 0.16.2 runtime is incompatible; own runtime build and hardware tests pending |
 | Windows ARM64 | Not available | Pure ARM64 DLSS DLLs exist; own runtime/dependencies/JNI producer and hardware tests pending |
 
-The checked-in manifest intentionally has four `unavailable` entries and
-`freeze=pending`. A normal build fails with all four reasons. **No complete
-universal JAR, final bundle hashes, or working download URLs are claimed.** A
-partial developer artifact is never a universal pass. A publication step alone
-cannot solve the current gap: compatible binaries must first be built and audited.
+The checked-in manifest has four `unavailable` entries and `freeze=pending`.
+The ordinary Java build succeeds with this explicit bootstrap state; the native
+release gate fails with all four reasons. No final native bundle hashes or
+working download URLs are claimed. Compatible binaries must first be built,
+audited and published. Startup checks only the selected platform and reports its
+unavailable reason before initializing the renderer.
 
 The coordinated wrapper header is API **0.16.3**, extension struct type **32**
 (`MESH_INFO_COMPACT_QUADS_EXT`), error **14** (`RESOURCE_BUSY`). The mesh change
@@ -64,7 +72,7 @@ SHA-256 `2612a078a5daa06d9a14cabad40fe66de36b8cb22ee8cdf346d5d9894478c392`.
 
 ## Player installation
 
-After these gates pass, put the one universal JAR in `mods/`. The installer
+Put the portable mod JAR in `mods/`. RTX initialization additionally needs a published compatible native package for the current platform. The installer
 selects exactly Linux/Windows and x86-64/ARM64 (`amd64`, `x86_64`, `aarch64`,
 `arm64`). Unsupported hosts get an error without an x86 fallback. Pure ARM64 PE
 machine `0xAA64` is required; ARM64EC `0xA641` is rejected.
@@ -158,7 +166,7 @@ JVM tasks; never raise the configured memory/swap limits.
    immutable assets with their associated licenses. No release publication is
    performed by this change, and SSH push authorization does not itself supply
    a release-upload API token.
-7. Run `./gradlew build -PnativeBundlesDir=/path/to/bundles`, then the manual
+7. Run `./gradlew verifyNativeDistribution -PnativeBundlesDir=/path/to/bundles`, then the manual
    `native distribution gate` CI workflow. It covers all four machine types,
    current JVM descriptors, and CPU-only JNI loading on matching Java 25
    runners. The final job runs the unqualified universal build. A pending

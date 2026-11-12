@@ -256,6 +256,24 @@ class NativeBundlesTest {
     }
 
     @Test
+    void portableBootstrapAllowsExplicitlyUnavailablePlatformsButRuntimeAndReleaseDoNot() throws Exception {
+        Path path = temp.resolve("portable.properties");
+        StringBuilder manifest = new StringBuilder("schema=1\nfreeze=pending\nplatforms=linux64,linuxarm64,win64,arm64\n");
+        for (String platform : NativeBundles.PLATFORMS) {
+            manifest.append(platform).append(".status=unavailable\n");
+            manifest.append(platform).append(".reason=Compatible package not published\n");
+        }
+        Files.writeString(path, manifest);
+        assertDoesNotThrow(() -> NativeBundles.verifyBootstrapManifest(path));
+        IOException startup = assertThrows(IOException.class, () -> NativeBundles.manifest(path, java.util.List.of("linux64")));
+        assertTrue(startup.getMessage().contains("linux64: Compatible package not published"));
+        assertFalse(startup.getMessage().contains("win64:"));
+        assertThrows(IOException.class, () -> NativeBundles.manifest(path, NativeBundles.PLATFORMS));
+        Files.writeString(path, manifest.toString().replace("arm64.status=unavailable", "arm64.status=unknown"));
+        assertThrows(IOException.class, () -> NativeBundles.verifyBootstrapManifest(path));
+    }
+
+    @Test
     void aFrozenManifestCannotRelabelTheCompiledApiOrInterfaceExtent() throws Exception {
         var contract = NativeBundles.sourceContract();
         for (String changed : java.util.List.of("api", "interfacePointers", "headerSha256", "bridgeSourceSha256")) {
@@ -270,6 +288,7 @@ class NativeBundlesTest {
             try (var out = Files.newOutputStream(path)) { manifest.store(out, "fixture"); }
             IOException error = assertThrows(IOException.class, () -> NativeBundles.manifest(path, NativeBundles.PLATFORMS));
             assertTrue(error.getMessage().contains(changed));
+            assertThrows(IOException.class, () -> NativeBundles.verifyBootstrapManifest(path));
         }
     }
 
