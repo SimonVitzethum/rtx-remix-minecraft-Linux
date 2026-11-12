@@ -2872,6 +2872,7 @@ public class RemixEntitySubmitter {
 
     /** Invalidates all resource-derived assets while retaining downloaded skin pixels. */
     public void reloadMaterials() {
+        endPortalSurfaces.clear();
         retainedEntityParts.clear(RemixEntitySubmitter::destroyRetainedPart);
         frameOpen = false;
         clearBeaconLensAssets();
@@ -2900,7 +2901,6 @@ public class RemixEntitySubmitter {
         missingMaterialSince.clear();
         warnedMissingMaterials.clear();
         labPBRVariants = null;
-        endPortalSurfaces.clear();
     }
 
     public void clear() {
