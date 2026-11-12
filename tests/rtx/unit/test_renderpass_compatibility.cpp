@@ -69,7 +69,9 @@ namespace dxvk::vk {
 }
 
 namespace dxvk {
-  Logger Logger::s_instance("test_renderpass_compatibility.log");
+  void Logger::err(const std::string& message) {
+    std::cerr << message << std::endl;
+  }
 }
 
 int main() {
@@ -118,7 +120,7 @@ int main() {
         }
       }
     }
-    std::cout << "PASS " << cases << " production render pass variants\n";
+    std::cout << "PASS " << cases << " production render pass variants" << std::endl;
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
