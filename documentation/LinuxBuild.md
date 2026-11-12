@@ -163,7 +163,11 @@ chunk, 3 waits for the CS thread, 4 waits for queue submission and the presenter
 existing synchronization, and 5 performs an explicitly requested device-idle wait.
 `SubmitTraceSlow` records all six phases for submissions lasting at least 100 ms.
 `SubmissionWait` separates time waiting for queued submissions from presenter
-synchronization when their combined duration reaches 100 ms. Frame identifiers
+synchronization when their combined duration reaches 100 ms. `DriverSubmit`
+records existing driver submission calls taking at least 100 ms.
+`SubmissionRetire` separates existing fence waits from command-list resource
+retirement when their combined duration reaches 100 ms. These are CPU wall
+durations and include host scheduling or memory pressure. Frame identifiers
 are runtime present counters and can advance for generated frames.
 
 `SubmitMemory` reports allocated and assigned bytes per runtime Vulkan heap,

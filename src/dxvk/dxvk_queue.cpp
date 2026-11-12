@@ -197,6 +197,9 @@ namespace dxvk {
 
   void DxvkSubmissionQueue::submitCmdLists() {
     env::setThreadName("dxvk-submit");
+    // NV-DXVK start: Passive interop submission diagnostics
+    const bool traceSubmit = std::getenv("REMIX_TRACE_SUBMIT") != nullptr;
+    // NV-DXVK end
 
     std::unique_lock<dxvk::mutex> lock(m_mutex);
 
@@ -236,9 +239,16 @@ namespace dxvk {
             reflex.beginRendering(entry.submit.cachedReflexFrameId);
           }
 
+          const auto submitBegin = traceSubmit ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
           status = entry.submit.cmdList->submit(
             entry.submit.waitSync,
             entry.submit.wakeSync);
+          if (traceSubmit) {
+            const double milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - submitBegin).count();
+            if (milliseconds >= 100.0) {
+              Logger::info(str::format("[DriverSubmit] cpu_ms=", milliseconds, " pending=", m_pending.load()));
+            }
+          }
 
           if (entry.submit.insertReflexRenderMarkers) {
             reflex.endRendering(entry.submit.cachedReflexFrameId);
@@ -343,6 +353,9 @@ namespace dxvk {
   
   void DxvkSubmissionQueue::finishCmdLists() {
     env::setThreadName("dxvk-queue");
+    // NV-DXVK start: Passive interop submission diagnostics
+    const bool traceSubmit = std::getenv("REMIX_TRACE_SUBMIT") != nullptr;
+    // NV-DXVK end
 
     while (!m_stopped.load()) {
       std::unique_lock<dxvk::mutex> lock(m_mutex);
@@ -368,8 +381,14 @@ namespace dxvk {
       
       VkResult status = m_lastError.load();
       
+      // NV-DXVK start: Passive interop submission diagnostics
+      const auto fenceBegin = traceSubmit ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
+      // NV-DXVK end
       if (status != VK_ERROR_DEVICE_LOST)
         status = entry.submit.cmdList->synchronize();
+      // NV-DXVK start: Passive interop submission diagnostics
+      const auto fenceDone = traceSubmit ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
+      // NV-DXVK end
       
       if (status != VK_SUCCESS) {
         Logger::err(str::format("DxvkSubmissionQueue: Failed to sync fence: ", status));
@@ -394,6 +413,15 @@ namespace dxvk {
       // A zero pending count promises that command-list references have been released.
       entry.submit.cmdList->reset();
       m_device->recycleCommandList(entry.submit.cmdList);
+      if (traceSubmit) {
+        const auto retired = std::chrono::steady_clock::now();
+        const double fenceMs = std::chrono::duration<double, std::milli>(fenceDone - fenceBegin).count();
+        const double retireMs = std::chrono::duration<double, std::milli>(retired - fenceDone).count();
+        if (fenceMs + retireMs >= 100.0) {
+          Logger::info(str::format("[SubmissionRetire] fence_cpu_ms=", fenceMs,
+            " retire_cpu_ms=", retireMs, " pending=", m_pending.load()));
+        }
+      }
 
       lock.lock();
       m_pending -= 1;
