@@ -176,3 +176,12 @@ bridge compiles its inline helpers into
 - Vendored copy of the NVIDIA Packman package-management bootstrap; used only
   to fetch the RTX Remix runtime payload at development/build time.
 
+
+## miniz (native received-surface cache)
+
+The JNI bridge compiles the streaming zlib codec from miniz 2.2.0, by RAD Game
+Tools, Valve Software, Rich Geldreich and Tenacious Software LLC. The vendored
+source and MIT license are under
+[rtxremix-java/native/third_party/miniz/](rtxremix-java/native/third_party/miniz/).
+It decodes and rewrites the existing received-surface disk format with bounded
+scratch memory. ZIP/archive APIs are excluded from the build.

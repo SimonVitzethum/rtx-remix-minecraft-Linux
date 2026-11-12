@@ -58,6 +58,7 @@ fi
 echo "Compiling remixbridge.so for $OUT_ARCH using $CXX ..."
 "$CXX" -std=c++17 -O2 -fPIC -shared \
     -fvisibility=hidden \
+    -DMINIZ_NO_ARCHIVE_APIS -DMINIZ_NO_STDIO -DMINIZ_USE_UNALIGNED_LOADS_AND_STORES=0 -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES \
     -DREMIX_WINAPI_NO_INCLUDE \
     -DREMIX_WINAPI_NO_LIBRARY_LOADER \
     -DREMIX_ALLOW_X86 \
@@ -69,6 +70,7 @@ echo "Compiling remixbridge.so for $OUT_ARCH using $CXX ..."
     -I"$REMIX_INCLUDE" \
     -I"$LINUX_INCLUDE" \
     "$SRC/remixbridge.cpp" \
+    "$SRC/voxel_dag.cpp" "$SRC/voxel_dag_jni.cpp" "$SRC/third_party/miniz/miniz.c" \
     -o "$OUT_DIR/remixbridge.so" \
     -lGL -ldl -lpthread
 

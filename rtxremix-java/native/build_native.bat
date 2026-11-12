@@ -88,9 +88,10 @@ if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
 echo Compiling remixbridge.dll for %OUT_ARCH% ...
 cl /nologo /O2 /Zi /LD /EHsc /std:c++17 ^
    /I"%JAVA_HOME%\include" /I"%JAVA_HOME%\include\win32" /I"%REMIX_INCLUDE%" ^
-   "%~dp0remixbridge.cpp" ^
+   /DMINIZ_USE_UNALIGNED_LOADS_AND_STORES=0 /DMINIZ_NO_ARCHIVE_APIS /DMINIZ_NO_STDIO /DMINIZ_NO_ZLIB_COMPATIBLE_NAMES ^
+   "%~dp0remixbridge.cpp" "%~dp0voxel_dag.cpp" "%~dp0voxel_dag_jni.cpp" "%~dp0third_party\miniz\miniz.c" ^
    /Fe"%OUT_DIR%\remixbridge.dll" ^
-   /Fo"%OUT_DIR%\remixbridge.obj" ^
+   /Fo"%OUT_DIR%\\" ^
    /Fd"%OUT_DIR%\remixbridge.pdb" ^
    /link /nologo /DEBUG dbghelp.lib
 
