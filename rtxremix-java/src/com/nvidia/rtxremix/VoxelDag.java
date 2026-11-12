@@ -72,6 +72,15 @@ public final class VoxelDag {
     public static native void overlay(long handle, String receivedRootPath, int sx, int sz, int minY);
 
     /**
+     * Overlays FCC surfaces directly into a temporary writable direct-buffer surface message, without creating
+     * a CPU DAG workspace or constructing nodes. lg is 1..4 and slabs 1..16; the buffer contains (256 >> lg)^2
+     * packed relative-height/RGB565 cells in native byte order. Its position is ignored and its address is not
+     * retained. Unreceived cells keep their input values. Decoding uses bounded native scratch and disk streaming.
+     */
+    public static native void overlaySurface(String receivedRootPath, int sx, int sz, int minY,
+                                             int lg, int slabs, ByteBuffer packed);
+
+    /**
      * Atomically updates one FCC region's chunk record from 256 direct-buffer packed uint32 cells. Heights in
      * this message are absolute signed world Y, unlike surface's column-relative heights. The buffer is 1024 bytes.
      */

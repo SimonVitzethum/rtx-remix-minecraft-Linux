@@ -76,6 +76,9 @@ private:
 // Disk pages retain only a descriptor and roots. Node validation and copies use bounded scratch.
 std::shared_ptr<Page> open(const std::filesystem::path& path);
 void save(Page& page, const std::filesystem::path& path);
+// Overlays a caller-owned bounded message without allocating a CPU DAG builder or retaining its address.
+void overlaySurface(const std::filesystem::path& directory, int32_t sx, int32_t sz, int32_t minY,
+  uint32_t lg, uint32_t slabs, void* samples);
 void recordSurface(const std::filesystem::path& directory, int32_t cx, int32_t cz, const void* packed);
 
 } // namespace rtx::voxel

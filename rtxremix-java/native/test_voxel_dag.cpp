@@ -133,11 +133,23 @@ int main(int argc, char** argv) {
     // Rewriting a record preserves its neighbours and empty cells override procedural terrain.
     samples.fill(0x80000000u);
     recordSurface(received, -1, -1, samples.data());
+    std::vector<uint32_t> streamed(128 * 128, 100u << 16 | 0x1234u);
+    const auto before = metrics();
+    overlaySurface(received, -1, -1, -64, 1, 2, streamed.data());
+    const auto after = metrics();
+    assert(before[3] == after[3] && before[4] == after[4] && before[8] == after[8]);
+    assert(streamed.back() == 0x80000000u);
+    assert(streamed[127 * 128 + 112] == (46u << 16 | 0xF800u));
+    assert(streamed[0] == (100u << 16 | 0x1234u));
+    Builder streamedReference(1, 2);
+    streamedReference.surface(0, uint32_t(streamed.size()), streamed.data());
+    streamedReference.finish();
     Builder page(1, 2);
     fill(page, 1);
     page.overlay(received, -1, -1, -64);
     page.finish();
     const auto words = read(page);
+    assert(words == read(streamedReference));
     assert(value(page, words, 255, 0, 255) == 0);
     assert(value(page, words, 224, 45, 255) == (kLeaf | 0xF800));
     assert(value(page, words, 224, 46, 255) == 0);

@@ -791,8 +791,10 @@ void save(Page& page, const std::filesystem::path& path) {
   }
 }
 
-void Builder::overlay(const std::filesystem::path& directory, int32_t sx, int32_t sz, int32_t minY) {
-  writable();
+namespace {
+template<typename Consumer>
+void overlayCells(const std::filesystem::path& directory, int32_t sx, int32_t sz, int32_t minY,
+    uint32_t lg, uint32_t slabs, Consumer consume) {
   std::lock_guard<std::mutex> lock(sourceIoMutex);
   IoLease scratch;
   const int64_t minCx = int64_t(sx) * 16, minCz = int64_t(sz) * 16;
@@ -810,7 +812,7 @@ void Builder::overlay(const std::filesystem::path& directory, int32_t sx, int32_
   std::array<uint8_t, 1024> present;
   readPresence(reader, present);
   std::array<uint8_t, 1024> record;
-  const uint32_t size = 1u << m_lg;
+  const uint32_t size = 1u << lg;
   for (uint32_t slot = 0; slot < 1024; ++slot) {
     if (!present[slot]) {
       continue;
@@ -846,20 +848,49 @@ void Builder::overlay(const std::filesystem::path& directory, int32_t sx, int32_
           const int64_t divisor = int64_t(n) * 2;
           const int64_t rounded = sum / divisor - (sum < 0 && sum % divisor ? 1 : 0);
           const int64_t relative = rounded - minY;
-          if (relative < 0 || relative > int64_t(m_slabs) * 256) {
+          if (relative < 0 || relative > int64_t(slabs) * 256) {
             throw std::runtime_error("Received-surface height is outside the DAG page");
           }
           top = int32_t(relative);
           color = (uint32_t(r / n) >> 3) << 11 | (uint32_t(g / n) >> 2) << 5 | (uint32_t(b / n) >> 3);
         }
-        const uint32_t index = uint32_t(((cz - minCz) * 16 + z) >> m_lg) * m_n
-          + uint32_t(((cx - minCx) * 16 + x) >> m_lg);
+        const uint32_t index = uint32_t(((cz - minCz) * 16 + z) >> lg) * (256u >> lg)
+          + uint32_t(((cx - minCx) * 16 + x) >> lg);
         const uint32_t packed = uint32_t(uint16_t(top)) << 16 | color;
-        surface(index, 1, &packed);
+        consume(index, packed);
       }
     }
   }
   reader.finish();
+}
+
+} // namespace
+
+void Builder::overlay(const std::filesystem::path& directory, int32_t sx, int32_t sz, int32_t minY) {
+  writable();
+  overlayCells(directory, sx, sz, minY, m_lg, m_slabs, [&](uint32_t index, uint32_t packed) {
+    surface(index, 1, &packed);
+  });
+}
+
+void overlaySurface(const std::filesystem::path& directory, int32_t sx, int32_t sz, int32_t minY,
+    uint32_t lg, uint32_t slabs, void* samples) {
+  if (lg < 1 || lg > 4 || slabs < 1 || slabs > 16 || !samples) {
+    throw std::invalid_argument("Invalid streaming surface dimensions or destination");
+  }
+  auto output = static_cast<uint8_t*>(samples);
+  const uint32_t cells = (256u >> lg) * (256u >> lg);
+  for (uint32_t i = 0; i < cells; ++i) {
+    uint32_t packed;
+    std::memcpy(&packed, output + size_t(i) * 4, 4);
+    const int16_t height = int16_t(packed >> 16);
+    if (height != std::numeric_limits<int16_t>::min() && (height < 0 || uint32_t(height) > slabs * 256)) {
+      throw std::invalid_argument("Streaming surface height is outside its vertical slabs");
+    }
+  }
+  overlayCells(directory, sx, sz, minY, lg, slabs, [&](uint32_t index, uint32_t packed) {
+    std::memcpy(output + size_t(index) * 4, &packed, 4);
+  });
 }
 
 void recordSurface(const std::filesystem::path& directory, int32_t cx, int32_t cz, const void* packed) {

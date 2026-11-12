@@ -206,6 +206,18 @@ JNIEXPORT void JNICALL Java_com_nvidia_rtxremix_VoxelDag_overlay(JNIEnv* env, jc
     return 0;
   }, "java/io/IOException");
 }
+JNIEXPORT void JNICALL Java_com_nvidia_rtxremix_VoxelDag_overlaySurface(JNIEnv* env, jclass, jstring directory,
+    jint sx, jint sz, jint minY, jint lg, jint slabs, jobject buffer) {
+  guard<int>(env, [&] {
+    if (lg < 1 || lg > 4 || slabs < 1 || slabs > 16) {
+      throw std::invalid_argument("Invalid streaming surface dimensions");
+    }
+    const uint32_t n = 256u >> lg;
+    void* data = direct(env, buffer, uint64_t(n) * n * 4, 65536, true);
+    rtx::voxel::overlaySurface(path(env, directory), sx, sz, minY, uint32_t(lg), uint32_t(slabs), data);
+    return 0;
+  }, "java/io/IOException");
+}
 JNIEXPORT void JNICALL Java_com_nvidia_rtxremix_VoxelDag_recordSurface(JNIEnv* env, jclass, jstring directory, jint cx, jint cz, jobject buffer) {
   guard<int>(env, [&] {
     void* data = direct(env, buffer, 1024, 1024);

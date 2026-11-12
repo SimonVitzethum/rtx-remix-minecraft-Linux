@@ -70,6 +70,36 @@ class VoxelDagNativeTest {
     }
 
     @Test
+    void receivedSurfaceMessagesNeedNoCpuDagWorkspace(@TempDir Path root) {
+        ByteBuffer record = ByteBuffer.allocateDirect(1024).order(ByteOrder.nativeOrder());
+        ByteBuffer message = ByteBuffer.allocateDirect(1024).order(ByteOrder.nativeOrder());
+        for (int i = 0; i < 256; i++) {
+            record.putInt(i * 4, ((-20 & 0xFFFF) << 16) | 0x07E0);
+            message.putInt(i * 4, (100 << 16) | 0x1234);
+        }
+        VoxelDag.recordSurface(root.toString(), -1, -1, record);
+        long[] before = VoxelDag.metrics();
+        message.position(message.capacity());
+        VoxelDag.overlaySurface(root.toString(), -1, -1, -64, 4, 2, message);
+        long[] after = VoxelDag.metrics();
+        assertEquals(before[3], after[3], "No CPU DAG builder");
+        assertEquals(before[4], after[4], "No CPU DAG output");
+        assertEquals(before[8], after[8], "No node allocation");
+        assertEquals((44 << 16) | 0x07E0, message.getInt(255 * 4));
+        assertEquals((100 << 16) | 0x1234, message.getInt(0));
+        assertThrows(IllegalArgumentException.class, () -> VoxelDag.overlaySurface(
+                root.toString(), -1, -1, -64, 4, 2, message.asReadOnlyBuffer()));
+        assertThrows(IllegalArgumentException.class, () -> VoxelDag.overlaySurface(
+                root.toString(), -1, -1, -64, 4, 2, ByteBuffer.allocate(1024)));
+        assertThrows(IllegalArgumentException.class, () -> VoxelDag.overlaySurface(
+                root.toString(), -1, -1, -64, 0, 2, message));
+        message.putInt(0, 9999 << 16);
+        assertThrows(IllegalArgumentException.class, () -> VoxelDag.overlaySurface(
+                root.toString(), -1, -1, -64, 4, 2, message));
+        assertEquals(0, VoxelDag.metrics()[6]);
+    }
+
+    @Test
     void sourceFlushWaitsForEveryInflightBuildAndKeepsOnlyDiskPayload(@TempDir Path root) throws Exception {
         FarTerrainSource source = new FarTerrainSource(root.resolve("received"), root.resolve("generated"), null,
                 true, 16, CompletableFuture.completedFuture(null));
