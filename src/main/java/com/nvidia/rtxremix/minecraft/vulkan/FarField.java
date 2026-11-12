@@ -187,9 +187,14 @@ public final class FarField {
 
     // ---------------------------------------------------------------------------------------------------------
 
-    /** Merged DAG: {@code nodes[0 .. words)} valid. */
-    private record Build(int[] nodes, int words, int root, int levels, int originSx, int originSz, int minY,
-                         int subtrees, int nodeCount, double mergeMs, long session, int generation, FarFieldCoverage coverage) {}
+    /** Upload data is retained only until commit; submitted and published generations need provenance alone. */
+    private record Build(FarDagUpload nodes, int words, int root, int levels, int originSx, int originSz, int minY,
+                         int subtrees, int nodeCount, double mergeMs, long session, int generation, FarFieldCoverage coverage) {
+        Build metadata() {
+            return new Build(null, words, root, levels, originSx, originSz, minY,
+                    subtrees, nodeCount, mergeMs, session, generation, coverage);
+        }
+    }
 
     private record Subtree(FarSubtree.Result geometry, FarFieldCoverage.Sources sources) {}
 
@@ -367,17 +372,15 @@ public final class FarField {
         }
 
         // 2. new merged DAG -> GPU: sliced copy into the spare buffer (<= 1M words = 4 MiB per frame), swap while idle
-        Build b = built.get();
-        if (b != null && b.session != session) {
-            built.compareAndSet(b, null);
-            b = null;
-        }
         // Finish the selected DAG even when newer merges arrive. Restarting slices for every merge can starve publication.
-        if (uploading == null && b != null && b != current) {
-            gpu.beginUpload(b.words);
-            uploading = b;
-            uploadComplete = false;
-            uploadFrames = 0;
+        if (uploading == null) {
+            Build b = built.getAndSet(null);
+            if (b != null && b.session == session) {
+                gpu.beginUpload(b.words);
+                uploading = b;
+                uploadComplete = false;
+                uploadFrames = 0;
+            }
         }
         if (uploading != null) {
             if (!uploadComplete) {
@@ -386,7 +389,7 @@ public final class FarField {
             }
             if (uploadComplete && !gpu.inFlight()) {
                 gpu.commitUpload();
-                current = uploading;
+                current = uploading.metadata();
                 uploading = null;
                 dagDirty = true;
                 if (Boolean.getBoolean("rtxremix.farfield.diagnostics")) {
@@ -788,7 +791,7 @@ public final class FarField {
 
     private Build merge(Map<Long, Subtree> entries, Map<Long, Long> signatures, long[] wanted, int levels, int originSx, int originSz, int minY, int slabs, long mergeSession, int generation) {
         long t0 = System.nanoTime();
-        FarFieldDag dag = new FarFieldDag();
+        FarDagUpload.Builder upload = new FarDagUpload.Builder();
         HashMap<Long, int[]> roots = new HashMap<>();
         int present = 0;
         HashMap<Long, FarFieldCoverage.Source> coverage = new HashMap<>();
@@ -799,7 +802,7 @@ public final class FarField {
             boolean geometry = !(result.nodeCount() <= 1 && allZero(result.roots()));
             coverage.put(k, new FarFieldCoverage.Source(signatures.get(k), geometry, entry.sources));
             if (!geometry) continue;
-            int off = dag.append(result.nodes(), result.nodeCount());
+            int off = upload.append(result.nodes(), result.nodeCount());
             int[] r = new int[slabs];
             for (int i = 0; i < slabs; i++) {
                 int v = result.roots()[i];
@@ -808,14 +811,16 @@ public final class FarField {
             roots.put(k, r);
             present++;
         }
-        int root = top(dag, roots, levels, 0, 0, 0, originSx, originSz, slabs);
+        FarFieldDag dag = new FarFieldDag();
+        int root = top(dag, upload.nodeCount() - 1, roots, levels, 0, 0, 0, originSx, originSz, slabs);
+        FarDagUpload nodes = upload.finish(dag);
         double ms = (System.nanoTime() - t0) / 1e6;
-        int words = dag.nodeCount() * 8;
+        int words = nodes.words();
         long tasks = Math.max(1, tasksDone.get());
         LOGGER.info("FarField merge: {} subtrees, {} nodes ({} MiB), cube {} blocks, merge {} ms (avg subtree build {} ms over {} tasks)",
-                present, dag.nodeCount(), (long) words * 4 >> 20, 1 << levels, String.format("%.1f", ms),
+                present, words / 8, (long) words * 4 >> 20, 1 << levels, String.format("%.1f", ms),
                 String.format("%.1f", taskNanos.get() / 1e6 / tasks), tasks);
-        return new Build(dag.rawNodes(), words, root, levels, originSx, originSz, minY, present, dag.nodeCount(), ms, mergeSession, generation, new FarFieldCoverage(coverage));
+        return new Build(nodes, words, root, levels, originSx, originSz, minY, present, words / 8, ms, mergeSession, generation, new FarFieldCoverage(coverage));
     }
 
     private static boolean allZero(int[] a) {
@@ -824,7 +829,7 @@ public final class FarField {
     }
 
     /** Top of the tree over sub-DAG roots; (ix, iy, iz) in 256-block cells relative to the cube origin. */
-    private static int top(FarFieldDag dag, HashMap<Long, int[]> roots, int level, int ix, int iy, int iz, int osx, int osz, int slabs) {
+    private static int top(FarFieldDag dag, int nodeOffset, HashMap<Long, int[]> roots, int level, int ix, int iy, int iz, int osx, int osz, int slabs) {
         if (level == FarSubtree.SIZE_LEVEL) {
             if (iy >= slabs) return 0;
             int[] r = roots.get(subKey(osx + ix, osz + iz));
@@ -836,10 +841,11 @@ public final class FarField {
         for (int i = 0; i < 8; i++) {
             int cy = iy + ((i >> 1) & 1) * half;
             if (cy >= slabs) { refs[i] = 0; continue; }
-            refs[i] = top(dag, roots, level - 1, ix + (i & 1) * half, cy, iz + ((i >> 2) & 1) * half, osx, osz, slabs);
+            refs[i] = top(dag, nodeOffset, roots, level - 1, ix + (i & 1) * half, cy, iz + ((i >> 2) & 1) * half, osx, osz, slabs);
             any |= refs[i] != 0;
         }
-        return any ? dag.make(refs) : 0;
+        int reference = any ? dag.make(refs) : 0;
+        return reference == 0 || (reference & FarFieldDag.LEAF) != 0 ? reference : reference + nodeOffset;
     }
 
     // ---- one 256 x 256 column on a worker thread ----

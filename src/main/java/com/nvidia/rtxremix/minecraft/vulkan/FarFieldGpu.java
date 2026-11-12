@@ -235,11 +235,11 @@ final class FarFieldGpu implements AutoCloseable {
     }
 
     /** Copies up to {@code maxWords} more words of the DAG; returns true when the whole DAG is in the spare buffer. */
-    boolean uploadSlice(int[] nodes, int maxWords) {
+    boolean uploadSlice(FarDagUpload nodes, int maxWords) {
         int n = Math.min(maxWords, upWords - upDone);
         dagNext.mapped.clear();
         dagNext.mapped.position(upDone * 4);
-        dagNext.mapped.asIntBuffer().put(nodes, upDone, n);
+        nodes.copy(upDone, dagNext.mapped.asIntBuffer().limit(n));
         dagNext.mapped.clear();
         upDone += n;
         return upDone >= upWords;

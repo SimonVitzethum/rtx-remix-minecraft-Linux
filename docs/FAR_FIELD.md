@@ -62,6 +62,16 @@ release also shuts down the far field before the next world's dome is selected. 
 Nether/End skies use their own texture and cannot acquire the preceding Overworld's
 composite, even though they do not execute an atmospheric far-field tick.
 
+Merged generations share immutable subtree arrays. `FarDagUpload` keeps a segment table
+and the small top tree, relocating references directly into the mapped spare GPU buffer
+within the upload slice. It never allocates a flat heap copy of the scene. After upload,
+current, submitted and published generations retain only provenance, so they cannot pin
+obsolete subtree payloads. The latest merge and the selected upload are the only pending
+generation views; unchanged subtrees share storage with the cache. The GPU still uses two
+flat buffers and receives the same node layout, detail and extent. Incremental patching
+of those buffers could also reduce transfer bandwidth, but requires stable allocation
+and retirement across two GPU generations; shared CPU views avoid that additional state.
+
 This is eventual refresh under explicit work budgets, not a hard wall-clock guarantee:
 planning and merge have 500/400 ms cadence gates, image dispatch has a 1 s gate, and
 capture, worker queues, upload and GPU completion add workload-dependent time. Continuous
@@ -140,6 +150,9 @@ caves, determinism and flat-volume sharing. `FarSurfaceTilesTest` checks fine ti
 and negative/coarse tile offsets. `FarCacheSourceTest` exercises real asynchronous tiles,
 unchanged surfaces, colour/height updates, persistent reopen and received overrides.
 These JVM checks do not prove mixin execution, visual quality or game performance.
+`FarDagUploadTest` compares sliced uploads with the original flat DAG wire representation,
+including relocated branches, shared top nodes, leaves, empty geometry and retained
+publication data after cache replacement.
 
 Native terrain pages follow the current camera radius through retained-instance visibility transitions. A page installed outside the radius is made visible when the camera or radius moves over it; disabling Far field restores the native pages without rebuilding their meshes. Unchanged visibility performs no native update.
 
