@@ -245,7 +245,9 @@ final class FarTerrainSource implements AutoCloseable {
                     VoxelDag.recordSurface(received.toString(), record.cx, record.cz, record.message);
                     int rx = Math.floorDiv(record.cx, 32), rz = Math.floorDiv(record.cz, 32);
                     Path file = received.resolve("r_" + rx + "_" + rz + ".bin");
-                    revisions.put(key(rx, rz), inspect(file));
+                    Region updated = inspect(file);
+                    revisions.compute(key(rx, rz), (ignored, previous) -> new Region(
+                            Math.max(updated.revision, previous == null ? 0 : previous.revision + 1), updated.present));
                 } catch (IOException | RuntimeException failure) {
                     LOGGER.error("Received far surface could not be persisted at {},{}", record.cx, record.cz, failure);
                 } finally {
@@ -306,7 +308,7 @@ final class FarTerrainSource implements AutoCloseable {
                 if (value != 0) present[i >>> 6] |= 1L << (i & 63);
             }
         }
-        return new Region(Files.getLastModifiedTime(file).toMillis(), present);
+        return new Region(Files.getLastModifiedTime(file).to(java.util.concurrent.TimeUnit.NANOSECONDS), present);
     }
 
     @Override public synchronized void close() { closed = true; recorder.interrupt(); }
