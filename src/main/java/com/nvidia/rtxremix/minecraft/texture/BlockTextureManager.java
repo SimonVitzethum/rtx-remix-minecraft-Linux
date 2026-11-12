@@ -296,7 +296,8 @@ public class BlockTextureManager {
     private void dumpAtlasCrops(String dir) {
         try {
             java.nio.file.Files.createDirectories(java.nio.file.Path.of(dir));
-            for (String name : new String[] {"block/spruce_planks", "block/bricks", "block/stone", "block/dirt", "block/oak_leaves", "block/short_grass"}) {
+            for (String name : new String[] {"block/spruce_planks", "block/bricks", "block/stone", "block/dirt", "block/oak_leaves", "block/short_grass",
+                    "block/tinted_glass", "block/black_stained_glass", "block/red_stained_glass", "block/blue_stained_glass", "block/glass"}) {
                 SpriteEntry se = spriteById.get(Identifier.withDefaultNamespace(name));
                 if (se == null) continue;
                 int pad = 12, x0 = Math.max(0, se.pixX - pad), y0 = Math.max(0, se.pixY - pad);
