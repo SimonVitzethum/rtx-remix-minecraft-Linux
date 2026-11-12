@@ -135,7 +135,7 @@ class NativeBundlesTest {
                 temp.resolve("not-bundled.zip"), temp.resolve("uncached")));
         assertTrue(unavailable.getMessage().contains("no published HTTPS download for linux64"));
         try (var files = Files.list(temp.resolve("uncached"))) {
-            assertTrue(files.noneMatch(path -> path.toString().endsWith(".part")));
+            assertTrue(files.noneMatch(entry -> entry.toString().endsWith(".part")));
         }
     }
 
