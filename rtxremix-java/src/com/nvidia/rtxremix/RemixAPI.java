@@ -26,7 +26,7 @@ import java.util.Collection;
 public class RemixAPI {
     public static final int VERSION_MAJOR = 0;
     public static final int VERSION_MINOR = 16;
-    public static final int VERSION_PATCH = 2;
+    public static final int VERSION_PATCH = 3;
 
     /**
      * Fits every value except long hash lists, so most reads through
@@ -452,9 +452,14 @@ public class RemixAPI {
         int[] bwcs = new int[n];
         ByteBuffer[] bibs = new ByteBuffer[n];
         int[] bics = new int[n];
+        ByteBuffer[] compact = new ByteBuffer[n];
+        int[] compactCounts = new int[n];
 
         for (int i = 0; i < n; i++) {
             MeshInfoSurfaceTriangles s = info.surfaces[i];
+            validateCompactSurface(s);
+            compact[i] = s.compactQuadBuffer;
+            compactCounts[i] = s.compactQuadCount;
             vbs[i] = s.vertexBuffer;
             vcs[i] = s.vertexCount;
             ibs[i] = s.indexBuffer;
@@ -470,11 +475,23 @@ public class RemixAPI {
 
         long handle = RemixBridge.createMesh(info.hash, n,
                 vbs, vcs, ibs, ics, mats, flags,
-                bpv, bwbs, bwcs, bibs, bics);
-        if (handle == 0) {
-            throw new RemixException("CreateMesh failed", ErrorCode.GENERAL_FAILURE);
+                bpv, bwbs, bwcs, bibs, bics, compact, compactCounts);
+        if (handle <= 0) {
+            throw new RemixException("CreateMesh failed", handle == 0 ? ErrorCode.GENERAL_FAILURE : (int) -handle);
         }
         return handle;
+    }
+
+    static void validateCompactSurface(MeshInfoSurfaceTriangles surface) {
+        if (surface.compactQuadBuffer == null && surface.compactQuadCount == 0) return;
+        ByteBuffer buffer = surface.compactQuadBuffer;
+        if (buffer == null || !buffer.isDirect() || buffer.position() != 0 ||
+                buffer.order() != java.nio.ByteOrder.LITTLE_ENDIAN || surface.compactQuadCount <= 0 ||
+                (long) surface.compactQuadCount * 96 > buffer.limit() ||
+                surface.vertexBuffer != null || surface.vertexCount != 0 || surface.indexBuffer != null ||
+                surface.indexCount != 0 || surface.skinning_hasvalue || surface.flags != 0) {
+            throw new RemixException("Invalid compact quad surface", ErrorCode.INVALID_ARGUMENTS);
+        }
     }
 
     public void destroyMesh(long handle) {

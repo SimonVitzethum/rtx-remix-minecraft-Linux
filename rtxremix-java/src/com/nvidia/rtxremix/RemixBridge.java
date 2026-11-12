@@ -175,7 +175,9 @@ public final class RemixBridge {
      * @param blendWeightCounts  element counts (float count, not byte count)
      * @param blendIndexBuffers  direct ByteBuffers (null entries = no skinning)
      * @param blendIndexCounts   element counts
-     * @return native handle, or 0 on failure
+     * @param compactQuadBuffers direct version-1 96-byte affine descriptors, position zero (null for ordinary surfaces)
+     * @param compactQuadCounts descriptor counts, one per surface
+     * @return positive native handle, or the negated error code on failure
      */
     public static native long createMesh(
             long hash, int surfaceCount,
@@ -185,7 +187,8 @@ public final class RemixBridge {
             int[] flags,
             int[] bonesPerVertex,
             ByteBuffer[] blendWeightBuffers, int[] blendWeightCounts,
-            ByteBuffer[] blendIndexBuffers, int[] blendIndexCounts);
+            ByteBuffer[] blendIndexBuffers, int[] blendIndexCounts,
+            ByteBuffer[] compactQuadBuffers, int[] compactQuadCounts);
 
     public static native int destroyMesh(long handle);
 

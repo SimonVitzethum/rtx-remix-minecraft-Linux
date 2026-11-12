@@ -41,5 +41,7 @@ public final class StructType {
     public static final int SUBMIT_INFO = 30;
     public static final int CONFIG_VARIABLE_RESOLVED_INFO = 31;
 
+    public static final int MESH_INFO_COMPACT_QUADS_EXT = 32;
+
     private StructType() {}
 }
