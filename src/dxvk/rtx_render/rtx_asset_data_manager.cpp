@@ -387,6 +387,8 @@ namespace dxvk {
   };
 
   AssetDataManager::AssetDataManager() {
+    // This manager removes watches during destruction, so the watcher must outlive it.
+    FileWatch::get();
   }
 
   AssetDataManager::~AssetDataManager() {
