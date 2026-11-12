@@ -612,7 +612,10 @@ remapJarTask.configure {
     archiveClassifier.set('dev')
     destinationDirectory.set(layout.buildDirectory.dir('intermediates'))
 }
-tasks.named('sourcesJar') { destinationDirectory.set(layout.buildDirectory.dir('intermediates')) }
+tasks.named('sourcesJar') {
+    dependsOn generateNativeContract
+    destinationDirectory.set(layout.buildDirectory.dir('intermediates'))
+}
 
 def packageJarTask = tasks.register('packageJar', Zip) {
     description = 'Assembles the installable universal mod JAR with verified native bundles and Fabric API'

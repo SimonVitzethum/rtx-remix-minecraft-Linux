@@ -347,6 +347,8 @@ final class NativeBundles {
                 byte[] nameBytes = new byte[length];
                 f.readFully(nameBytes);
                 String name = safeName(new String(nameBytes, StandardCharsets.UTF_8));
+                require(!name.matches("(?i).*(python[^/]*[.](dll|so)([.][0-9]+)*|[.](pyd|pyc|pdb|a|lib|o|obj))$"),
+                        "Python/development native payload is prohibited: " + name);
                 long size = u32(c, 24), compressed = u32(c, 20);
                 require(size > 0 && size <= MAX_UNPACKED && size <= Math.max(1024 * 1024L, compressed * 250)
                         && u16(c, 34) == 0 && u32(c, 42) < offset, "Oversized/split native ZIP entry: " + name);

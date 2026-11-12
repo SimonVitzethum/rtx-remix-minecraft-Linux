@@ -255,6 +255,24 @@ class NativeBundlesTest {
         assertTrue(error.getMessage().contains("arm64:"));
     }
 
+    @Test
+    void aFrozenManifestCannotRelabelTheCompiledApiOrInterfaceExtent() throws Exception {
+        var contract = NativeBundles.sourceContract();
+        for (String changed : java.util.List.of("api", "interfacePointers", "headerSha256", "bridgeSourceSha256")) {
+            var manifest = new java.util.Properties();
+            manifest.putAll(contract);
+            manifest.setProperty(changed, changed.equals("api") ? "0.0.0" : "0");
+            manifest.setProperty("schema", "1");
+            manifest.setProperty("freeze", "final");
+            manifest.setProperty("platforms", String.join(",", NativeBundles.PLATFORMS));
+            for (String arch : NativeBundles.PLATFORMS) manifest.setProperty(arch + ".status", "available");
+            Path path = temp.resolve(changed + ".properties");
+            try (var out = Files.newOutputStream(path)) { manifest.store(out, "fixture"); }
+            IOException error = assertThrows(IOException.class, () -> NativeBundles.manifest(path, NativeBundles.PLATFORMS));
+            assertTrue(error.getMessage().contains(changed));
+        }
+    }
+
     private Fixture fixture(String platform, Map<String, byte[]> extras) throws Exception {
         Map<String, byte[]> files = new LinkedHashMap<>();
         boolean linux = platform.startsWith("linux");
@@ -272,8 +290,11 @@ class NativeBundlesTest {
                 + "\nheaderSha256=" + "3".repeat(64) + "\nbridgeSourceSha256=" + "4".repeat(64)
                 + "\nminimumOs=fixture\nminimumVulkan=fixture\nminimumDriver=fixture\n";
         StringBuilder inventory = new StringBuilder("license.fixture=licenses/MIT.txt\n");
-        inventory.append("license.").append(linux ? "libremixapi.so" : "d3d9.dll").append("=licenses/MIT.txt\n");
-        inventory.append("license.").append(linux ? "remixbridge.so" : "remixbridge.dll").append("=licenses/MIT.txt\n");
+        for (String name : files.keySet()) {
+            if (name.matches("(?i).*([.]so([.][0-9]+)*|[.]dll|[.]exe)$")) {
+                inventory.append("license.").append(name).append("=licenses/MIT.txt\n");
+            }
+        }
         for (var e : files.entrySet()) {
             var hash = java.security.MessageDigest.getInstance("SHA-256").digest(e.getValue());
             inventory.append("file.").append(e.getKey().replace("\\", "\\\\")).append('=')

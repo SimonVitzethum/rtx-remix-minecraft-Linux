@@ -155,7 +155,7 @@ def produce(args):
         name = safe_name(path.relative_to(payload).as_posix())
         require(name.lower() not in names and name not in ("bundle.properties", "inventory.properties", "audit.json", "jni-signatures.properties"),
                 f"Reserved/duplicate native path: {name}")
-        require(not re.search(r"(?i)(python.*\.(dll|so)|\.(pyd|pyc|pdb|a|lib|o|obj))$", name), f"Development/Python payload prohibited: {name}")
+        require(not re.search(r"(?i)(python[^/]*\.(dll|so)(\.[0-9]+)*|\.(pyd|pyc|pdb|a|lib|o|obj))$", name), f"Development/Python payload prohibited: {name}")
         names.add(name.lower())
         files[name] = path
     # All redistributed license texts are inventories, including the JNI miniz dependency.
