@@ -38,6 +38,16 @@ __pycache__/
 dist/
 *.zip
 
+# Optional local resource/texture packs, including unpacked copies
+resourcepacks/
+texturepacks/
+resource-packs/
+texture-packs/
+
+# Nix build result links; flake.nix and flake.lock stay tracked
+/result
+/result-*
+
 # Builds before the runtime textures' junction moved under remix-runtime/
 # linked it here; the build removes a leftover one. Keep the path ignored.
 packaging/textures/

@@ -185,6 +185,36 @@ additional block/entity states and complete 512/32 validation remain open.
 Cluster acceleration structures are experimental and opt-in. No general
 game-performance improvement is claimed for them.
 
+## Nix Development Environments
+
+`flake.nix` provides development shells for **x86-64 Linux and ARM64 Linux**.
+The committed `flake.lock` pins the Nixpkgs source and its content hash.
+
+```bash
+nix develop
+java -version
+```
+
+The default shell supplies JDK 25 and Java/build-download tools without a native
+compiler. Use the repository's Gradle wrapper for its pinned Gradle version.
+Maintainers working on JNI, Vulkan or shaders can select the compiler shell:
+
+```bash
+nix develop .#native
+```
+
+The runtime branch has a separate flake for its C++/shader development tools.
+These shells do not bundle Minecraft, NVIDIA drivers, proprietary SDKs or
+texturepacks. Runtime staging and verified native-artifact acquisition remain
+separate from the tool environment. Local packs belong in ignored
+`resourcepacks/` or `texturepacks/`; ZIP archives are ignored as well.
+
+Use `nix flake check --no-build` to evaluate the flake, and
+`nix flake update` only when deliberately updating the toolchain pin. This is
+a pinned developer environment, not an assertion that the complete Gradle/JAR
+build is a sandboxed Nix derivation. Native Windows builds use the Gradle
+workflow; Nix shells can be used under a Linux environment such as WSL.
+
 ## Crash Reports And Privacy
 
 The mod collects no data of its own. The RTX Remix runtime it carries can send
