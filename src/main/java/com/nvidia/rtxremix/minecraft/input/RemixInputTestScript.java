@@ -324,6 +324,10 @@ public final class RemixInputTestScript {
                 }
             }
             case "quit" -> mc.stop();
+            case "reload" -> mc.reloadResourcePacks().whenComplete((ignored, failure) -> {
+                if (failure != null) LOGGER.error("Step failed: resource reload", failure);
+                else LOGGER.info("Resource reload completed");
+            });
             case "altx" -> {
                 mc.keyboardHandler.keyPress(h, 1, new KeyEvent(InputConstants.KEY_LALT, 0x40000000 | 0xE2, 0x100));
                 mc.keyboardHandler.keyPress(h, 1, new KeyEvent(InputConstants.KEY_X, 'x', 0x100));
