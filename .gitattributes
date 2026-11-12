@@ -12,3 +12,10 @@
 # The release zips carry these texts byte for byte, so every checkout, on any
 # platform or autocrlf setting, builds the same zip.
 packaging/content/**/*.txt text eol=lf
+
+# Native bundle source contracts must hash identically on every producer OS.
+rtxremix-java/native/**/*.cpp text eol=lf
+rtxremix-java/native/**/*.c text eol=lf
+rtxremix-java/native/**/*.h text eol=lf
+rtxremix-java/native/*.sh text eol=lf
+packaging/native-bundles/source-files.txt text eol=lf

@@ -36,18 +36,12 @@ import java.util.zip.ZipFile;
  * No compiler, shell command or mutable remote metadata is used at launch.
  */
 final class NativeBundles {
-    static final String API = "0.16.3";
-    static final String BRIDGE_ABI = "compact-quads-v1";
     static final List<String> PLATFORMS = List.of("linux64", "linuxarm64", "win64", "arm64");
     static final long MAX_ARCHIVE = 1024L * 1024 * 1024;
     static final long MAX_UNPACKED = 3L * MAX_ARCHIVE;
     static final int MAX_ENTRIES = 20_000;
     private static final LinkOption[] NO_LINKS = {LinkOption.NOFOLLOW_LINKS};
     private static final Duration DOWNLOAD_TIMEOUT = Duration.ofMinutes(5);
-    private static final String[] SOURCE_FILES = {"remixbridge.cpp", "voxel_dag.cpp", "voxel_dag.h",
-            "voxel_dag_jni.cpp", "third_party/miniz/miniz.c", "third_party/miniz/miniz.h",
-            "include/remix_c.h"};
-
     private NativeBundles() {}
 
     static String platform(String osName, String osArch) {
@@ -62,10 +56,10 @@ final class NativeBundles {
                 + "Unsupported OS/CPU: " + osName + " / " + osArch + ". Use a matching 64-bit Java 25 launcher.");
     }
 
-    record Bundle(String platform, String api, String bridgeAbi, String runtimeSource, String bridgeSource,
+    record Bundle(String platform, String api, String bridgeAbi, String interfacePointers, String runtimeSource, String bridgeSource,
                   String headerSha256, String bridgeSourceSha256, URI url, String sha256, long bytes,
                   long unpackedBytes, String minimumOs, String minimumVulkan, String minimumDriver) {
-        String identity() { return api + "|" + bridgeAbi + "|" + platform + "|" + sha256; }
+        String identity() { return api + "|" + bridgeAbi + "|" + interfacePointers + "|" + platform + "|" + sha256; }
         String runtimeFile() { return platform.startsWith("linux") ? "libremixapi.so" : "d3d9.dll"; }
         String bridgeFile() { return platform.startsWith("linux") ? "remixbridge.so" : "remixbridge.dll"; }
     }
@@ -73,8 +67,6 @@ final class NativeBundles {
     static Map<String, Bundle> manifest(Path path, List<String> selected) throws IOException {
         Properties p = properties(path);
         require("1".equals(p.getProperty("schema")), "Unsupported native manifest schema");
-        require(API.equals(p.getProperty("api")), "Native manifest must use C API " + API);
-        require(BRIDGE_ABI.equals(p.getProperty("bridgeAbi")), "Native bridge ABI does not match this mod");
         require(String.join(",", PLATFORMS).equals(p.getProperty("platforms")), "Manifest must declare all four platforms");
         List<String> missing = new ArrayList<>();
         for (String arch : selected) {
@@ -85,6 +77,10 @@ final class NativeBundles {
         }
         require(missing.isEmpty(), "Universal native distribution is incomplete:\n" + String.join("\n", missing));
         require("final".equals(p.getProperty("freeze")), "Native API/source freeze is pending");
+        Properties contract = sourceContract();
+        for (String key : java.util.List.of("api", "bridgeAbi", "interfacePointers", "headerSha256", "bridgeSourceSha256")) {
+            require(required(contract, key).equals(required(p, key)), "Native manifest differs from the compiled source contract: " + key);
+        }
         String runtimeSource = hex(p, "runtimeSource", 40);
         String bridgeSource = hex(p, "bridgeSource", 40);
         String header = hex(p, "headerSha256", 64);
@@ -98,7 +94,7 @@ final class NativeBundles {
             require("https".equals(url.getScheme()) && url.getHost() != null && url.getUserInfo() == null
                     && url.getFragment() == null, "Bundle URL must be versioned HTTPS: " + arch);
             require(!url.getPath().matches("(?i).*/latest(/.*)?"), "Mutable latest bundle URLs are forbidden");
-            bundles.put(arch, new Bundle(arch, API, BRIDGE_ABI, runtimeSource, bridgeSource, header, bridgeHash,
+            bundles.put(arch, new Bundle(arch, p.getProperty("api"), p.getProperty("bridgeAbi"), p.getProperty("interfacePointers"), runtimeSource, bridgeSource, header, bridgeHash,
                     url, hex(p, prefix + "sha256", 64), number(p, prefix + "bytes", MAX_ARCHIVE),
                     number(p, prefix + "unpackedBytes", MAX_UNPACKED), required(p, prefix + "minimumOs"),
                     required(p, prefix + "minimumVulkan"), required(p, prefix + "minimumDriver")));
@@ -120,7 +116,7 @@ final class NativeBundles {
         }
         safeDirectory(cache);
         Path lock = cache.resolve("download.lock");
-        rejectLink(lock);
+        regularOrAbsent(lock);
         try (FileChannel channel = FileChannel.open(lock, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
              var held = channel.tryLock()) {
             require(held != null, "Another RTX Remix native download is active. Relaunch after it finishes.");
@@ -203,10 +199,11 @@ final class NativeBundles {
         Map<String, Long> entries = centralDirectory(archive, b.unpackedBytes);
         try (ZipFile zip = new ZipFile(archive.toFile())) {
             Properties metadata = zipProperties(zip, "bundle.properties");
-            Map<String, String> expected = Map.of("schema", "1", "platform", b.platform, "api", b.api,
+            Map<String, String> expected = new LinkedHashMap<>(Map.of("schema", "1", "platform", b.platform, "api", b.api,
                     "bridgeAbi", b.bridgeAbi, "runtimeSource", b.runtimeSource, "bridgeSource", b.bridgeSource,
                     "headerSha256", b.headerSha256, "bridgeSourceSha256", b.bridgeSourceSha256,
-                    "minimumOs", b.minimumOs);
+                    "minimumOs", b.minimumOs));
+            expected.put("interfacePointers", b.interfacePointers);
             for (var e : expected.entrySet()) {
                 require(e.getValue().equals(metadata.getProperty(e.getKey())), "Native bundle metadata mismatch: " + e.getKey());
             }
@@ -217,14 +214,19 @@ final class NativeBundles {
             Set<String> licenses = new HashSet<>();
             for (String key : inventory.stringPropertyNames()) {
                 if (key.startsWith("file.")) files.add(safeName(key.substring(5)));
-                else if (key.startsWith("license.")) licenses.add(safeName(inventory.getProperty(key)));
+                else if (key.startsWith("license.")) {
+                    for (String license : inventory.getProperty(key).split(",", -1)) licenses.add(safeName(license));
+                }
                 else throw new IOException("Unknown native inventory key: " + key);
             }
             Set<String> payload = new HashSet<>(entries.keySet());
             payload.remove("bundle.properties");
             payload.remove("inventory.properties");
             require(payload.equals(files), "Native bundle has missing/uninventoried files");
-            require(files.containsAll(List.of(b.runtimeFile(), b.bridgeFile(), "audit.json")), "Missing runtime, bridge or producer audit");
+            require(files.containsAll(List.of(b.runtimeFile(), b.bridgeFile(), "audit.json", "jni-signatures.properties")),
+                    "Missing runtime, bridge or producer audit");
+            Properties signatures = zipProperties(zip, "jni-signatures.properties");
+            require(signatures.equals(jniSignatures()), "Native bundle JNI descriptors differ from the Java facade");
             require(!licenses.isEmpty() && files.containsAll(licenses)
                     && licenses.stream().allMatch(s -> s.startsWith("licenses/")), "Missing native license inventory/texts");
             if (output != null) {
@@ -261,7 +263,10 @@ final class NativeBundles {
                 }
                 require(count == entry.getSize(), "Truncated native ZIP entry: " + name);
                 if (spec != null) require(spec.endsWith(":" + hex(hash)), "Native file hash mismatch: " + name);
-                if (name.matches("(?i).*([.]so([.][0-9]+)*|[.]dll|[.]exe)$")) machine(header, headerBytes, b.platform, name);
+                if (name.matches("(?i).*([.]so([.][0-9]+)*|[.]dll|[.]exe)$")) {
+                    require(inventory.containsKey("license." + name), "Missing binary license assignment: " + name);
+                    machine(header, headerBytes, b.platform, name);
+                }
             }
         }
     }
@@ -277,7 +282,8 @@ final class NativeBundles {
         if (!b.api.equals(m.getProperty("api")) || !b.bridgeAbi.equals(m.getProperty("bridgeAbi"))
                 || !b.platform.equals(m.getProperty("platform"))
                 || !b.runtimeSource.equals(m.getProperty("runtimeSource"))
-                || !b.bridgeSourceSha256.equals(m.getProperty("bridgeSourceSha256"))) return false;
+                || !b.bridgeSourceSha256.equals(m.getProperty("bridgeSourceSha256"))
+                || !b.interfacePointers.equals(m.getProperty("interfacePointers"))) return false;
         Properties files = properties(inventory);
         if (!files.containsKey("file." + b.runtimeFile()) || !files.containsKey("file." + b.bridgeFile())) return false;
         for (String key : files.stringPropertyNames()) {
@@ -377,6 +383,12 @@ final class NativeBundles {
         }
     }
 
+    static void regularOrAbsent(Path path) throws IOException {
+        rejectLink(path);
+        require(!Files.exists(path, NO_LINKS) || Files.isRegularFile(path, NO_LINKS),
+                "Refusing non-regular native installation file: " + path);
+    }
+
     static void rejectLink(Path path) throws IOException {
         require(!Files.isSymbolicLink(path), "Refusing symbolic link in native installation: " + path);
     }
@@ -417,9 +429,45 @@ final class NativeBundles {
         return hex(hash);
     }
 
+    static void verifyTextures(Path directory, Path inventory) throws IOException {
+        Properties textures = properties(inventory);
+        require(textures.stringPropertyNames().equals(Set.of("overcast_thunderstorm_bc6u.dds", "water_normals_flipbook.dds")),
+                "Unexpected runtime DDS inventory");
+        for (String name : textures.stringPropertyNames()) {
+            Path texture = directory.resolve(name);
+            regularOrAbsent(texture);
+            require(Files.isRegularFile(texture, NO_LINKS)
+                    && textures.getProperty(name).equals(Files.size(texture) + ":" + hash(texture)),
+                    "Runtime texture size/SHA-256 mismatch: " + name);
+        }
+    }
+
+    static Properties sourceContract() throws IOException {
+        try (InputStream input = NativeBundles.class.getResourceAsStream("/native-source.properties")) {
+            require(input != null, "Missing compiled native source contract");
+            return properties(input);
+        }
+    }
+
+    static Properties jniSignatures() throws IOException {
+        Properties signatures = new Properties();
+        for (Class<?> type : java.util.List.of(com.nvidia.rtxremix.RemixBridge.class, com.nvidia.rtxremix.VoxelDag.class)) {
+            for (var method : type.getDeclaredMethods()) {
+                if (!java.lang.reflect.Modifier.isNative(method.getModifiers())) continue;
+                String export = "Java_" + type.getName().replace("_", "_1").replace('.', '_')
+                        + "_" + method.getName().replace("_", "_1");
+                String descriptor = java.lang.invoke.MethodType.methodType(method.getReturnType(), method.getParameterTypes())
+                        .descriptorString();
+                require(signatures.putIfAbsent(export, descriptor) == null, "Overloaded JNI export requires a mangled descriptor: " + export);
+            }
+        }
+        return signatures;
+    }
+
     static String bridgeSourceHash(Path root) throws IOException {
         MessageDigest hash = digest();
-        for (String name : SOURCE_FILES) {
+        for (String name : Files.readAllLines(root.resolve("packaging/native-bundles/source-files.txt"))) {
+            if (name.isBlank()) continue;
             hash.update((name + "\n").getBytes(StandardCharsets.UTF_8));
             hash.update((hash(root.resolve("rtxremix-java/native").resolve(name)) + "\n").getBytes(StandardCharsets.UTF_8));
         }
@@ -467,16 +515,24 @@ final class NativeBundles {
                 if (!verified.equals(archive)) Files.copy(verified, archive);
                 System.out.println("Verified " + b.identity());
             }
+        } else if (args.length == 5 && args[0].equals("unpack")) {
+            Bundle b = manifest(Path.of(args[1]), List.of(args[3])).get(args[3]);
+            validate(Path.of(args[2]).resolve(b.platform + ".zip"), b, Path.of(args[4]));
         } else if (args.length == 4 && args[0].equals("jar")) {
             verifyJar(Path.of(args[1]), List.of(args[2].split(",")), Path.of(args[3]));
         } else throw new IllegalArgumentException("Use verify <manifest> <bundleDir> <platforms> <repo> or jar <jar> <platforms> <repo>");
     }
 
     private static void verifyJar(Path jar, List<String> platforms, Path root) throws IOException {
-        Path temp = Files.createTempDirectory("rtx-jar-verify-");
+        Path temp = Files.createTempDirectory(jar.toAbsolutePath().getParent(), "native-verify-");
         try (var fs = java.nio.file.FileSystems.newFileSystem(jar)) {
             Path top = fs.getPath("/");
             var bundles = manifest(top.resolve("native/manifest.properties"), platforms);
+            verifyTextures(top.resolve("native/textures"), top.resolve("runtime-textures.properties"));
+            require(hash(top.resolve("runtime-textures.properties")).equals(hash(root.resolve("src/main/resources/runtime-textures.properties"))),
+                    "Packaged runtime texture inventory differs from source");
+            require(properties(top.resolve("native-source.properties")).equals(sourceContract()),
+                    "Packaged native contract differs from the compiled source");
             // Fabric's own metadata must name the nested API; its original published
             // archive includes the API modules and their loader metadata recursively.
             String mod = Files.readString(top.resolve("fabric.mod.json"));
@@ -487,7 +543,8 @@ final class NativeBundles {
             for (Bundle b : bundles.values()) {
                 Path local = temp.resolve(b.platform + ".zip");
                 Files.copy(top.resolve("native/bundles/" + b.platform + ".zip"), local);
-                validate(local, b, null);
+                try { validate(local, b, null); }
+                finally { Files.deleteIfExists(local); }
             }
             try (var stream = Files.list(top.resolve("native/bundles"))) {
                 require(stream.count() == platforms.size(), "Unexpected native platform payload");
@@ -503,6 +560,31 @@ final class NativeBundles {
                         Path target = top.resolve(prefix + root.resolve(dir).relativize(source).toString().replace('\\', '/'));
                         require(Files.isRegularFile(target) && hash(target).equals(hash(source)), "Missing/changed packaged file: " + source);
                     }
+                }
+            }
+            Set<String> allowedNative = new HashSet<>(List.of("native/manifest.properties", "native/rtx.conf",
+                    "native/textures/overcast_thunderstorm_bc6u.dds", "native/textures/water_normals_flipbook.dds"));
+            for (String platform : platforms) allowedNative.add("native/bundles/" + platform + ".zip");
+            try (var stream = Files.walk(root.resolve("packaging/rtx-remix"))) {
+                for (Path source : stream.filter(Files::isRegularFile).toList()) {
+                    allowedNative.add("native/rtx-remix/" + root.resolve("packaging/rtx-remix")
+                            .relativize(source).toString().replace('\\', '/'));
+                }
+            }
+            try (var stream = Files.walk(top)) {
+                for (Path path : stream.filter(Files::isRegularFile).toList()) {
+                    String name = top.relativize(path).toString();
+                    require(!name.startsWith("resourcepacks/") && !name.startsWith("texturepacks/"),
+                            "External resource packs must remain local: " + name);
+                    if (name.startsWith("native/")) require(allowedNative.contains(name), "Uninventoried JAR native payload: " + name);
+                    require(!name.endsWith(".zip") || allowedNative.contains(name), "External archive in mod JAR: " + name);
+                }
+            }
+            try (var stream = Files.walk(root.resolve("src/main/resources/assets"))) {
+                for (Path source : stream.filter(Files::isRegularFile).toList()) {
+                    Path target = top.resolve("assets/" + root.resolve("src/main/resources/assets")
+                            .relativize(source).toString().replace('\\', '/'));
+                    require(Files.isRegularFile(target) && hash(target).equals(hash(source)), "Missing/changed renderer asset: " + source);
                 }
             }
             require(!Files.exists(top.resolve("README.md")), "Repository notes must not be packaged");

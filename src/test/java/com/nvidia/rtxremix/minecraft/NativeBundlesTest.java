@@ -182,9 +182,71 @@ class NativeBundlesTest {
     }
 
     @Test
+    void corruptBundledUpdatePreservesTheLiveSdkSettingsAndMarker() throws Exception {
+        Fixture f = fixture("linux64", Map.of());
+        Path nativeRoot = Files.createDirectory(temp.resolve("native"));
+        Path bundles = Files.createDirectory(nativeRoot.resolve("bundles"));
+        Path archive = Files.copy(f.archive, bundles.resolve("linux64.zip"));
+        Files.writeString(nativeRoot.resolve("rtx.conf"), "shipped defaults");
+        Path game = Files.createDirectory(temp.resolve("game"));
+        Path settings = game.resolve("rtx-remix/mods/minecraft-logic/confs/custom.conf");
+        Files.createDirectories(settings.getParent());
+        Files.writeString(settings, "author settings");
+        ShippedPayloadHistory history = ShippedPayloadHistory.parse(java.util.List.of());
+        NativeExtractor.extractIfNeeded(nativeRoot, game, "v1", "remix-sdk-linux64", history, Runnable::run, f.bundle);
+        String marker = Files.readString(game.resolve(".rtx-remix-version"));
+        String installed = NativeBundles.hash(game.resolve("remix-sdk/libremixapi.so"));
+        Files.writeString(archive, "corrupt replacement");
+        assertThrows(IOException.class, () -> NativeExtractor.extractIfNeeded(
+                nativeRoot, game, "v2", "remix-sdk-linux64", history, Runnable::run, f.bundle));
+        assertEquals(marker, Files.readString(game.resolve(".rtx-remix-version")));
+        assertEquals(installed, NativeBundles.hash(game.resolve("remix-sdk/libremixapi.so")));
+        assertEquals("author settings", Files.readString(settings));
+        assertFalse(Files.exists(game.resolve("bundles")));
+    }
+
+    @Test
+    void apiAndPlatformMarkerChangesForceTheBundledInstallPath() throws Exception {
+        Fixture f = fixture("linux64", Map.of());
+        Path nativeRoot = Files.createDirectory(temp.resolve("native"));
+        Path bundles = Files.createDirectory(nativeRoot.resolve("bundles"));
+        Files.copy(f.archive, bundles.resolve("linux64.zip"));
+        Path game = Files.createDirectory(temp.resolve("game"));
+        var history = ShippedPayloadHistory.parse(java.util.List.of());
+        NativeExtractor.extractIfNeeded(nativeRoot, game, "v1", "remix-sdk-linux64", history, Runnable::run, f.bundle);
+        String expected = Files.readString(game.resolve(".rtx-remix-version"));
+        for (String previous : new String[]{expected.replace(f.bundle.api(), "0.0.0"),
+                expected.replace("linux64", "linuxarm64")}) {
+            Files.writeString(game.resolve(".rtx-remix-version"), previous);
+            Files.writeString(game.resolve("remix-sdk/libremixapi.so"), "wrong live payload");
+            NativeExtractor.extractIfNeeded(nativeRoot, game, "v1", "remix-sdk-linux64", history, Runnable::run, f.bundle);
+            assertEquals(expected, Files.readString(game.resolve(".rtx-remix-version")));
+            assertTrue(NativeBundles.installedMatches(game.resolve("remix-sdk"), f.bundle));
+        }
+    }
+
+    @Test
+    void textureInventoryDetectsCorruptionAndMissingPayloads() throws Exception {
+        Path textures = Files.createDirectory(temp.resolve("textures"));
+        Path inventory = temp.resolve("textures.properties");
+        StringBuilder entries = new StringBuilder();
+        for (String name : java.util.List.of("overcast_thunderstorm_bc6u.dds", "water_normals_flipbook.dds")) {
+            Path file = Files.writeString(textures.resolve(name), "fixture DDS");
+            entries.append(name).append('=').append(Files.size(file)).append(':').append(NativeBundles.hash(file)).append('\n');
+        }
+        Files.writeString(inventory, entries.toString());
+        NativeBundles.verifyTextures(textures, inventory);
+        Files.writeString(textures.resolve("water_normals_flipbook.dds"), "corrupt");
+        assertThrows(IOException.class, () -> NativeBundles.verifyTextures(textures, inventory));
+        Files.delete(textures.resolve("water_normals_flipbook.dds"));
+        assertThrows(IOException.class, () -> NativeBundles.verifyTextures(textures, inventory));
+    }
+
+    @Test
     void missingPlatformAndPendingFreezeAreReleaseBlockers() throws Exception {
         Path manifest = temp.resolve("manifest.properties");
-        Files.writeString(manifest, "schema=1\napi=0.16.3\nbridgeAbi=compact-quads-v1\nfreeze=pending\n"
+        Files.writeString(manifest, "schema=1\napi=" + NativeBundles.sourceContract().getProperty("api") + "\nbridgeAbi=source-v1\ninterfacePointers="
+                + NativeBundles.sourceContract().getProperty("interfacePointers") + "\nfreeze=pending\n"
                 + "platforms=linux64,linuxarm64,win64,arm64\nlinux64.status=unavailable\nlinux64.reason=fixture unavailable\n");
         IOException error = assertThrows(IOException.class, () -> NativeBundles.manifest(manifest, NativeBundles.PLATFORMS));
         assertTrue(error.getMessage().contains("linux64: fixture unavailable"));
@@ -200,12 +262,18 @@ class NativeBundlesTest {
         files.put(linux ? "remixbridge.so" : "remixbridge.dll", binary(platform));
         files.put("licenses/MIT.txt", "fixture license\n".getBytes(StandardCharsets.UTF_8));
         files.put("audit.json", "{\"fixture\":true}".getBytes(StandardCharsets.UTF_8));
+        java.io.ByteArrayOutputStream descriptors = new java.io.ByteArrayOutputStream();
+        NativeBundles.jniSignatures().store(descriptors, "JVM fixture descriptors");
+        files.put("jni-signatures.properties", descriptors.toByteArray());
         files.putAll(extras);
-        String metadata = "schema=1\nplatform=" + platform + "\napi=0.16.3\nbridgeAbi=compact-quads-v1\n"
+        String metadata = "schema=1\nplatform=" + platform + "\napi=" + NativeBundles.sourceContract().getProperty("api") + "\nbridgeAbi=source-v1\ninterfacePointers="
+                + NativeBundles.sourceContract().getProperty("interfacePointers") + "\n"
                 + "runtimeSource=" + "1".repeat(40) + "\nbridgeSource=" + "2".repeat(40)
                 + "\nheaderSha256=" + "3".repeat(64) + "\nbridgeSourceSha256=" + "4".repeat(64)
                 + "\nminimumOs=fixture\nminimumVulkan=fixture\nminimumDriver=fixture\n";
         StringBuilder inventory = new StringBuilder("license.fixture=licenses/MIT.txt\n");
+        inventory.append("license.").append(linux ? "libremixapi.so" : "d3d9.dll").append("=licenses/MIT.txt\n");
+        inventory.append("license.").append(linux ? "remixbridge.so" : "remixbridge.dll").append("=licenses/MIT.txt\n");
         for (var e : files.entrySet()) {
             var hash = java.security.MessageDigest.getInstance("SHA-256").digest(e.getValue());
             inventory.append("file.").append(e.getKey().replace("\\", "\\\\")).append('=')
@@ -221,7 +289,7 @@ class NativeBundlesTest {
                 out.closeEntry();
             }
         }
-        NativeBundles.Bundle b = new NativeBundles.Bundle(platform, NativeBundles.API, NativeBundles.BRIDGE_ABI,
+        NativeBundles.Bundle b = new NativeBundles.Bundle(platform, NativeBundles.sourceContract().getProperty("api"), "source-v1", NativeBundles.sourceContract().getProperty("interfacePointers"),
                 "1".repeat(40), "2".repeat(40), "3".repeat(64), "4".repeat(64),
                 URI.create("https://example.invalid/v1/" + platform + ".zip"), NativeBundles.hash(archive),
                 Files.size(archive), files.values().stream().mapToLong(a -> a.length).sum(), "fixture", "fixture", "fixture");
@@ -229,7 +297,7 @@ class NativeBundlesTest {
     }
 
     private NativeBundles.Bundle repin(NativeBundles.Bundle b, Path archive, URI url) throws IOException {
-        return new NativeBundles.Bundle(b.platform(), b.api(), b.bridgeAbi(), b.runtimeSource(), b.bridgeSource(),
+        return new NativeBundles.Bundle(b.platform(), b.api(), b.bridgeAbi(), b.interfacePointers(), b.runtimeSource(), b.bridgeSource(),
                 b.headerSha256(), b.bridgeSourceSha256(), url, NativeBundles.hash(archive), Files.size(archive),
                 b.unpackedBytes(), b.minimumOs(), b.minimumVulkan(), b.minimumDriver());
     }

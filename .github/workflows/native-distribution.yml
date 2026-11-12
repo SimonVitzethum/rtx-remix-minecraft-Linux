@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: native distribution gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - { platform: linux64, os: ubuntu-24.04, javaArch: x64, bridge: remixbridge.so }
+          - { platform: linuxarm64, os: ubuntu-24.04-arm, javaArch: aarch64, bridge: remixbridge.so }
+          - { platform: win64, os: windows-latest, javaArch: x64, bridge: remixbridge.dll }
+          - { platform: arm64, os: windows-11-arm, javaArch: aarch64, bridge: remixbridge.dll }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '25'
+          architecture: ${{ matrix.javaArch }}
+      - name: Verify the pinned native archive and Java facade
+        shell: bash
+        run: ./gradlew verifyNativeBundles test -Parch=${{ matrix.platform }} --no-daemon --max-workers=1
+      - name: Stage a verified native probe payload
+        shell: bash
+        run: >-
+          java -cp "build/classes/java/main${{ runner.os == 'Windows' && ';' || ':' }}build/resources/main"
+          com.nvidia.rtxremix.minecraft.NativeBundles
+          unpack packaging/native-bundles/manifest.properties build/native-bundles
+          ${{ matrix.platform }} build/native-probe
+      - name: Compile the CPU-only JNI probe
+        shell: bash
+        run: javac -cp build/classes/java/main -d build/native-probe-classes packaging/native-bundles/NativeBridgeProbe.java
+      - name: CPU-only native JNI loading (no Vulkan or runtime initialization)
+        shell: bash
+        run: >-
+          java --enable-native-access=ALL-UNNAMED
+          -cp "build/native-probe-classes${{ runner.os == 'Windows' && ';' || ':' }}build/classes/java/main"
+          NativeBridgeProbe build/native-probe/${{ matrix.bridge }}
+
+  universal:
+    needs: platform
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Build and verify the one drop-in JAR for all four platforms
+        run: ./gradlew build --no-daemon --max-workers=1

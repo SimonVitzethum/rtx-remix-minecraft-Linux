@@ -150,11 +150,32 @@ public final class NativeExtractor {
             }
             String platform = NativeBundles.platform(System.getProperty("os.name"), System.getProperty("os.arch"));
             Path nativeRoot = container.getRootPaths().get(0).resolve(JAR_NATIVE_ROOT);
+            if (FabricLoader.getInstance().isDevelopmentEnvironment() && !Files.isDirectory(nativeRoot)) {
+                // runClient explicitly depends on setupRuntime. A development class
+                // directory has no distributable payload; runtime initialization is
+                // still responsible for rejecting a mismatched staged C API.
+                Path sdk = FabricLoader.getInstance().getGameDir().resolve("remix-sdk");
+                String runtime = platform.startsWith("linux") ? "libremixapi.so" : "d3d9.dll";
+                String bridge = platform.startsWith("linux") ? "remixbridge.so" : "remixbridge.dll";
+                NativeBundles.require(Files.isRegularFile(sdk.resolve(runtime)) && Files.isRegularFile(sdk.resolve(bridge)),
+                        "Run setupRuntime explicitly before a development launch.");
+                LOGGER.info("Using the explicitly staged development runtime; this does not certify a release bundle.");
+                return true;
+            }
+            NativeBundles.verifyTextures(nativeRoot.resolve("textures"), nativeRoot.getParent().resolve("runtime-textures.properties"));
             NativeBundles.Bundle bundle = NativeBundles.manifest(nativeRoot.resolve("manifest.properties"),
                     java.util.List.of(platform)).get(platform);
-            extractIfNeeded(nativeRoot, FabricLoader.getInstance().getGameDir(),
-                    container.getMetadata().getVersion().getFriendlyString(), "remix-sdk-" + platform,
-                    ShippedPayloadHistory.loadBundled(), RETIRED_SDK_CLEANUP, bundle);
+            Path gameDir = FabricLoader.getInstance().getGameDir();
+            NativeBundles.safeDirectory(gameDir);
+            Path installLock = gameDir.resolve(".rtx-remix-install.lock");
+            NativeBundles.regularOrAbsent(installLock);
+            try (var channel = java.nio.channels.FileChannel.open(installLock,
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
+                 var lock = channel.tryLock()) {
+                NativeBundles.require(lock != null, "Another RTX Remix installation is active in this game directory.");
+                extractIfNeeded(nativeRoot, gameDir, container.getMetadata().getVersion().getFriendlyString(),
+                        "remix-sdk-" + platform, ShippedPayloadHistory.loadBundled(), RETIRED_SDK_CLEANUP, bundle);
+            }
             return true;
         } catch (Exception e) {
             LOGGER.error("Native extraction failed; the mod may not function correctly. "
@@ -173,7 +194,7 @@ public final class NativeExtractor {
         extractIfNeeded(nativeRoot, gameDir, modVersion, archDir, history, retiredSdkCleanup, null);
     }
 
-    private static void extractIfNeeded(Path nativeRoot, Path gameDir, String modVersion, String archDir,
+    static void extractIfNeeded(Path nativeRoot, Path gameDir, String modVersion, String archDir,
                                        ShippedPayloadHistory history, Executor retiredSdkCleanup,
                                        NativeBundles.Bundle bundle) throws IOException {
         NativeBundles.safeDirectory(gameDir);
@@ -189,7 +210,7 @@ public final class NativeExtractor {
         AtomicInteger fileCount = new AtomicInteger();
         AtomicLong totalBytes = new AtomicLong();
         AtomicInteger keptCount = new AtomicInteger();
-        NativeBundles.rejectLink(versionFile);
+        NativeBundles.regularOrAbsent(versionFile);
         NativeBundles.rejectLink(remixSdkDir);
         if (Files.exists(versionFile)) {
             String existing = Files.readString(versionFile).strip();
@@ -354,7 +375,7 @@ public final class NativeExtractor {
      */
     static boolean restoreMissingRtxConf(Path nativeRoot, Path gameDir) throws IOException {
         Path liveConf = gameDir.resolve(RTX_CONF);
-        NativeBundles.rejectLink(liveConf);
+        NativeBundles.regularOrAbsent(liveConf);
         if (Files.exists(liveConf)) {
             return false;
         }

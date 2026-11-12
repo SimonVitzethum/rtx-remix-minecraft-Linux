@@ -192,7 +192,54 @@ test {
 def gitBranch = providers.exec { commandLine 'git', 'rev-parse', '--abbrev-ref', 'HEAD' }
         .standardOutput.asText.map { it.trim() }
 
+// Embed the exact compiled native source contract, derived from the copied
+// header rather than assuming a permanent API patch or vtable extent.
+def nativeSourceList = file('packaging/native-bundles/source-files.txt')
+def nativeSources = nativeSourceList.readLines().findAll { !it.isBlank() }
+def nativeContractDir = layout.buildDirectory.dir('generated/native-contract')
+def generateNativeContract = tasks.register('generateNativeContract') {
+    inputs.file(nativeSourceList)
+    inputs.files(nativeSources.collect { file("rtxremix-java/native/${it}") })
+    outputs.dir(nativeContractDir)
+    doLast {
+        def header = file('rtxremix-java/native/include/remix_c.h')
+        def text = header.getText('UTF-8')
+        def versionParts = ['MAJOR', 'MINOR', 'PATCH'].collect { part ->
+            def found = text =~ /#define REMIXAPI_VERSION_${part}\s+(\d+)/
+            if (!found.find()) throw new GradleException("Missing C API version ${part}")
+            found.group(1)
+        }
+        def table = text =~ /(?s)typedef\s+struct\s+remixapi_Interface\s*\{(.*?)\}\s*remixapi_Interface\s*;/
+        if (!table.find()) throw new GradleException('Cannot identify the C API interface contract')
+        def body = table.group(1).replaceAll(/(?s)\/\*.*?\*\//, '').replaceAll(/(?m)\/\/.*$/, '')
+        def fieldPattern = /PFN_\w+\s+\w+\s*;/
+        def pointers = (body =~ fieldPattern).count
+        if (!body.replaceAll(fieldPattern, '').isBlank() || pointers == 0) {
+            throw new GradleException('Unknown C API interface layout: update the source contract parser')
+        }
+        def hash = { File input ->
+            def digest = java.security.MessageDigest.getInstance('SHA-256')
+            input.withInputStream { stream ->
+                byte[] buffer = new byte[65536]
+                int n
+                while ((n = stream.read(buffer)) != -1) digest.update(buffer, 0, n)
+            }
+            digest.digest().encodeHex().toString()
+        }
+        def sourcesHash = java.security.MessageDigest.getInstance('SHA-256')
+        nativeSources.each { name ->
+            sourcesHash.update((name + '\n' + hash(file("rtxremix-java/native/${name}")) + '\n').getBytes('UTF-8'))
+        }
+        def output = new File(nativeContractDir.get().asFile, 'native-source.properties')
+        output.parentFile.mkdirs()
+        output.text = "api=${versionParts.join('.')}\nbridgeAbi=source-v1\ninterfacePointers=${pointers}\n" +
+                "headerSha256=${hash(header)}\nbridgeSourceSha256=${sourcesHash.digest().encodeHex()}\n"
+    }
+}
+sourceSets.main.resources.srcDir(nativeContractDir)
+
 processResources {
+    dependsOn generateNativeContract
     // Repository-only asset notes contain relative links, not runtime resources.
     exclude 'README.md'
     inputs.property "version", resolvedBuildVersion
@@ -210,6 +257,7 @@ processResources {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = 25
+    options.headerOutputDirectory.set(layout.buildDirectory.dir('generated/jni'))
     options.compilerArgs += ["-Xmaxerrs", "20000"]
 }
 
@@ -382,6 +430,26 @@ def fetchRuntimeTexturesTask = tasks.register('fetchRuntimeTextures', Exec) {
     }
 }
 
+fetchRuntimeTexturesTask.configure {
+    inputs.file('src/main/resources/runtime-textures.properties')
+    doLast {
+        def inventory = new Properties()
+        file('src/main/resources/runtime-textures.properties').withInputStream { inventory.load(it) }
+        runtimeTextureFiles.each { name ->
+            def texture = new File(file(runtimeTexturesDir), name)
+            def digest = java.security.MessageDigest.getInstance('SHA-256')
+            texture.withInputStream { input ->
+                byte[] buffer = new byte[65536]
+                int n
+                while ((n = input.read(buffer)) != -1) digest.update(buffer, 0, n)
+            }
+            if (inventory.getProperty(name) != texture.length() + ':' + digest.digest().encodeHex().toString()) {
+                throw new GradleException("Runtime texture size/SHA-256 mismatch: ${name}")
+            }
+        }
+    }
+}
+
 def syncRuntimeTexturesTask = tasks.register('syncRuntimeTextures', Sync) {
     dependsOn fetchRuntimeTexturesTask
     from runtimeTexturesDir
@@ -519,6 +587,8 @@ def verifyNativeBundles = tasks.register('verifyNativeBundles', JavaExec) {
             buildArches.join(','), projectDir.absolutePath
 }
 
+fetchRuntimeTexturesTask.configure { mustRunAfter verifyNativeBundles }
+
 def verifyFabricApi = tasks.register('verifyFabricApi') {
     def api = configurations.detachedConfiguration(dependencies.create(fabricApiCoordinate))
     api.transitive = false
@@ -551,10 +621,12 @@ def packageJarTask = tasks.register('packageJar', Zip) {
     archiveBaseName.set(projectArchiveName)
     archiveVersion.set(resolvedBuildVersion)
     archiveExtension.set('jar')
+    archiveFileName.set("${projectArchiveName}-${archProperty ?: 'universal'}.jar")
     destinationDirectory.set(layout.buildDirectory.dir('libs'))
     duplicatesStrategy = DuplicatesStrategy.FAIL
     preserveFileTimestamps = false
     reproducibleFileOrder = true
+    zip64 = true
     from({ zipTree(remapJarTask.get().archiveFile.get().asFile) })
     from(nativeManifest) { into 'native'; rename { 'manifest.properties' } }
     buildArches.each { arch ->
