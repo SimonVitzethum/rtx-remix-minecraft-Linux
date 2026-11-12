@@ -104,12 +104,15 @@ final class NativeBundles {
         Map<String, Bundle> bundles = new LinkedHashMap<>();
         for (String arch : selected) {
             String prefix = arch + ".";
-            URI url;
-            try { url = URI.create(required(p, prefix + "url")); }
-            catch (IllegalArgumentException e) { throw new IOException("Invalid bundle URL for " + arch, e); }
-            require("https".equals(url.getScheme()) && url.getHost() != null && url.getUserInfo() == null
-                    && url.getFragment() == null, "Bundle URL must be versioned HTTPS: " + arch);
-            require(!url.getPath().matches("(?i).*/latest(/.*)?"), "Mutable latest bundle URLs are forbidden");
+            URI url = null;
+            String download = p.getProperty(prefix + "url", "").trim();
+            if (!download.isEmpty()) {
+                try { url = URI.create(download); }
+                catch (IllegalArgumentException e) { throw new IOException("Invalid bundle URL for " + arch, e); }
+                require("https".equals(url.getScheme()) && url.getHost() != null && url.getUserInfo() == null
+                        && url.getFragment() == null, "Bundle URL must be versioned HTTPS: " + arch);
+                require(!url.getPath().matches("(?i).*/latest(/.*)?"), "Mutable latest bundle URLs are forbidden");
+            }
             bundles.put(arch, new Bundle(arch, p.getProperty("api"), p.getProperty("bridgeAbi"), p.getProperty("interfacePointers"), runtimeSource, bridgeSource, header, bridgeHash,
                     url, hex(p, prefix + "sha256", 64), number(p, prefix + "bytes", MAX_ARCHIVE),
                     number(p, prefix + "unpackedBytes", MAX_UNPACKED), required(p, prefix + "minimumOs"),
@@ -152,7 +155,10 @@ final class NativeBundles {
                     require(Files.isRegularFile(bundled, NO_LINKS) && Files.size(bundled) == b.bytes,
                             "Bundled native archive size mismatch");
                     Files.copy(bundled, part, StandardCopyOption.REPLACE_EXISTING);
-                } else download(b, part, loopbackFixture);
+                } else {
+                    require(b.url != null, "No bundled or cached native package and no published HTTPS download for " + b.platform);
+                    download(b, part, loopbackFixture);
+                }
                 validate(part, b, null);
                 Files.move(part, target, StandardCopyOption.ATOMIC_MOVE);
                 return target;

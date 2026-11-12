@@ -104,6 +104,42 @@ class NativeBundlesTest {
     }
 
     @Test
+    void aBundledOnlyArchiveNeedsNoInventedDownloadUrl() throws Exception {
+        Fixture f = fixture("linux64", Map.of());
+        var bundledOnly = repin(f.bundle, f.archive, null);
+        assertEquals(f.archive, NativeBundles.acquire(bundledOnly, f.archive, temp.resolve("offline-cache")));
+        var manifest = new java.util.Properties();
+        manifest.putAll(NativeBundles.sourceContract());
+        manifest.setProperty("schema", "1");
+        manifest.setProperty("freeze", "final");
+        manifest.setProperty("platforms", String.join(",", NativeBundles.PLATFORMS));
+        manifest.setProperty("runtimeSource", "1".repeat(40));
+        manifest.setProperty("bridgeSource", "2".repeat(40));
+        for (String platform : NativeBundles.PLATFORMS) {
+            manifest.setProperty(platform + ".status", platform.equals("linux64") ? "available" : "unavailable");
+            manifest.setProperty(platform + ".reason", "Not yet published");
+        }
+        manifest.setProperty("linux64.sha256", bundledOnly.sha256());
+        manifest.setProperty("linux64.bytes", Long.toString(bundledOnly.bytes()));
+        manifest.setProperty("linux64.unpackedBytes", Long.toString(bundledOnly.unpackedBytes()));
+        for (String field : java.util.List.of("minimumOs", "minimumVulkan", "minimumDriver")) {
+            manifest.setProperty("linux64." + field, "fixture");
+        }
+        Path path = temp.resolve("bundled-only.properties");
+        try (var out = Files.newOutputStream(path)) { manifest.store(out, "fixture"); }
+        assertDoesNotThrow(() -> NativeBundles.verifyBootstrapManifest(path));
+        assertNull(NativeBundles.manifest(path, java.util.List.of("linux64")).get("linux64").url());
+        assertThrows(IOException.class, () -> NativeBundles.manifest(path, NativeBundles.PLATFORMS));
+
+        IOException unavailable = assertThrows(IOException.class, () -> NativeBundles.acquire(bundledOnly,
+                temp.resolve("not-bundled.zip"), temp.resolve("uncached")));
+        assertTrue(unavailable.getMessage().contains("no published HTTPS download for linux64"));
+        try (var files = Files.list(temp.resolve("uncached"))) {
+            assertTrue(files.noneMatch(path -> path.toString().endsWith(".part")));
+        }
+    }
+
+    @Test
     void cacheWorksOfflineAndAnActualTransferFailureLeavesNoPartialArchive() throws Exception {
         Fixture f = fixture("linux64", Map.of());
         byte[] archive = Files.readAllBytes(f.archive);

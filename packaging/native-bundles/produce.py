@@ -241,7 +241,8 @@ def freeze(args):
     for platform in PLATFORMS:
         pin = dict(line.split("=", 1) for line in (args.pins / (platform + ".pin.properties")).read_text().splitlines() if line)
         require(pin["platform"] == platform, "Wrong platform pin")
-        require(pin["url"].startswith("https://") and "/latest/" not in pin["url"], "Need a real immutable HTTPS asset URL")
+        require(not pin["url"] or pin["url"].startswith("https://") and "/latest/" not in pin["url"],
+                "Download URLs must name real immutable HTTPS assets; omit the URL for bundled-only delivery")
         archive = args.pins / (platform + ".zip")
         require(sha(archive) == pin["sha256"] and archive.stat().st_size == int(pin["bytes"]), "Bundle changed since producer audit")
         pins[platform] = pin
@@ -268,7 +269,7 @@ def main():
     seal.add_argument("--minimum-windows", default="Windows-11")
     seal.add_argument("--minimum-vulkan", required=True)
     seal.add_argument("--minimum-driver", required=True)
-    seal.add_argument("--url", required=True)
+    seal.add_argument("--url", default="", help="Actual immutable HTTPS asset, or omitted for bundled-only delivery")
     seal.set_defaults(run=produce)
     combine = sub.add_parser("freeze")
     combine.add_argument("--pins", type=Path, required=True)

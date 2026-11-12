@@ -77,7 +77,7 @@ selects exactly Linux/Windows and x86-64/ARM64 (`amd64`, `x86_64`, `aarch64`,
 `arm64`). Unsupported hosts get an error without an x86 fallback. Pure ARM64 PE
 machine `0xAA64` is required; ARM64EC `0xA641` is rejected.
 
-Bundled archives are preferred. The manifest also permits a versioned HTTPS
+Bundled archives are preferred. Their download URL may be omitted for fully bundled offline delivery. The manifest also permits an actual versioned HTTPS
 fallback, pinned by SHA-256 and exact byte counts. It never fetches `latest` or
 remote manifests, executes a download, or invokes a C/C++ compiler. Shader/cache
 compilation is permitted. The verified cache is under `.rtx-remix-cache/` in
