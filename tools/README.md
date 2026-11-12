@@ -1,5 +1,30 @@
 # Developer Tooling
 
+## Native Linux / Minecraft 26.3
+
+The port builds and runs natively on Linux x86-64. Use a 64-bit JDK 25 and
+[`linux/rtx.sh`](linux/rtx.sh) for the Linux development instance. Wine, Proton
+and the Windows `.bat` launcher are not needed. Stage the native runtime first:
+
+```bash
+tools/stage_linux_runtime.sh ../dxvk-remix ../dxvk-deps
+tools/linux/rtx.sh status
+tools/linux/rtx.sh launch
+```
+
+Run these commands from the repository root. `launch` builds and installs the
+mod into Prism; sign in to Prism first. `precompile` runs the shader precompiler,
+and `instance` creates the instance without launching. See
+[Linux setup](../docs/GETTING_STARTED.md#linux) for dependencies and
+[Linux Performance](../docs/LINUX_PERFORMANCE.md) for measured FPS, package
+hashes, Frame Generation semantics and incomplete-coverage limitations.
+
+GPU measurements must run without another game or compute workload. Record the
+actual renderer settings, output/internal resolutions, loaded pack and native
+library hashes. Keep profiling/diagnostic intervals separate from frame-rate
+measurements. The remaining `rtx.bat` examples describe the upstream Windows
+tooling; they are not Linux shell commands.
+
 This directory contains the launch, benchmark, and profiling tools for RTX
 Remix for Minecraft. The Gradle build and the packaged mod do not depend on
 this directory. The tools launch Minecraft through Prism Launcher, signed in to
@@ -18,7 +43,7 @@ reference private hosts, credentials, CI runners or bundles.
 messages for the leak patterns it knows, such as hosts and ticket keys; review
 covers the rest.
 
-## Recommended Developer First Run
+## Windows Developer First Run
 
 Run commands from the repository root on Windows. A normal clone includes the
 Java wrapper and JNI sources tracked at root `rtxremix-java/`; the launcher
@@ -242,13 +267,11 @@ directory while a different instance is actually running.
   one line is not an event count. The shipped
   [`rtx.conf`](../packaging/rtx.conf) disables opacity micromaps, so confirm the
   effective setting and runtime revision when investigating it.
-- Development launches run `javaw.exe` from a JDK 21 through Prism, which
-  refuses other Java versions for Minecraft 1.21.1: `JAVA_HOME` when it is a
-  JDK 21 for the launch's architecture, else the newest such JDK in Gradle's
-  toolchains, then the Eclipse Adoptium, Microsoft, and Java folders under
-  Program Files. A per-executable driver profile must target that executable,
-  not only another Java a player launcher may use. Record the process path
-  along with the driver version.
+- Minecraft 26.3 uses JDK 25. The Linux entry point discovers it through
+  `JAVA25_HOME`, `JAVA_HOME` or installed JDKs. Legacy Windows helpers may retain
+  older Java discovery rules; verify the actual Java executable rather than
+  assuming a launcher selected the right version. Record its path and version
+  alongside the driver version.
 
 [Development clients](docs/LAUNCHER.md#development-clients) covers PID ownership,
 shared-machine safety, background frame limits, and scripted input.

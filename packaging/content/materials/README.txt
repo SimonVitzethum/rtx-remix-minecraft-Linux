@@ -14,6 +14,12 @@ maps are that mod's own addition.
 
 RTX Remix for Minecraft: https://github.com/NVIDIAGameWorks/rtx-remix-minecraft
 
+Native Linux / Minecraft 26.3 community port:
+https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux
+The resource pack is platform-independent. Linux setup and dated performance
+measurements are linked from that fork's main README; the pack itself contains
+no executable Linux runtime. Original NVIDIA attribution and licensing remain.
+
 
 Install
 -------

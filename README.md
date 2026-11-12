@@ -1,17 +1,63 @@
-# RTX Remix for Minecraft
+# RTX Remix for Minecraft — Native Linux, Minecraft 26.3
 
-Play Minecraft Java Edition 26.3 with real-time path tracing on a GeForce RTX
-GPU, powered by NVIDIA RTX Remix.
+**Play Minecraft Java Edition 26.3 with RTX Remix path tracing natively on
+Linux x86-64. Wine and Proton are not required.** This community fork includes
+the Fabric integration, Vulkan and OpenGL backends, Java/JNI bridge, and Linux
+build and packaging tools.
+
+Path tracing, DLSS Ray Reconstruction and Frame Generation have been exercised
+in real Linux sessions on an NVIDIA GeForce RTX 5070 Laptop GPU. This is an
+actively developed port; hardware compatibility and every block/entity state
+have not been fully validated.
+
+## Linux Source Branches
+
+| Branch | Contents |
+|---|---|
+| [`main`](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/tree/main) | Published native Linux / Minecraft 26.3 development snapshot |
+| [`mc-26.3-linux`](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/tree/mc-26.3-linux) | Mod, Java/JNI bridge and GPU-DAG development |
+| [`runtime/native-linux`](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/tree/runtime/native-linux) | Companion native dxvk-remix runtime; clone into a separate directory |
+
+Far terrain resides in device-local DAG pages without a persistent Java
+chunk/DAG cache or a complete native scene mirror. The measured reference build
+constructs these pages in temporary native CPU workspaces. **Full GPU DAG
+construction, GPU-built near-terrain meshes and GPU-driven scene scheduling
+are still in development.** A tested GPU node-interning kernel alone is not
+an integrated GPU terrain builder.
+
+## Measured Linux Performance
+
+Preliminary measurements from **November 12, 2026**: **RTX 5070 Laptop GPU,
+8 GiB VRAM**, Linux, NVIDIA **615.78.08**, Java **25.0.5**, 4 GiB Java heap,
+**1920×1080 output / 960×540 internal**, DLSS Ray Reconstruction, up to two
+generated frames per rendered frame, Simplista 64x R36, simulation distance 8.
+The workload requested **32 RTX chunks plus DAG terrain out to 512 chunks**.
+
+| Phase, CPU-built DAG reference `ad84df0` | Rendered FPS | Native presents/s including FG | Render-span p99 | Longest render span |
+|---|---:|---:|---:|---:|
+| Stationary, 6,000 frames | 30.43 | 91.29 | 78.21 ms | 128.86 ms |
+| Movement, 3,601 frames | 20.76 | 62.29 | 126.51 ms | 255.74 ms |
+
+Presents are measured native submission counters, not monitor scanout or
+additional independently rendered frames. Render spans are CPU/wall time,
+not isolated GPU timings. The 544-block outward and return camera path with
+rotation completed with Java exit 0, but terrain buildup did not converge.
+Full 512 coverage and visible RTX pixels through the complete 32-chunk radius
+are **not proven**. Image/coverage review remains pending and JFR export failed.
+These are provisional reference results, **not GPU-DAG results or a proven
+speedup**. See [Linux Performance](docs/LINUX_PERFORMANCE.md) for package hashes,
+historical runs, memory pressure, the chart and downloadable measurement data.
 
 ## What To Expect
 
-This is a beta. It was built as a technology showcase, but we love Minecraft
+This community Linux port is a development build of NVIDIA's beta showcase.
+The original project was built as a technology showcase, but we love Minecraft
 and want it to succeed as a rendering mod. We tuned it against one showcase
 world, built for this project by [BlockWorks](https://www.blockworks.uk/) (see
 [Showcase World And Materials Pack](#showcase-world-and-materials-pack)), and the places
 that world visits are where it looks and runs best. We have worked hard to fix
 as many issues as we could, but it ships with
-[known issues](https://github.com/NVIDIAGameWorks/rtx-remix-minecraft/issues),
+[known issues](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/issues),
 and there are certainly bugs yet to be discovered.
 
 Three areas have had less attention than the rest:
@@ -28,7 +74,11 @@ We hope the community helps fill it out. If something breaks,
 [report it](docs/PLAYING.md#reporting-a-bug); if you can fix it, see
 [Contributing](#contributing).
 
-## Download
+## Upstream Windows Download
+
+This section describes NVIDIA's original Windows distribution and optional
+showcase content. It does not install this fork's native Linux runtime.
+Linux users should follow [Linux](#linux) below.
 
 Download the installer bundle, `rtx-remix-renderer-<version>-installer.zip`,
 from the
@@ -37,7 +87,7 @@ It holds the mod, the
 [RTX Remix Materials pack and the RTX Remix Showcase World](#showcase-world-and-materials-pack),
 and the installer that sets them up.
 
-## Install in four steps
+## Upstream Windows Installation
 
 1. Extract the installer bundle.
 2. Double-click `install.bat` and follow the menu. Pick a launcher, keep
@@ -54,12 +104,15 @@ The step-by-step version, with launcher advice and troubleshooting, is in
 
 - Windows 10 or 11, x64 or ARM64, or native Linux x64.
 - Minecraft Java Edition 26.3, on a Microsoft account that owns the game.
-- A GeForce RTX 30-series or newer GPU with NVIDIA driver 616.92 or newer.
+- A compatible NVIDIA GeForce RTX GPU and Vulkan driver. Linux measurements
+  used an RTX 5070 Laptop GPU with driver 615.78.08. Upstream Windows releases
+  specify their own GPU and driver requirements.
 - About 5 GB of free disk space while installing; about 3 GB stays in use.
 - An internet connection while the installer runs.
 - 16 GB of system memory is recommended.
 
-Java 25, Fabric, and the RTX Remix runtime are installed for you.
+The upstream installer manages Java, Fabric and its Windows runtime. The native
+Linux source workflow requires JDK 25 and a separately built Linux runtime.
 
 Building and running from source has its own
 [prerequisites](docs/GETTING_STARTED.md#prerequisites), including Prism
@@ -72,15 +125,47 @@ with `-Parch=linux64` and stage the natively built dxvk-remix runtime with
 `tools/stage_linux_runtime.sh`; see
 [Getting Started](docs/GETTING_STARTED.md#linux).
 
+Clone the mod and the companion runtime into sibling directories:
+
+```bash
+git clone git@github.com:SimonVitzethum/rtx-remix-minecraft-Linux.git rtx-remix-minecraft
+git clone --single-branch --branch runtime/native-linux \
+  git@github.com:SimonVitzethum/rtx-remix-minecraft-Linux.git dxvk-remix
+```
+
+Build the runtime using its
+[Linux build guide](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/blob/runtime/native-linux/documentation/LinuxBuild.md).
+From the mod checkout, with `JAVA_HOME` pointing to a **64-bit JDK 25**:
+
+```bash
+tools/stage_linux_runtime.sh ../dxvk-remix ../dxvk-deps
+"$JAVA_HOME/bin/java" -cp gradle/wrapper/gradle-wrapper.jar \
+  org.gradle.wrapper.GradleWrapperMain build test package verifyPackageJar -Parch=linux64
+tools/linux/rtx.sh launch
+```
+
+The launcher builds and installs into a development Prism instance. Distribution
+JARs are written under `build/distributions/`; the lightweight `build/libs/`
+JAR is not the packaged Linux release. Sign in to Prism with an account that
+owns Minecraft before launching. Do not replace a live game's native libraries.
+
 Windowing follows the `LinuxWindowPlatform` JVM flag: `-Drtxremix.wayland=true`
 selects Wayland, `-Drtxremix.wayland=false` selects X11/XWayland. Precompile
 shaders before the game starts with `tools/linux/precompile.sh <game dir>`; in
 Prism Launcher set the pre-launch command to
 `bash "$INST_MC_DIR/remix-sdk/precompile.sh" "$INST_MC_DIR"`.
 
-On Linux, DLSS frame generation, DLSS neural reconstruction, XeSS, NRC, Reflex,
-and Aftermath are unavailable; DLSS super resolution and ray reconstruction,
-TAAU, and NIS work. A 12 GiB Java heap is recommended.
+DLSS Super Resolution, Ray Reconstruction and Frame Generation have been
+exercised on Linux; availability depends on the GPU, driver and SDK. XeSS,
+NRC, Reflex, Aftermath and NVAPI are compiled out, and RTXIO is disabled.
+The measurement host has 32 GiB RAM and used a 4 GiB Java heap. Leave memory
+for native allocations, the integrated server and the driver rather than
+reserving all RAM for Java.
+
+Exact Vanilla Endportal/Gateway screen projection, darker portal particles,
+additional block/entity states and complete 512/32 validation remain open.
+Cluster acceleration structures are experimental and opt-in. No general
+game-performance improvement is claimed for them.
 
 ## Crash Reports And Privacy
 
@@ -93,7 +178,7 @@ what is sent.
 
 ## What it does
 
-**Every block, mob, and item is lit by a path tracer.** Light bounces off walls,
+**Captured blocks, mobs and items are lit by a path tracer.** Light bounces off walls,
 through glass, and out of torches the way it does in a film renderer, so shadows,
 reflections, and the colour a nearby block casts on its neighbours are all
 computed rather than painted in.
@@ -147,7 +232,7 @@ To add either by hand, take `RTX-Remix-Materials-<version>.zip` or
 | You want to | Read |
 |---|---|
 | Play with path tracing | [Playing](docs/PLAYING.md) |
-| Check the known issues | [Issue tracker](https://github.com/NVIDIAGameWorks/rtx-remix-minecraft/issues) |
+| Check the known issues | [Issue tracker](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/issues) |
 | Play on a server | [Multiplayer](docs/PLAYING.md#multiplayer) |
 | Configure the renderer | [Settings](docs/SETTINGS.md) |
 | Look up a command, a key, or a mod-added block | [In-Game Guide](docs/IN_GAME_GUIDE.md) |
@@ -156,6 +241,7 @@ To add either by hand, take `RTX-Remix-Materials-<version>.zip` or
 | Record a camera flythrough | [Camera Paths](docs/CAMERA_PATHS.md) |
 | Install, repair, or uninstall in detail | [packaging/INSTALL.md](packaging/INSTALL.md) |
 | Build and run from source | [Getting Started](docs/GETTING_STARTED.md) |
+| Check native Linux FPS and measurement limits | [Linux Performance](docs/LINUX_PERFORMANCE.md) |
 | Tune the developer knobs behind the renderer | [Tuning](docs/TUNING.md) |
 | Diagnose a rendering or native integration problem | [Rendering Diagnostics](docs/RENDERING_DIAGNOSTICS.md) |
 | Contribute a change | [CONTRIBUTING.md](CONTRIBUTING.md) |
@@ -191,6 +277,10 @@ for the full guidelines.
 
 ## License
 
+This community fork builds on
+[NVIDIA RTX Remix for Minecraft](https://github.com/NVIDIAGameWorks/rtx-remix-minecraft)
+and [dxvk-remix](https://github.com/NVIDIAGameWorks/dxvk-remix). Report fork-specific
+issues on the [Linux fork tracker](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/issues).
 This project is licensed under the Apache License, Version 2.0 (`Apache-2.0`).
 See the [LICENSE](LICENSE) file. Attribution notices are in [NOTICE](NOTICE),
 and third-party software distributed with this project is documented in

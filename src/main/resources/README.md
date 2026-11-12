@@ -1,5 +1,11 @@
 # Built-In LabPBR Textures
 
+These platform-independent assets ship with the native Linux / Minecraft 26.3
+mod as well as other supported builds. See the [project README](../../../README.md)
+for Linux setup and [Linux Performance](../../../docs/LINUX_PERFORMANCE.md) for
+dated renderer measurements. A resource pack's texture coverage does not prove
+that every block state has been visually validated.
+
 The mod JAR supplies the baseline LabPBR textures through Fabric's `fabric`
 resource pack, below user packs. No separate baseline pack needs enabling.
 

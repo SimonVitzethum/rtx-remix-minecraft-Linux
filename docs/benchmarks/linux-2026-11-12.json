@@ -1,0 +1,203 @@
+{
+  "schema": 1,
+  "measurement_date": "2026-11-12",
+  "status": "provisional_measurements_not_full_512_or_gpu_builder_validation",
+  "counter_semantics": "Actual linuxFrameStats rendered and presented atomics; presented includes FG submissions, not physical monitor scanout. Render spans are Minecraft render entry-to-return CPU/wall durations, not isolated GPU durations.",
+  "common_settings": {
+    "gpu": "NVIDIA GeForce RTX 5070 Laptop GPU",
+    "gpu_memory_mib": 8151,
+    "host_ram_gib": 32,
+    "driver": "615.78.08",
+    "output_resolution": [
+      1920,
+      1080
+    ],
+    "internal_resolution": [
+      960,
+      540
+    ],
+    "java": "25.0.5",
+    "java_heap_mib": 4096,
+    "pack": "Simplista 64x R36",
+    "pack_sha256": "116cdf811c4bf7ab2ff4dfcc981c4a5c51cfe10e6113298366f65ed404d67490",
+    "render_distance_chunks": 32,
+    "simulation_distance_chunks": 8,
+    "requested_dag_distance_chunks": 512,
+    "farfield_width": 2048,
+    "ray_reconstruction": true,
+    "max_generated_frames_per_rendered_frame": 2,
+    "cluster_as_enabled": false,
+    "world_type": "normal NoiseOverworld",
+    "world_seed": 976276056,
+    "movement": "544 blocks outward and back, with camera rotation",
+    "cold_build_limit_seconds": 240,
+    "default_distance_fade_blocks": [
+      358.4,
+      409.6
+    ],
+    "full_512_coverage_proven": false,
+    "full_32_rtx_pixel_coverage_proven": false
+  },
+  "runs": [
+    {
+      "id": "perf512-20261112-085258",
+      "label": "initial_partial",
+      "source_results_sha256": "c61882389d87207ea3640029319d917e4a2735f75a714f59fa8f83288437eab1",
+      "source_results_state": "executed_failed_partial_coverage_and_native_submit_stalls",
+      "jar_sha256": "5db1caec2d13cb41a094ba06ef17b41a5e3be5e181fef1645c29c8cb6e181892",
+      "runtime_commit": "6af1fbd5c336715c5cefb85b9c3c93af5326006a",
+      "runtime_sha256": "2a977bc0068d8c987ed8125d443f369abdb98cb1b7c2e6a494d9156371acbcbe",
+      "jni_sha256": "ad40f114652e080efee598953e43111e5356c1de9ac40cff687a28b0df7d196e",
+      "phases": {
+        "steady": {
+          "rendered_fps": 36.942794843527345,
+          "native_presents_per_second_including_fg": 110.82838453058203,
+          "native_counter_interval_seconds": 162.007233761,
+          "render_span_frames": 6000,
+          "render_span_p50_ms": 22.4486445,
+          "render_span_p95_ms": 58.93996580000001,
+          "render_span_p99_ms": 70.96364417000004,
+          "maximum_completed_render_span_ms": 119.309867
+        },
+        "movement": {
+          "rendered_fps": 16.978066740910695,
+          "native_presents_per_second_including_fg": 50.93420022273208,
+          "native_counter_interval_seconds": 122.393204816,
+          "render_span_frames": 2124,
+          "render_span_p50_ms": 30.128593,
+          "render_span_p95_ms": 73.71532369999998,
+          "render_span_p99_ms": 103.88691587999996,
+          "maximum_completed_render_span_ms": 7152.669589
+        }
+      },
+      "scope_peak_bytes": 9738477568,
+      "sampled_global_vram_peak_mib": 4954,
+      "memory_events": {
+        "low": "0",
+        "high": "466535",
+        "max": "0",
+        "oom": "0",
+        "oom_kill": "0",
+        "oom_group_kill": "0",
+        "sock_throttled": "4"
+      },
+      "java_exit_code": 143,
+      "foreign_gpu_workload_observed": false,
+      "settings_restored": true,
+      "full512_coverage": false,
+      "queue_converged": false,
+      "notes": [
+        "Partial emergency export; return path incomplete; diagnostic tail excluded from primary movement figures.",
+        "Multi-second native submit stalls and substantial MemoryHigh throttling; no isolated root cause established."
+      ]
+    },
+    {
+      "id": "perf512-20261112-112052",
+      "label": "cpu_dag_reference",
+      "source_results_sha256": "927b3a673177b49232ff555e812ad8bdf6a4145ef39060bec02599333f9d8c58",
+      "source_results_state": "measured_requires_visual_and_coverage_review",
+      "jar_sha256": "6fe3b8d3bc2d13694ecdd4eba26f8cd22185c83c7540324801495d9e2d94521a",
+      "runtime_commit": "9e324608d17e85409b2179737d489ffd2b24aa1e",
+      "runtime_sha256": "177de56acdaa06e5c70fcb587e1819d6d288d1ff1349a6d54328c8e976848033",
+      "jni_sha256": "997c1b58a5541f44ae18f0f4e12e374a5e344211c937d9d7ac2af17a8f16055c",
+      "phases": {
+        "steady": {
+          "rendered_fps": 30.43061952121149,
+          "native_presents_per_second_including_fg": 91.29185856363446,
+          "native_counter_interval_seconds": 197.038380892,
+          "render_span_frames": 6000,
+          "render_span_p50_ms": 29.6342645,
+          "render_span_p95_ms": 67.01503360000001,
+          "render_span_p99_ms": 78.20653667,
+          "maximum_completed_render_span_ms": 128.859178
+        },
+        "movement": {
+          "rendered_fps": 20.76266255535717,
+          "native_presents_per_second_including_fg": 62.28798766607151,
+          "native_counter_interval_seconds": 171.991428868,
+          "render_span_frames": 3601,
+          "render_span_p50_ms": 45.464871,
+          "render_span_p95_ms": 88.522371,
+          "render_span_p99_ms": 126.510473,
+          "maximum_completed_render_span_ms": 255.737933
+        }
+      },
+      "scope_peak_bytes": 9665282048,
+      "sampled_global_vram_peak_mib": 5436,
+      "memory_events": {
+        "low": "0",
+        "high": "2799",
+        "max": "0",
+        "oom": "0",
+        "oom_kill": "0",
+        "oom_group_kill": "0",
+        "sock_throttled": "1"
+      },
+      "java_exit_code": 0,
+      "foreign_gpu_workload_observed": false,
+      "settings_restored": true,
+      "full512_coverage": false,
+      "queue_converged": false,
+      "notes": [
+        "6,000 stationary and 3,601 movement frames recorded; full outward/return camera path completed; Java exit 0.",
+        "Terrain buildup did not converge; image/coverage review pending.",
+        "JFR export missing or unusable; no allocation-profile conclusion."
+      ],
+      "mod_commit": "ad84df05d4c1c6fb686bbb9d6b88385b1da8796b"
+    },
+    {
+      "id": "perf512-20261112-114204",
+      "label": "historical_control",
+      "source_results_sha256": "5b75398f4426f8ae81b66d13fa41ea18f5f41b5f33375cfec18f3787c0a32fb9",
+      "source_results_state": "failed_session_with_partial_measurements",
+      "jar_sha256": "2424fb905e3c9054e2837bc6b5d27c45e7c5bfbc403fc648767d3fc38fa98b72",
+      "runtime_commit": "9e324608d17e85409b2179737d489ffd2b24aa1e",
+      "runtime_sha256": "177de56acdaa06e5c70fcb587e1819d6d288d1ff1349a6d54328c8e976848033",
+      "jni_sha256": "ad40f114652e080efee598953e43111e5356c1de9ac40cff687a28b0df7d196e",
+      "phases": {
+        "steady": {
+          "rendered_fps": 34.72968258878852,
+          "native_presents_per_second_including_fg": 104.18904776636556,
+          "native_counter_interval_seconds": 172.849261857,
+          "render_span_frames": 6000,
+          "render_span_p50_ms": 23.121869,
+          "render_span_p95_ms": 66.9319624,
+          "render_span_p99_ms": 78.36365196000003,
+          "maximum_completed_render_span_ms": 146.609987
+        },
+        "movement": {
+          "rendered_fps": 28.66649473834009,
+          "native_presents_per_second_including_fg": 85.99948421502027,
+          "native_counter_interval_seconds": 123.977487741,
+          "render_span_frames": 3601,
+          "render_span_p50_ms": 29.072063,
+          "render_span_p95_ms": 81.125306,
+          "render_span_p99_ms": 118.020629,
+          "maximum_completed_render_span_ms": 270.925267
+        }
+      },
+      "scope_peak_bytes": 9665413120,
+      "sampled_global_vram_peak_mib": 5370,
+      "memory_events": {
+        "low": "0",
+        "high": "2719",
+        "max": "0",
+        "oom": "0",
+        "oom_kill": "0",
+        "oom_group_kill": "0",
+        "sock_throttled": "0"
+      },
+      "java_exit_code": 0,
+      "foreign_gpu_workload_observed": false,
+      "settings_restored": true,
+      "full512_coverage": false,
+      "queue_converged": false,
+      "notes": [
+        "6,000 stationary and 3,601 movement frames recorded; full outward/return camera path completed; Java exit 0.",
+        "Terrain buildup did not converge; image/coverage review pending.",
+        "JFR export missing or unusable; no allocation-profile conclusion.",
+        "Harness classifies session as failed despite completed frame recording and Java exit 0; profile export failed. Workload/achieved coverage differs from the reference, so this is not a matched speedup comparison."
+      ]
+    }
+  ]
+}

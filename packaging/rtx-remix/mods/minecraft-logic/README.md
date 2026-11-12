@@ -1,5 +1,11 @@
 # Authoring RTX Remix Looks For Minecraft
 
+These profiles also work with the native Linux / Fabric 26.3 port. They are
+plain text and do not require a Windows installation. For Linux setup and dated
+renderer measurements, see the
+[Linux fork](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux) and
+[performance guide](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/blob/main/docs/LINUX_PERFORMANCE.md).
+
 This guide sits beside the profile files it describes, in
 `<gameDir>/rtx-remix/mods/minecraft-logic/`. It is for map makers and lighting
 artists: you edit text files and run commands in chat, and the mod fades your
@@ -174,7 +180,7 @@ this mod. Four places to find one:
 
 **Naming rules.** A zone file name is one word with no spaces and no leading
 `--`; `zones/lighthouse.conf` creates the channel `mc.zone.lighthouse`. A biome
-file name is the exact path part of a vanilla Minecraft 1.21.1 biome id, in
+file name is the exact path part of a vanilla Minecraft 26.3 biome id, in
 lowercase: `minecraft:desert` is `biomes/desert.conf`. A name the mod does not
 recognise is skipped with a warning in `logs/latest.log` and never appears in
 `/rtx conf status all`.

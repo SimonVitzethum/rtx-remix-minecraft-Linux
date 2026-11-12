@@ -17,7 +17,7 @@ The mod targets Minecraft 26.3 (Fabric, Java 25, Fabric API 0.165.x, Loom
   so the developer tools launch the game on `JAVA_HOME` when it is a JDK 25
   and otherwise look for one in Gradle's toolchains and in the Eclipse
   Adoptium, Microsoft, and Java folders under Program Files.
-- **Visual Studio 2022 Build Tools** with the Desktop development with C++
+- **On Windows: Visual Studio 2022 Build Tools** with the Desktop development with C++
   workload (MSVC v143). Cross-building the ARM64 bridge additionally needs the
   MSVC ARM64 build tools for some installed toolset; `build_native.bat` uses
   the default toolset when it has them, otherwise the newest one that does.
@@ -508,7 +508,9 @@ tools/stage_linux_runtime.sh ../dxvk-remix ../dxvk-deps
 ```
 
 The script stages `remix-runtime/linux64/`: `libremixapi.so` from the dxvk-remix
-checkout's `native-linux` branch, the OpenUSD and NRD libraries from
+checkout. The Linux fork publishes that source on `runtime/native-linux` in
+the [same GitHub repository](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/tree/runtime/native-linux).
+Clone it separately from the mod. Staging also includes OpenUSD and NRD from
 `../dxvk-deps`, the DLSS libraries `libnvidia-ngx-dlss*.so`, and the standalone
 shader precompiler with its launcher script. The runtime library is
 `libremixapi.so`; the JNI bridge `remixbridge.so` is
@@ -543,13 +545,19 @@ bash "$INST_MC_DIR/remix-sdk/precompile.sh" "$INST_MC_DIR"
 
 ### Known Linux Limitations
 
-DLSS frame generation, DLSS neural reconstruction, XeSS, NRC, Reflex, and
-Aftermath are not available on Linux. DLSS super resolution and ray
-reconstruction, TAAU, and NIS work.
+DLSS Super Resolution, Ray Reconstruction and Frame Generation have been
+exercised in native Linux sessions on the test hardware. Availability depends
+on the GPU, driver and SDK. XeSS, NRC, Reflex, Aftermath and NVAPI are compiled
+out of this Linux build, and RTXIO is disabled. See
+[Linux Performance](LINUX_PERFORMANCE.md) for measured hardware and settings.
 
 ### Memory
 
-A 12 GiB Java heap is recommended.
+The documented Linux measurements used a 4 GiB Java heap on a 32 GiB host.
+Leave headroom for native workspaces, the integrated server and the driver.
+Increasing Java's heap does not solve GPU upload pressure or native retention.
+Use actual RAM/VRAM and memory-controller measurements when tuning high view
+distances. Full 512/32 coverage is still under validation.
 
 ## When It Does Not Work
 

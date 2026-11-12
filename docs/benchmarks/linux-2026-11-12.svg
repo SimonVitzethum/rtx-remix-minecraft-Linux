@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="288" viewBox="0 0 760 288" role="img" aria-labelledby="title desc">
+<title id="title">Preliminary native Linux performance: CPU-built DAG reference</title>
+<desc id="desc">RTX 5070 Laptop,1920x1080output,960x540internal,RRandFG. Stationary30.43renderedFPS/91.29nativepresents; movement20.76/62.29. Incomplete512coverage; notGPU-builderresults.</desc>
+<rect width="760" height="288" rx="12" fill="#111827"/>
+<g font-family="sans-serif" fill="#f3f4f6">
+<text x="20" y="28" font-size="17">Native Linux · CPU-built DAG reference · November 12, 2026</text>
+<text x="20" y="50" font-size="12" fill="#cbd5e1">RTX 5070 Laptop · 1920×1080 output / 960×540 internal · Simplista 64x · RR + FG</text>
+<text x="20" y="94" font-size="14">Stationary</text>
+<rect x="125" y="78" width="152.15" height="17" rx="3" fill="#60a5fa"/><text x="285.15" y="92" font-size="13">30.43</text>
+<rect x="125" y="102" width="456.46" height="17" rx="3" fill="#34d399"/><text x="589.46" y="116" font-size="13">91.29</text>
+<text x="20" y="166" font-size="14">Movement</text>
+<rect x="125" y="150" width="103.81" height="17" rx="3" fill="#60a5fa"/><text x="236.81" y="164" font-size="13">20.76</text>
+<rect x="125" y="174" width="311.44" height="17" rx="3" fill="#34d399"/><text x="444.44" y="188" font-size="13">62.29</text>
+<rect x="20" y="222" width="12" height="12" fill="#60a5fa"/><text x="40" y="233" font-size="12">Rendered FPS</text>
+<rect x="165" y="222" width="12" height="12" fill="#34d399"/><text x="185" y="233" font-size="12">Native presents/s including FG (not physical scanout)</text>
+<text x="20" y="264" font-size="12" fill="#fbbf24">512/32 coverage unproven · Single provisional run · No GPU-DAG speedup claim</text></g></svg>

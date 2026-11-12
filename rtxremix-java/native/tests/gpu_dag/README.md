@@ -1,5 +1,10 @@
 # GPU DAG key interning test
 
+This compute-kernel regression runs natively on Linux. It is a development
+component of the [Linux / Minecraft 26.3 port](../../../../README.md), not a
+standalone game benchmark. Dated game measurements and their coverage limits
+are in [Linux Performance](../../../../docs/LINUX_PERFORMANCE.md).
+
 `test_intern.cpp` runs `dag_intern.comp` on an NVIDIA Vulkan compute queue with
 Khronos synchronization validation. It checks empty/uniform collapse, random
 full-key equality and repeated batches, forced hash collisions, bounded probe

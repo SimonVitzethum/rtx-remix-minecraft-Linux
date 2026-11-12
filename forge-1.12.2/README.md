@@ -1,5 +1,10 @@
 # Experimental Forge 1.12.2 bootstrap
 
+This legacy module targets **Windows x64 only**. The working native Linux port
+is the [Fabric / Minecraft 26.3 renderer](../README.md), with its own
+[Linux measurements](../docs/LINUX_PERFORMANCE.md). Those measurements do not
+apply to this Forge bootstrap.
+
 This standalone Java 8 module hosts the shared Remix facade in Forge
 14.23.5.2860 on Windows x64. It is an integration prerequisite: the production
 JAR initializes Remix and copies its output into Minecraft, but does not yet
@@ -15,7 +20,7 @@ and Minecraft post-processing shaders are unsupported.
 
 Use a 64-bit JDK 8 and the Visual Studio C++ tools described in the root
 [getting-started guide](../docs/GETTING_STARTED.md). The root Fabric build still
-uses Java 21. Run these commands from this directory with `JAVA_HOME` set to
+uses Java 25 for Minecraft 26.3. Run these commands from this directory with `JAVA_HOME` set to
 the JDK 8 directory:
 
 ```powershell

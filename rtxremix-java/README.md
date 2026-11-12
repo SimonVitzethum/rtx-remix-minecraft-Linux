@@ -1,5 +1,10 @@
 # RTX Remix Java + JNI Shim
 
+**Native Linux x86-64 is supported.** The Fabric 26.3 build uses JDK 25,
+`remixbridge.so` and the native `libremixapi.so` runtime without Wine or Proton.
+See [Linux setup](../docs/GETTING_STARTED.md#linux) and the dated
+[Linux performance measurements](../docs/LINUX_PERFORMANCE.md).
+
 `rtxremix-java` is a Java facade and JNI shim over the NVIDIA RTX Remix C API.
 It exposes runtime operations, data structures, and handles to Java consumers,
 marshals calls through JNI, and loads the separately distributed native runtime
@@ -22,8 +27,10 @@ Paths in this table are relative to `rtxremix-java/`.
 | `native/remixbridge.cpp` | Runtime loading, JNI marshalling, and C API calls |
 | `native/include/remix_c.h` | C API header copied from the pinned runtime build |
 | `native/build_native.bat` | MSVC bridge build for Windows x64 or ARM64 |
+| `native/build_native.sh` | Native Linux bridge build with g++/clang |
+| `src/com/nvidia/rtxremix/VoxelDag.java` | Separate Minecraft-agnostic DAG service |
 
-The bridge loads `d3d9.dll`, calls `remixapi_InitializeLibrary`, and forwards
+The bridge loads `libremixapi.so` on Linux or `d3d9.dll` on Windows, calls `remixapi_InitializeLibrary`, and forwards
 Java operations through the resulting C API interface. Java-side handles are
 raw `long` values. Native methods that require direct `ByteBuffer`s must not
 receive heap buffers. Document buffer directness on every new JNI entry point.
@@ -32,11 +39,12 @@ There is no JNA interface table.
 ## Consumption By The Root Build
 
 The repository's root Gradle project compiles these Java sources directly with
-the mod and builds `remixbridge.dll`. There is no separate wrapper Java build
+the mod and builds `remixbridge.so` on Linux or `remixbridge.dll` on Windows. There is no separate wrapper Java build
 or example launcher. The mod is a consumer of the shim, not a dependency of it.
 
-Building requires Windows, a 64-bit JDK 21 with `JAVA_HOME` set to it, and
-Visual Studio C++ tools. Running also requires a supported NVIDIA RTX GPU and
+The Minecraft 26.3 root build requires a 64-bit JDK 25. Linux uses a C++17
+compiler and Vulkan/OpenGL development libraries; Windows uses Visual Studio
+C++ tools. Running also requires a supported NVIDIA RTX GPU and
 a runtime matching the copied C API header. The root paths are:
 
 | Path | Responsibility |
@@ -44,10 +52,24 @@ a runtime matching the copied C API header. The root paths are:
 | `packman/remix-sdk.packman.xml` | Published runtime version pins |
 | `packman/` | Runtime package pins and Packman bootstrap |
 | `tools\rtx.bat sdk` | SDK source selection, local snapshots, and refresh |
-| `remix-runtime/{win64,arm64}/` | Ignored runtime junctions or local snapshots |
-| `build/native/{win64,arm64}/` | Ignored JNI bridge build outputs |
+| `remix-runtime/{linux64,win64,arm64}/` | Ignored runtime staging directories |
+| `build/native/{linux64,win64,arm64}/` | Ignored JNI bridge build outputs |
 
-Run from the repository root:
+On Linux, stage the separately built runtime and run from the repository root:
+
+```bash
+tools/stage_linux_runtime.sh ../dxvk-remix ../dxvk-deps
+"$JAVA_HOME/bin/java" -cp gradle/wrapper/gradle-wrapper.jar \
+  org.gradle.wrapper.GradleWrapperMain build test package verifyPackageJar -Parch=linux64
+```
+
+The Linux runtime source is on the
+[`runtime/native-linux` branch](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/tree/runtime/native-linux).
+For a bridge-only Linux build, run `rtxremix-java/native/build_native.sh x64`.
+The root build packages the bridge together with the staged runtime. A Java
+test run alone does not prove GPU interoperability or rendering correctness.
+
+On Windows:
 
 ```powershell
 .\gradlew.bat build
@@ -55,7 +77,7 @@ Run from the repository root:
 .\tools\rtx.bat launch
 ```
 
-Gradle fetches missing runtimes automatically, then combines the selected runtime
+On Windows, Gradle fetches missing runtimes automatically, then combines the selected runtime
 with the separately built bridge during development staging and packaging. Packman runtime directories are read-only
 junctions into a shared cache, so they stay outside `build/` and must never
 receive bridge outputs. A staged local runtime is a snapshot copy instead.

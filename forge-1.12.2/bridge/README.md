@@ -1,5 +1,11 @@
 # Legacy OpenGL interop
 
+This WGL adapter is **Windows-only**. Native Linux support is implemented by
+the [Fabric 26.3 port](../../README.md) and its
+[Java/JNI bridge](../../rtxremix-java/README.md). It does not require this legacy
+adapter. See [Linux performance](../../docs/LINUX_PERFORMANCE.md) for the tested
+Fabric workload, not Forge/WGL performance.
+
 `LegacyGlInterop` bridges Remix external memory and timeline semaphores into a
 current Windows OpenGL context. It uses WGL entry points so clients using LWJGL 2
 can share images without adding another Java OpenGL binding. It has no Minecraft

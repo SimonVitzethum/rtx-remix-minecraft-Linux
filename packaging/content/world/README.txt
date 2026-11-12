@@ -11,6 +11,12 @@ visits are where the mod looks and runs best.
 
 RTX Remix for Minecraft: https://github.com/NVIDIAGameWorks/rtx-remix-minecraft
 
+Native Linux / Minecraft 26.3 community port:
+https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux
+This world can be used with the native Linux Fabric port. Linux setup and dated
+performance measurements are linked from that fork's main README. Published
+terrain benchmark figures use a separate generated world, not this showcase.
+
 
 Requirements
 ------------
