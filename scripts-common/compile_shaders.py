@@ -23,9 +23,9 @@ def sigint_handler(signal, frame):
 signal.signal(signal.SIGINT, sigint_handler)
 
 parser = argparse.ArgumentParser(description='Compiles DXVK-RT shaders.')
-parser.add_argument('-glslang', required=True, type=str, dest='glslang')
-parser.add_argument('-slangc', required=True, type=str, dest='slangc')
-parser.add_argument('-spirvval', required=True, type=str, dest='spirvval')
+parser.add_argument('-glslang', required=False, type=str, dest='glslang')
+parser.add_argument('-slangc', required=False, type=str, dest='slangc')
+parser.add_argument('-spirvval', required=False, type=str, dest='spirvval')
 parser.add_argument('-input', required=False, type=str, dest='input', default='.')
 parser.add_argument('-I', '-include', action='append', type=str, dest='includes', default=[])
 parser.add_argument('-output', required=True, type=str, dest='output')
@@ -33,15 +33,29 @@ parser.add_argument('-force', action='store_true', dest='force')
 parser.add_argument('-parallel', action='store_true', dest='parallel')
 parser.add_argument('-binary', action='store_true', dest='binary')
 parser.add_argument('-debug', action='store_true', dest='debug')
+parser.add_argument('-source-list', type=str, help='Registered shader sources, relative to -input')
+parser.add_argument('-list-outputs', action='store_true', help='Print declared outputs without compiling or writing headers')
+parser.add_argument('-depfile', type=str, help='Aggregate dependency file for the build system')
+parser.add_argument('-dep-target', type=str, help='Target name in the aggregate dependency file')
+parser.add_argument('-jobs', type=int, default=multiprocessing.cpu_count())
 args = parser.parse_args()
+if not args.list_outputs and not all((args.glslang, args.slangc, args.spirvval)):
+    parser.error('-glslang, -slangc and -spirvval are required for compilation')
+if args.jobs < 1:
+    parser.error('-jobs must be positive')
+if args.depfile and not args.dep_target:
+    parser.error('-depfile requires -dep-target')
+matrixHeaders = []
 
 # Set to True to generate Slang repro file when compiling shaders
 generateSlangRepro = False
 
 includePaths = ' '.join([f'-I{path}' for path in args.includes])
-slangDll = os.path.join(os.path.dirname(args.slangc), 'slang.dll')
+slangDll = os.path.join(os.path.dirname(args.slangc), 'slang.dll') if args.slangc else None
 
-tools = [x for x in [args.glslang, args.slangc, slangDll, __file__] if os.path.exists(x)]
+tools = [x for x in [args.glslang, args.slangc, args.spirvval, slangDll, __file__,
+                           os.path.join(os.path.dirname(__file__), 'shader_xxd.py'),
+                           os.path.join(os.path.dirname(__file__), 'depfile.py')] if x and os.path.exists(x)]
 newestTool = max([os.path.getmtime(x) for x in tools])
 
 # Note: -Os (Optimize Size) used here as while one might typically expect optimizing for size to comprimise speed optimizations,
@@ -55,7 +69,8 @@ glslangFlags = '--quiet --target-env vulkan1.2 -Os'
 if args.debug:
     glslangFlags += ' -g'
 
-os.makedirs(args.output, exist_ok = True)
+if not args.list_outputs:
+    os.makedirs(args.output, exist_ok = True)
 
 
 def printFromThread(what):
@@ -195,6 +210,7 @@ def createBasicTask(inputFile, destFile, targetName, depFile):
         task.inputs = depfile.parse(lines, targetName)
     except:
         task.inputs = []
+    task.inputs = list(dict.fromkeys([inputFile] + task.inputs))
     task.outputs = [destFile, depFile]
     return task
 
@@ -353,6 +369,10 @@ def getVariantMatrixSuffixNameAndType(inputFile, lineno, suffix):
 
 def writeVariantMatrixHeader(inputFile, matrix, axisOrder, variants):
     if args.binary:
+        return
+
+    matrixHeaders.append(os.path.join(args.output, matrix["base"] + "_variants.h"))
+    if args.list_outputs:
         return
 
     baseToken = getVariantMatrixToken(matrix["base"])
@@ -601,41 +621,51 @@ def parseShaderVariants(inputFile):
         return []
     return result
 
-tasks = []
+def writeDependencies(inputs):
+    if not args.depfile:
+        return
 
-for root, dirs, files in os.walk(args.input):
-    for name in files:
-        task = None
-        inputFile = os.path.join(root, name)
-        if name.endswith(".comp") \
-        or name.endswith(".vert") \
-        or name.endswith(".geom") \
-        or name.endswith(".frag") \
-        or name.endswith(".rgen") \
-        or name.endswith(".rchit") \
-        or name.endswith(".rahit") \
-        or name.endswith(".rmiss") \
-        or name.endswith(".rint"):
-            task = createGlslangTask(inputFile)
-            if task.needsBuild():
-                tasks.append(task)
+    def escape(path):
+        return str(path).replace('\\', '/').replace('$', '$$').replace(' ', '\\ ').replace('#', '\\#').replace(':', '\\:')
 
-        elif name.endswith(".slang"):
-            variants = parseShaderVariants(inputFile)
+    with open(args.depfile, 'w', encoding='utf-8') as file:
+        file.write(escape(args.dep_target) + ': ' + ' '.join(escape(os.path.abspath(path)) for path in sorted(set(inputs))) + '\n')
 
-            if len(variants) == 0:
-                # Couldn't parse the variant specifications, exit with an error code
-                sys.exit(2)
 
-            # Create tasks for each variant
-            for variantSpec in variants:
-                task = createSlangTask(inputFile, variantSpec)
-                if task.needsBuild():
-                    tasks.append(task)
+if args.source_list:
+    with open(args.source_list, encoding='utf-8') as file:
+        sourceNames = [line.strip() for line in file if line.strip() and not line.startswith('#')]
+    inputFiles = [os.path.join(args.input, name) for name in sourceNames]
+else:
+    inputFiles = [os.path.join(root, name) for root, dirs, names in os.walk(args.input) for name in names
+                  if name.endswith('.slang') or os.path.splitext(name)[1] in shaderTypeSuffixes]
+
+allTasks = []
+for inputFile in sorted(inputFiles):
+    if inputFile.endswith('.slang'):
+        variants = parseShaderVariants(inputFile)
+        if not variants:
+            sys.exit(2)
+        allTasks.extend(createSlangTask(inputFile, variant) for variant in variants)
+    elif os.path.splitext(inputFile)[1] in shaderTypeSuffixes:
+        allTasks.append(createGlslangTask(inputFile))
+    else:
+        parser.error('unsupported shader source: ' + inputFile)
+
+outputs = matrixHeaders + [output for task in allTasks for output in task.outputs]
+if len(outputs) != len(set(outputs)):
+    parser.error('shader variants must have unique output names')
+
+if args.list_outputs:
+    print('\n'.join(os.path.basename(path) for path in outputs))
+    writeDependencies(inputFiles + tools + ([args.source_list] if args.source_list else []))
+    sys.exit(0)
+
+tasks = [task for task in allTasks if task.needsBuild()]
 
 if len(tasks):
     threads = []
-    threadCount = multiprocessing.cpu_count() if args.parallel else 1
+    threadCount = min(args.jobs, len(tasks)) if args.parallel else 1
     for i in range(threadCount):
         thread = threading.Thread(target = runTasks, args = (tasks,))
         thread.start()
@@ -646,3 +676,11 @@ if len(tasks):
 
 if terminate:
     sys.exit(1)
+
+# Read freshly generated compiler dependencies after all workers have completed.
+inputs = tools + ([args.source_list] if args.source_list else [])
+for task in allTasks:
+    inputs += task.inputs
+    with open(task.outputs[1], encoding='utf-8') as file:
+        inputs += depfile.parse(file.readlines(), task.outputs[0])
+writeDependencies(inputs)

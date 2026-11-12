@@ -530,12 +530,7 @@ submodules_dep = declare_dependency(
 )
 
 generated_dxvk_shaders = glsl_generator.process(dxvk_shaders)
-rtx_shaders = custom_target(
-  'rtx_shaders',
-  build_by_default: true,
-  output: ['_built_shaders.txt'],
-  command: [ python_interpreter ] + rtx_shaders_command_arguments
-)
+subdir('rtx_shaders')
 
 dxvk_embedded_data_files = files([
   '../../external/fonts/NVIDIASans/NVIDIASansMd.ttf',
@@ -567,7 +562,7 @@ if host_machine.system() == 'windows'
   dxvk_deps += delayimp_dep
 endif
 
-dxvk_lib = static_library('dxvk', dxvk_src, dxvk_version, [generated_dxvk_shaders, rtx_shaders, dxvk_generated_embedded_files],
+dxvk_lib = static_library('dxvk', dxvk_src, dxvk_version, [generated_dxvk_shaders, rtx_shader_headers, dxvk_generated_embedded_files],
   link_with           : [ util_lib, spirv_lib, usd_plugins ], 
   dependencies        : [ dxvk_deps ],
   include_directories : [ dxvk_include_path, dxvk_shader_include_path, rtxdi_include_path, remix_api_include_path, rtxcr_include_path, submodules_include_path ],

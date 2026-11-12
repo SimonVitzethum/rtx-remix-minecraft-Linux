@@ -323,3 +323,24 @@ Other passes which execute outside the main rendering pipeline are as follows:
 - Triangle List Generation - Handles generation of triangle lists from topologies such as triangle strips for usage in ray tracing (as BLAS generation only supports triangle lists currently).
 - GPU Skinning - Applies bone-based skinning to vertices for handling specific types of animated objects.
 - Geometry Interleaving - Handles interleaving of separate buffers (for instance separate vertex and normal buffers) into a singular buffer to match Remix's expectations.
+
+## Build outputs and incremental compilation
+
+Register shader entry files once in `shader_sources.txt`, relative to this directory.
+The build and runtime recompiler share the variant parser in
+`scripts-common/compile_shaders.py`. Meson reads the registered sources at configure
+time to enumerate every variant header, SPIR-V binary, compiler depfile and matrix
+selection header. A change to the registry or a variant declaration regenerates the
+build graph automatically. Headers and includes do not need registration.
+
+The `src/dxvk/rtx_shaders/meson.build` subdirectory keeps declared outputs in the
+existing `rtx_shaders/` include namespace. Its aggregate compiler depfile tracks
+transitive includes; C++ consumers depend on the actual generated headers. This
+allows Ninja to rebuild affected consumers in the same invocation as their shaders.
+Unchanged consumers retain their objects. Native ELF headers retain the digest and
+COMDAT/incbin representation, and other targets retain C arrays. Runtime shader
+recompilation still discovers sources directly and writes binary outputs.
+
+Run `python3 scripts-common/test_shader_build_graph.py` with Meson, Ninja, Slang,
+glslang and a C++ compiler available to exercise the production graph. The test
+also reproduces the undeclared-output failure using the legacy dependency model.

@@ -92,7 +92,7 @@ See [the full rule](documentation/CONTRIBUTING-style-guide.md#changes-to-upstrea
 
 - New `.cpp` and `.h` files under `src/dxvk/` must be added to the `dxvk_src` list in `src/dxvk/meson.build` (alphabetically, keep related `.cpp` / `.h` entries adjacent).
 - New unit tests in `tests/rtx/unit/` must be added to `tests/rtx/unit/meson.build`.
-- The RTX shader compile pipeline is configured from the repo-root `meson.build` and scans `src/dxvk/shaders/rtx/`, so most new shader entry files do not need separate Meson registration.
+- The RTX shader compile pipeline is configured from the repo-root `meson.build`. Register new entry files once in `src/dxvk/shaders/rtx/shader_sources.txt`; generated variant outputs and transitive includes are derived automatically.
 
 ### Adding New Exports
 

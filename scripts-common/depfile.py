@@ -53,6 +53,10 @@ def parse(lines, expectedTarget):
                     deps = []
                     in_deps = False
                 continue
+            elif c == ':' and len(out) == 1 and out.isalpha():
+                # Keep Windows drive prefixes in compiler-generated paths.
+                out += c
+                continue
             elif c == ':':
                 targets.append(out)
                 out = ''

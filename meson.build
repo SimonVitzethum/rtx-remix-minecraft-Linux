@@ -455,6 +455,10 @@ endif
 # Note: Append -binary to the runtime shader command arguments to output SPIR-V in binary form rather than as C headers.
 rtx_shaders_runtime_command_arguments = rtx_shaders_command_arguments + [ '-binary' ]
 
+if host_machine.system() != 'windows'
+  rtx_shaders_command_arguments += ['-jobs', '2']
+endif
+
 # Runtime Shader Recompilation Definitions
 # Note: Runtime shader recompilation requires various paths and script arguments as constant strings, so this information is generated
 # here and passed in via definitions.
