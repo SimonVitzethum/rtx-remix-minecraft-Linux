@@ -21,7 +21,7 @@
 */
 #include "rtx/pass/tonemap/tonemapping.slangh"
 
-layout(binding = AUTO_EXPOSURE_HISTOGRAM_INPUT_OUTPUT)
+layout(r32ui, binding = AUTO_EXPOSURE_HISTOGRAM_INPUT_OUTPUT)
 RWTexture1D<uint> OutHistogram;
 
 layout(binding = AUTO_EXPOSURE_COLOR_INPUT)
