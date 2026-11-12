@@ -50,6 +50,32 @@ class InteropTrackerTest {
     }
 
     @Test
+    void firstAccessIsSharedByCompositeAndPresentAndMenusCanAcquireDirectly() {
+        InteropTracker tracker = new InteropTracker();
+        tracker.imported(key(42, 1280, 720));
+        assertTrue(tracker.registerWait(3), "world composite acquires");
+        assertFalse(tracker.registerWait(3), "present keeps that ownership");
+        assertTrue(tracker.registerWait(4), "menu present acquires without a world composite");
+        assertTrue(tracker.registerWait(5), "the next native submit hands the image back");
+    }
+
+    @Test
+    void newDepthImportAcquiresIndependentlyOfAnAlreadyAcquiredColor() {
+        InteropTracker color = new InteropTracker();
+        InteropTracker depth = new InteropTracker();
+        color.imported(key(42, 1280, 720));
+        assertTrue(color.registerWait(7));
+        depth.imported(new InteropTracker.ImageKey(43, 640, 360, 100));
+        assertFalse(color.registerWait(7));
+        assertTrue(depth.registerWait(7));
+        assertFalse(depth.registerWait(7));
+        depth.released();
+        depth.imported(new InteropTracker.ImageKey(44, 960, 540, 100));
+        assertTrue(depth.registerWait(8));
+        assertTrue(color.registerWait(8));
+    }
+
+    @Test
     void clientDoneCounterCountsUp() {
         InteropTracker tracker = new InteropTracker();
         assertEquals(0, tracker.clientDoneValue());

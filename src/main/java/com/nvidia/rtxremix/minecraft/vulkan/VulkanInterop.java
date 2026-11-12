@@ -292,16 +292,15 @@ public final class VulkanInterop implements AutoCloseable {
         if (color == null) {
             return;
         }
-        colorTracker.registerWait(info.dxvkDoneSemaphore_ValueToWait);
         if (DEBUG_READBACK && debugFrame % 60 == 0) {
             // Needs the Remix frame finished: wait on the CPU for the done value.
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 org.lwjgl.vulkan.VkSemaphoreWaitInfo wait = org.lwjgl.vulkan.VkSemaphoreWaitInfo.calloc(stack).sType$Default()
                         .semaphoreCount(1).pSemaphores(stack.longs(dxvkDoneSemaphore))
                         .pValues(stack.longs(info.dxvkDoneSemaphore_ValueToWait));
-                VK12.vkWaitSemaphores(vk, wait, 5_000_000_000L);
+                check(VK12.vkWaitSemaphores(vk, wait, 5_000_000_000L), "debug wait for Remix");
             }
-            debugReadback("remixImage@composite", color.image, color.width, color.height);
+            debugReadback("remixImage@composite", color.image, color.width, color.height, info.dxvkDoneSemaphore_ValueToWait);
             debugFrame--;
         }
         VulkanCommandEncoder encoder = VulkanBackendSupport.encoder();
@@ -309,8 +308,7 @@ public final class VulkanInterop implements AutoCloseable {
         encoder.waitSemaphore(dxvkDoneSemaphore, info.dxvkDoneSemaphore_ValueToWait, STAGE_ALL_COMMANDS);
         VkCommandBuffer cb = encoder.allocateAndBeginTransientCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            externalOwnershipTransfer(cb, stack, color.image, false);
-            if (depth != null) externalOwnershipTransfer(cb, stack, depth.image, false);
+            acquireSharedImages(cb, stack, info.dxvkDoneSemaphore_ValueToWait);
             // Remix's image has Vulkan row order (row 0 on top), Minecraft's Vulkan render target keeps GL's bottom-up rows.
             recordCopy(cb, stack, color.image, color.width, color.height, targetImage, target.width, target.height, true);
             if (weatherPass != null && depth != null) {
@@ -334,11 +332,13 @@ public final class VulkanInterop implements AutoCloseable {
             return;
         }
         long targetImage = VulkanBackendSupport.colorImage(target);
-        debugReadback("mainRT@present", targetImage, target.width, target.height);
+        debugReadback("mainRT@present", targetImage, target.width, target.height, info.dxvkDoneSemaphore_ValueToWait);
         long value = clientTracker.nextClientDone();
         VkCommandBuffer cb = nextPresentBuffer(value);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             beginOneTime(cb, stack);
+            // Menus skip compositeWorld and still need to acquire the runtime's exported images.
+            acquireSharedImages(cb, stack, info.dxvkDoneSemaphore_ValueToWait);
             if (DEBUG_CLEAR) {
                 org.lwjgl.vulkan.VkClearColorValue magenta = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
                 magenta.float32(0, 1f).float32(1, 0f).float32(2, 1f).float32(3, 1f);
@@ -381,7 +381,7 @@ public final class VulkanInterop implements AutoCloseable {
     private int debugFrame;
 
     /** Debug aid (-Drtxremix.vk.debug=readback): logs mean colour and a few pixels of an image, synchronously. */
-    public void debugReadback(String label, long image, int w, int h) {
+    private void debugReadback(String label, long image, int w, int h, long doneValue) {
         if (!DEBUG_READBACK || (debugFrame++ % 60) != 0) {
             return;
         }
@@ -406,6 +406,9 @@ public final class VulkanInterop implements AutoCloseable {
             VkCommandBuffer cb = presentBuffers[0];
             VK12.vkResetCommandBuffer(cb, 0);
             beginOneTime(cb, stack);
+            if (color != null && image == color.image && colorTracker.registerWait(doneValue)) {
+                externalOwnershipTransfer(cb, stack, image, false);
+            }
             VulkanCommandEncoder.memoryBarrier(cb, stack);
             org.lwjgl.vulkan.VkBufferImageCopy.Buffer region = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
             region.imageSubresource().aspectMask(VK12.VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
@@ -499,6 +502,15 @@ public final class VulkanInterop implements AutoCloseable {
      * transfer with VK_QUEUE_FAMILY_EXTERNAL, which also makes the driver flush or decompress what the copy wrote,
      * so the runtime's device sees the pixels (without it Remix kept reading its own previous output).
      */
+    private void acquireSharedImages(VkCommandBuffer cb, MemoryStack stack, long doneValue) {
+        if (color != null && colorTracker.registerWait(doneValue)) {
+            externalOwnershipTransfer(cb, stack, color.image, false);
+        }
+        if (depth != null && depthTracker.registerWait(doneValue)) {
+            externalOwnershipTransfer(cb, stack, depth.image, false);
+        }
+    }
+
     void externalOwnershipTransfer(VkCommandBuffer cb, MemoryStack stack, long image, boolean release) {
         int family = device.graphicsQueue().queueFamilyIndex();
         VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
