@@ -119,6 +119,7 @@ class FarCacheSourceTest {
         };
         var source = new FarCacheSource(directory, Path.of("server/dimension"), 16, fallback, CompletableFuture.completedFuture(null));
         try {
+            source.store(surface(95, 0xF800));
             source.get(1, 0, 0);
             assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
                 while (source.built.get() == 0) Thread.sleep(5);
@@ -126,7 +127,10 @@ class FarCacheSourceTest {
             assertNull(source.get(1, 0, 0));
             assertFalse(source.has(1, 0, 0));
             ready.set(true);
-            assertEquals(80, await(source, 80).top[0]);
+            assertTrue(source.has(1, 1, 1), "available fallback tiles are visible before this source wraps them");
+            var complete = await(source, 95);
+            assertEquals(95, complete.top[0], "received edits still override the generator");
+            assertEquals(80, complete.top[8], "fine coverage includes unreceived neighbouring chunks");
         } finally {
             source.close();
             source.flushed().get(5, TimeUnit.SECONDS);

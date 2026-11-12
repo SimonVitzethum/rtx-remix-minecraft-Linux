@@ -54,7 +54,9 @@ final class FarCacheSource implements FarTileSource {
     }
 
     private record TileJob(long key, int lg, int tx, int tz, double priority) implements Comparable<TileJob> {
-        @Override public int compareTo(TileJob o) { int order = Double.compare(priority, o.priority); return order != 0 ? order : Long.compare(key, o.key); }
+        @Override public int compareTo(TileJob o) { int order = Double.compare(priority, o.priority);
+            if (order == 0) order = Integer.compare(o.lg, lg);
+            return order != 0 ? order : Long.compare(key, o.key); }
     }
 
     private final Path dir, diskRoot;
@@ -193,7 +195,7 @@ final class FarCacheSource implements FarTileSource {
             if (!closed && queued.size() < 4096 && queued.putIfAbsent(k, Boolean.TRUE) == null) {
                 double size = FarLodSource.TILE_CELLS << lg;
                 double dx = (tx + 0.5) * size - centerX, dz = (tz + 0.5) * size - centerZ;
-                tileQueue.add(new TileJob(k, lg, tx, tz, Math.max(Math.abs(dx), Math.abs(dz))));
+                tileQueue.add(new TileJob(k, lg, tx, tz, Math.max(0, Math.max(Math.abs(dx), Math.abs(dz)) - size * 0.5)));
             }
         }
         return t != null && t.usable ? t : null;
@@ -202,7 +204,7 @@ final class FarCacheSource implements FarTileSource {
     @Override
     public boolean has(int lg, int tx, int tz) {
         FarLodSource.Tile tile = tiles.get(tileKey(lg, tx, tz));
-        return tile != null && (tile.usable || fallback != null && fallback.has(lg, tx, tz));
+        return tile != null && tile.usable || fallback != null && fallback.has(lg, tx, tz);
     }
 
     @Override
@@ -302,7 +304,8 @@ final class FarCacheSource implements FarTileSource {
                     }
                 }
                 if (ct == null) continue;
-                tile.usable = true;
+                // An integrated source needs complete generated coverage before replacing a coarser tile.
+                if (fallback == null) tile.usable = true;
                 int lx = bx & 15, lz = bz & 15;
                 int n = 0, sumTop = 0, sr = 0, sg = 0, sb = 0;
                 for (int z = lz; z < lz + size; z++) {

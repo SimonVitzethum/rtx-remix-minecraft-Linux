@@ -564,7 +564,8 @@ public final class FarField {
             long sig = (lgUsed + 2L) * 0x100000001B3L ^ (in == null ? 0L : in.signature()) ^ ((long) (in == null ? 0 : in.loaded) << 50)
                     ^ (tile == null ? 0L : 0x5555L + tile.signature() * 0x9E3779B97F4A7C15L);
             cache.observe(key, sig);
-            if (!cache.needsBuild(key) || budget <= 0 || (in == null && tile == null)) continue;
+            boolean missingCoverage = tile == null && (in == null || source != null && in.loaded < 256);
+            if (!cache.needsBuild(key) || budget <= 0 || missingCoverage) continue;
             if (in != null) {
                 if (capturing == null) capturing = new Capture(sx, sz, lgUsed, minY, slabs, key, sig, tile, in);
             } else {

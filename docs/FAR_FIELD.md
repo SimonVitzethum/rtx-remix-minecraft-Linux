@@ -45,7 +45,8 @@ is deferred are offered again on the next planning pass. Worker jobs only read t
 most twice the configured build-thread count of outstanding subtree jobs, including
 completed results waiting for the client thread. The build-thread setting is bounded
 to 1..4 and noise workers to 1..2. Tile request queues admit at most 4096 distinct jobs
-each; equal-distance jobs use their spatial key as a deterministic tie breaker.
+each; their priority uses the nearest tile edge, with coarser coverage first at equal distance,
+then the spatial key as a deterministic tie breaker.
 
 `FarBuildCache` owns request identities and publication on the client thread. A changed
 signature, eviction or session reset invalidates old requests, including A -> B -> A.
@@ -85,7 +86,8 @@ Received chunk surfaces override procedural single-player terrain as well as fil
 multiplayer terrain. Live revisions cause another surface recording; unchanged content
 does not increment the cache epoch. Final changes of retained unloaded chunks are offered
 again within the recording budget. Old immutable tiles remain usable while replacements
-are built. A tile changed during its build is rejected and retried on a later request.
+are built. An integrated source cannot select a partially received fine tile until its
+procedural fallback covers the remaining cells; it keeps coarser coverage during that wait. A tile changed during its build is rejected and retried on a later request.
 The received-surface disk format remains version 1, so existing multiplayer caches are
 readable. An empty received column also overrides generated ground. Sampling starts at
 `ChunkAccess.getHeight()` itself: that method already returns the highest occupied Y;

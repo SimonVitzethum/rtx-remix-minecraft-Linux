@@ -82,6 +82,7 @@ final class FarLodSource implements FarTileSource {
         @Override
         public int compareTo(Job o) {
             int order = Double.compare(priority, o.priority);
+            if (order == 0) order = Integer.compare(o.lg, lg);
             return order != 0 ? order : Long.compare(key, o.key);
         }
     }
@@ -140,7 +141,7 @@ final class FarLodSource implements FarTileSource {
         if (!closed && queued.size() < 4096 && queued.putIfAbsent(k, Boolean.TRUE) == null) {
             double size = TILE_CELLS << lg;
             double dx = (tx + 0.5) * size - centerX, dz = (tz + 0.5) * size - centerZ;
-            queue.add(new Job(k, lg, tx, tz, Math.max(Math.abs(dx), Math.abs(dz))));
+            queue.add(new Job(k, lg, tx, tz, Math.max(0, Math.max(Math.abs(dx), Math.abs(dz)) - size * 0.5)));
         }
         return null;
     }
