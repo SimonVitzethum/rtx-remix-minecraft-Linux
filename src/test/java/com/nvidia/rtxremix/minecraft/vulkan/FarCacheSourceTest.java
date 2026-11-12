@@ -76,6 +76,32 @@ class FarCacheSourceTest {
     }
 
     @Test
+    void sessionHandoffIncludesProceduralFallbackWriters() throws Exception {
+        var stopped = new CompletableFuture<Void>();
+        FarTileSource fallback = new FarTileSource() {
+            public FarLodSource.Tile get(int lg, int tx, int tz) { return null; }
+            public boolean has(int lg, int tx, int tz) { return false; }
+            public void setCenter(int x, int z) {}
+            public void trim(int blocks) {}
+            public int pending() { return 0; }
+            public long generatedCount() { return 0; }
+            public long diskCount() { return 0; }
+            public void close() {}
+            public CompletableFuture<Void> flushed() { return stopped; }
+        };
+        var source = new FarCacheSource(directory, Path.of("server/dimension"), 16, fallback, CompletableFuture.completedFuture(null));
+        try {
+            source.store(surface(71, 0x7E0));
+            source.close();
+            assertThrows(java.util.concurrent.TimeoutException.class, () -> source.flushed().get(1500, TimeUnit.MILLISECONDS));
+        } finally {
+            stopped.complete(null);
+            source.close();
+            source.flushed().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void unavailableFineNoiseDoesNotPublishEmptyTerrainOverAnOlderCoarseTile() throws Exception {
         AtomicBoolean ready = new AtomicBoolean();
         FarLodSource.Tile terrain = new FarLodSource.Tile();

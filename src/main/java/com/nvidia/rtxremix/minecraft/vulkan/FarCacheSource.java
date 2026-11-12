@@ -113,7 +113,7 @@ final class FarCacheSource implements FarTileSource {
     }
 
     int recordBacklog() { return recordQueue.size(); }
-    CompletableFuture<Void> flushed() { return flushed; }
+    @Override public CompletableFuture<Void> flushed() { return flushed; }
 
     private void recordLoop() {
         while (!closed) {
@@ -137,6 +137,7 @@ final class FarCacheSource implements FarTileSource {
             try { tileThread.join(); }
             catch (InterruptedException e) { interrupted = true; }
         }
+        if (fallback != null) fallback.flushed().join();
         housekeeping(true);
         if (interrupted) Thread.currentThread().interrupt();
     }

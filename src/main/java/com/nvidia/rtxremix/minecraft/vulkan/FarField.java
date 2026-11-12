@@ -433,7 +433,7 @@ public final class FarField {
         mergedEpoch = -1;
         if (source != null) {
             source.close();
-            if (source instanceof FarCacheSource cs) previousCacheFlush = cs.flushed();
+            previousCacheFlush = source.flushed();
         }
         source = null;
         minY = level.getMinY();
@@ -471,7 +471,7 @@ public final class FarField {
             // Received chunks override procedural noise, retaining edits after they leave the client radius.
             String saveIdentity = java.util.UUID.nameUUIDFromBytes(server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT)
                     .toAbsolutePath().normalize().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
-            source = new FarCacheSource(dir.resolve("received"), Path.of(saveIdentity), cacheMb, new FarLodSource(sl, dir, lodThreads), previousCacheFlush);
+            source = new FarCacheSource(dir.resolve("received"), Path.of(saveIdentity), cacheMb, new FarLodSource(sl, dir, lodThreads, previousCacheFlush), previousCacheFlush);
             LOGGER.info("FarField: LOD source from the integrated server, cache {}", dir);
         } catch (RuntimeException | Error e) {
             LOGGER.error("FarField: LOD source init failed", e);
@@ -886,7 +886,7 @@ public final class FarField {
         pool.shutdownNow();
         if (source != null) {
             source.close();
-            if (source instanceof FarCacheSource cs) previousCacheFlush = cs.flushed();
+            previousCacheFlush = source.flushed();
         }
         gpu.close();
         if (texture != null && !texture.isDeleted()) texture.destroy();

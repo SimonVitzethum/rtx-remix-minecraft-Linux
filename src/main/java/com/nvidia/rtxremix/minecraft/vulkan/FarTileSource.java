@@ -25,6 +25,11 @@ interface FarTileSource {
 
     void close();
 
+    /** Completes when closed workers can no longer access the cache files. Never awaited by the render thread. */
+    default java.util.concurrent.CompletableFuture<Void> flushed() {
+        return java.util.concurrent.CompletableFuture.completedFuture(null);
+    }
+
     long generatedCount();
 
     long diskCount();

@@ -66,6 +66,7 @@ final class FarLodSource implements FarTileSource {
     private final ConcurrentHashMap<Long, Boolean> queued = new ConcurrentHashMap<>();
     private final PriorityBlockingQueue<Job> queue = new PriorityBlockingQueue<>();
     private final Thread[] threads;
+    private final java.util.concurrent.CompletableFuture<Void> flushed = new java.util.concurrent.CompletableFuture<>();
     private final ThreadLocal<BiomeResolver> resolvers;
     private volatile boolean closed;
     private volatile int centerX, centerZ; // block coordinates of the player, for the priority of new jobs
@@ -85,7 +86,7 @@ final class FarLodSource implements FarTileSource {
         }
     }
 
-    FarLodSource(ServerLevel level, Path dir, int threadCount) {
+    FarLodSource(ServerLevel level, Path dir, int threadCount, java.util.concurrent.CompletableFuture<Void> previousFlush) {
         this.generator = level.getChunkSource().getGenerator();
         this.random = level.getChunkSource().randomState();
         this.heights = LevelHeightAccessor.create(level.getMinY(), level.getHeight());
@@ -99,8 +100,16 @@ final class FarLodSource implements FarTileSource {
         resolvers = ThreadLocal.withInitial(() ->
                 generator.getBiomeSource().createResolver(random.createClimateSampler(SamplerContext.EMPTY_UNCACHED)));
         threads = new Thread[threadCount];
+        AtomicInteger running = new AtomicInteger(threadCount);
         for (int i = 0; i < threadCount; i++) {
-            threads[i] = new Thread(this::run, "RemixFarLod-" + i);
+            threads[i] = new Thread(() -> {
+                try {
+                    previousFlush.join();
+                    run();
+                } finally {
+                    if (running.decrementAndGet() == 0) flushed.complete(null);
+                }
+            }, "RemixFarLod-" + i);
             threads[i].setDaemon(true);
             threads[i].setPriority(Thread.MIN_PRIORITY);
             threads[i].start();
@@ -166,6 +175,8 @@ final class FarLodSource implements FarTileSource {
         for (Thread t : threads) t.interrupt();
     }
 
+    @Override public java.util.concurrent.CompletableFuture<Void> flushed() { return flushed; }
+
     @Override
     public long generatedCount() { return generated.get(); }
 
@@ -186,6 +197,7 @@ final class FarLodSource implements FarTileSource {
                     loadedFromDisk.incrementAndGet();
                 } else {
                     t = generate(job);
+                    if (closed) return;
                     writeFile(job, t);
                     generated.incrementAndGet();
                 }
@@ -193,6 +205,8 @@ final class FarLodSource implements FarTileSource {
                     tiles.put(job.key, t);
                     epoch.incrementAndGet();
                 }
+            } catch (java.util.concurrent.CancellationException ignored) {
+                return;
             } catch (Throwable t) {
                 LOGGER.error("FarLod tile {} failed", job, t);
             } finally {
@@ -245,6 +259,7 @@ final class FarLodSource implements FarTileSource {
         BiomeResolver resolver = resolvers.get();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int cj = 0; cj < TILE_CELLS; cj++) {
+            if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
             for (int ci = 0; ci < TILE_CELLS; ci++) {
                 int x = j.tx * TILE_CELLS * size + ci * size + size / 2;
                 int z = j.tz * TILE_CELLS * size + cj * size + size / 2;

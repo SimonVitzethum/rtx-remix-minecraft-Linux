@@ -93,7 +93,7 @@ subtracting again would discard a one-block surface/material layer. Old disk ent
 remain approximate until revisited and recorded again.
 
 Cache recorder shutdown drains admitted snapshots and flushes on its worker. A future
-waits for tile readers that can still evict dirty regions, then hands disk ownership to the next session without blocking the client thread, including
+waits for tile readers that can still evict dirty regions and procedural workers that can still write tile files, then hands disk ownership to the next session without blocking the client thread, including
 world swaps and far-field off/on cycles. Missing regions are remembered, avoiding a file
 existence check for each cell of unvisited generated terrain. The disk quota root is explicit and never inferred from a directory's parents. The
 resident-region cap is enforced before loading another region, under the same worker
