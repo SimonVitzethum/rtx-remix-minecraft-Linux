@@ -360,7 +360,9 @@ public class RtxRemixMod implements ClientModInitializer {
         LOGGER.info(LocalChunkBatchPacing.effectiveStateLine());
         LOGGER.info(SkyLightSurfaceScanPolicy.effectiveStateLine());
 
-        remixAvailable = checkRemixAvailability();
+        // A stale SDK left on disk is not an authorized fallback after a failed
+        // download, integrity check, or transactional installation.
+        remixAvailable = nativeExtractionSucceeded && checkRemixAvailability();
         
         registerCommands();
         // Particle types are a client-side registry, so they stay here. Blocks
@@ -487,8 +489,8 @@ public class RtxRemixMod implements ClientModInitializer {
 
         if (!remixAvailable) {
             LOGGER.warn("========================================");
-            LOGGER.warn("RTX Remix SDK not found!");
-            LOGGER.warn("Expected d3d9.dll at: {}",
+            LOGGER.warn("RTX Remix native payload is unavailable or failed verification.");
+            LOGGER.warn("Expected native runtime at: {}",
                     RemixRenderer.runtimeDll(FabricLoader.getInstance().getGameDir()));
             if (!nativeExtractionSucceeded) {
                 LOGGER.warn("Extracting the runtime from the mod JAR failed this launch; "
