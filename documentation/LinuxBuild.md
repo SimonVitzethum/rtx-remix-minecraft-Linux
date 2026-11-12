@@ -74,10 +74,38 @@ The input functions feed an ImGui platform backend
 The runtime and the game exchange the rendered image over opaque file
 descriptors:
 
-- `GetInteropInfo` hands out the interop image and the two timeline
-  semaphores as FDs, duplicating a fresh FD per call; the client owns it. GL
-  imports them with `GL_EXT_memory_object_fd` and `GL_EXT_semaphore_fd`.
+- `GetInteropInfo` reports opaque image-memory and timeline-semaphore FDs.
+  The client imports each reported object once and consumes its FD. Repeated
+  reports of the same object retain the descriptor number; they are not new
+  descriptors to import. GL uses `GL_EXT_memory_object_fd` and
+  `GL_EXT_semaphore_fd`.
 - `interopFlipY` flips the presented image vertically.
+
+Both exported color and optional depth use exclusive ownership and remain in
+`GENERAL` at the device boundary. Submit copies the outputs, releases their
+graphics-queue ownership to `VK_QUEUE_FAMILY_EXTERNAL`, and signals `dxvkDone`.
+The client waits for that value and acquires both images before its first use.
+After composition, weather and the final color copy, it releases both images
+and signals `clientDone`. Present waits for that value and acquires them before
+runtime use. A menu frame still needs this handoff when it skips world rendering.
+The CPU-visible submit completion does not replace either GPU semaphore wait.
+
+### Neural rendering synchronization
+
+NGX receives application-supplied Vulkan procedure resolvers on Linux. They
+retain the loader's availability checks and dispatch, while wrapping SDK image
+clears with an image dependency from all earlier accesses to transfer writes.
+This dependency is recorded immediately before the clear inside the SDK command
+sequence; a barrier outside `EvaluateFeature` cannot order two internal commands.
+Validation remains in the dispatch chain. The vendor binaries are unmodified.
+
+Frame generation keeps its depth and motion-vector input ring until the
+presenter's completion timeline releases the corresponding input sets. Each
+batch signals once after all its generated frames, including discarded jobs.
+Completion values are ordered across ordinary and frame-generation queues when
+presentation modes change. Presentation binary semaphores belong to acquired
+swapchain images, whose reacquisition proves the earlier presentation wait has
+finished.
 
 ## Presentation Modes
 
