@@ -8,6 +8,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeResolver;
 import net.minecraft.world.level.biome.Biomes;
@@ -32,7 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Far terrain source for chunks the client does not have (integrated server only): one column (surface height + colour)
  * per 2^lg block cell, generated from the world generator's density noise ({@code ChunkGenerator.getBaseHeight}) and
  * the biome source, without ever generating or loading a chunk. Cells are grouped in tiles of 64 x 64 cells
- * (256 / 512 / 1024 blocks for lg = 2 / 3 / 4), generated asynchronously on low priority threads, nearest first, and
+ * (128 / 256 / 512 / 1024 blocks for lg = 1 / 2 / 3 / 4), generated asynchronously on low priority threads, nearest first, and
  * cached on disk (one small file per tile, ~16 KB), so a revisit costs a file read.
  *
  * <p>Colour is an approximation of the top block (biome grass / water colour, sand for beaches and deserts, snow when
@@ -41,7 +42,7 @@ import java.util.concurrent.atomic.AtomicLong;
 final class FarLodSource implements FarTileSource {
     private static final Logger LOGGER = LoggerFactory.getLogger(FarLodSource.class);
     static final int TILE_CELLS = 64;
-    static final int MIN_LG = 2, MAX_LG = 4;
+    static final int MIN_LG = 1, MAX_LG = 4;
     /** Marks a column without terrain (no solid block in the world). */
     static final short EMPTY = Short.MIN_VALUE;
     private static final int MAGIC = 0x464C4F44, VERSION = 2;
@@ -52,19 +53,21 @@ final class FarLodSource implements FarTileSource {
         final short[] rgb = new short[TILE_CELLS * TILE_CELLS];
         /** Changes whenever the content changed (cache sources); part of the column signature. */
         long version;
+        /** False only for an empty cache probe that has neither received nor generated source data yet. */
+        boolean usable = true;
     }
 
     private final ChunkGenerator generator;
     private final RandomState random;
-    private final LevelHeightAccessorProxy heights;
+    private final LevelHeightAccessor heights;
     private final int seaLevel;
     private final Path dir;
     private final ConcurrentHashMap<Long, Tile> tiles = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Boolean> queued = new ConcurrentHashMap<>();
     private final PriorityBlockingQueue<Job> queue = new PriorityBlockingQueue<>();
     private final Thread[] threads;
+    private final java.util.concurrent.CompletableFuture<Void> flushed = new java.util.concurrent.CompletableFuture<>();
     private final ThreadLocal<BiomeResolver> resolvers;
-    private final ServerLevel level;
     private volatile boolean closed;
     private volatile int centerX, centerZ; // block coordinates of the player, for the priority of new jobs
 
@@ -75,20 +78,19 @@ final class FarLodSource implements FarTileSource {
     /** Increments whenever a tile became available. */
     final AtomicInteger epoch = new AtomicInteger();
 
-    private record LevelHeightAccessorProxy(int minY, int height) {}
-
     private record Job(long key, int lg, int tx, int tz, double priority) implements Comparable<Job> {
         @Override
         public int compareTo(Job o) {
-            return Double.compare(priority, o.priority);
+            int order = Double.compare(priority, o.priority);
+            if (order == 0) order = Integer.compare(o.lg, lg);
+            return order != 0 ? order : Long.compare(key, o.key);
         }
     }
 
-    FarLodSource(ServerLevel level, Path dir, int threadCount) {
-        this.level = level;
+    FarLodSource(ServerLevel level, Path dir, int threadCount, java.util.concurrent.CompletableFuture<Void> previousFlush) {
         this.generator = level.getChunkSource().getGenerator();
         this.random = level.getChunkSource().randomState();
-        this.heights = new LevelHeightAccessorProxy(level.getMinY(), level.getHeight());
+        this.heights = LevelHeightAccessor.create(level.getMinY(), level.getHeight());
         this.seaLevel = level.getSeaLevel();
         this.dir = dir;
         try {
@@ -99,8 +101,16 @@ final class FarLodSource implements FarTileSource {
         resolvers = ThreadLocal.withInitial(() ->
                 generator.getBiomeSource().createResolver(random.createClimateSampler(SamplerContext.EMPTY_UNCACHED)));
         threads = new Thread[threadCount];
+        AtomicInteger running = new AtomicInteger(threadCount);
         for (int i = 0; i < threadCount; i++) {
-            threads[i] = new Thread(this::run, "RemixFarLod-" + i);
+            threads[i] = new Thread(() -> {
+                try {
+                    previousFlush.join();
+                    run();
+                } finally {
+                    if (running.decrementAndGet() == 0) flushed.complete(null);
+                }
+            }, "RemixFarLod-" + i);
             threads[i].setDaemon(true);
             threads[i].setPriority(Thread.MIN_PRIORITY);
             threads[i].start();
@@ -128,10 +138,10 @@ final class FarLodSource implements FarTileSource {
         long k = key(lg, tx, tz);
         Tile t = tiles.get(k);
         if (t != null) return t;
-        if (queued.putIfAbsent(k, Boolean.TRUE) == null) {
+        if (!closed && queued.size() < 4096 && queued.putIfAbsent(k, Boolean.TRUE) == null) {
             double size = TILE_CELLS << lg;
             double dx = (tx + 0.5) * size - centerX, dz = (tz + 0.5) * size - centerZ;
-            queue.add(new Job(k, lg, tx, tz, Math.max(Math.abs(dx), Math.abs(dz))));
+            queue.add(new Job(k, lg, tx, tz, Math.max(0, Math.max(Math.abs(dx), Math.abs(dz)) - size * 0.5)));
         }
         return null;
     }
@@ -162,8 +172,11 @@ final class FarLodSource implements FarTileSource {
     @Override
     public void close() {
         closed = true;
+        queue.clear();
         for (Thread t : threads) t.interrupt();
     }
+
+    @Override public java.util.concurrent.CompletableFuture<Void> flushed() { return flushed; }
 
     @Override
     public long generatedCount() { return generated.get(); }
@@ -185,13 +198,19 @@ final class FarLodSource implements FarTileSource {
                     loadedFromDisk.incrementAndGet();
                 } else {
                     t = generate(job);
+                    if (closed) return;
                     writeFile(job, t);
                     generated.incrementAndGet();
                 }
-                tiles.put(job.key, t);
-                epoch.incrementAndGet();
+                if (!closed) {
+                    tiles.put(job.key, t);
+                    epoch.incrementAndGet();
+                }
+            } catch (java.util.concurrent.CancellationException ignored) {
+                return;
             } catch (Throwable t) {
                 LOGGER.error("FarLod tile {} failed", job, t);
+            } finally {
                 queued.remove(job.key);
             }
         }
@@ -241,12 +260,13 @@ final class FarLodSource implements FarTileSource {
         BiomeResolver resolver = resolvers.get();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int cj = 0; cj < TILE_CELLS; cj++) {
+            if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
             for (int ci = 0; ci < TILE_CELLS; ci++) {
                 int x = j.tx * TILE_CELLS * size + ci * size + size / 2;
                 int z = j.tz * TILE_CELLS * size + cj * size + size / 2;
                 int idx = cj * TILE_CELLS + ci;
-                int floor = generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, level, random);
-                if (floor <= heights.minY()) {
+                int floor = generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, heights, random);
+                if (floor <= heights.getMinY()) {
                     t.top[idx] = EMPTY;
                     continue;
                 }

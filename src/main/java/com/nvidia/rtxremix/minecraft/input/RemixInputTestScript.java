@@ -42,6 +42,7 @@ import java.util.List;
  * kdown / kup NAME         hold or release a key (also space, shift, ctrl)
  * shot [marker] NAME       mark a screenshot; optional file acknowledgement yields without blocking rendering
  * scmd TEXT...             integrated-server command (test world only)
+ * probe LABEL X Y Z BLOCK [same|new|absent]  verify client state and chunk/section lifetime
  * diag                     log client/server loaded chunk counts and view distances
  * close                    close the menu like Alt+X does
  * altx                     Alt+X chord through KeyboardHandler.keyPress (toggles the developer menu)
@@ -78,6 +79,8 @@ public final class RemixInputTestScript {
     private static float anchorCameraYaw;
     private static float anchorCameraPitch;
     private static int anchorSlot;
+    private record Probe(Object chunk, Object section, Object state, long revision) {}
+    private static final java.util.Map<String, Probe> probes = new java.util.HashMap<>();
 
     private RemixInputTestScript() {
     }
@@ -281,6 +284,7 @@ public final class RemixInputTestScript {
             case "expect" -> {
                 boolean ok = switch (w[1]) {
                     case "freecam" -> com.nvidia.rtxremix.minecraft.camera.Freecam.isActive() == w[2].equals("on");
+                    case "dimension" -> mc.level.dimension().identifier().toString().equals(w[2]);
                     case "stationary" -> anchor != null && mc.player.position().distanceToSqr(anchor) < 0.0001
                             && mc.player.getYRot() == anchorYaw && mc.player.getXRot() == anchorPitch;
                     case "camera-moved" -> anchorCamera != null
@@ -303,10 +307,41 @@ public final class RemixInputTestScript {
                 if (!ok) throw new IllegalStateException("Expectation failed: " + desc);
                 LOGGER.info("PASS {}", desc);
             }
-            case "state" -> LOGGER.info("state: player={} yaw={} pitch={} camera={} freecam={} speed={} fullbright={}",
+            case "state" -> LOGGER.info("state: player={} yaw={} pitch={} camera={} cameraYaw={} cameraPitch={} dimension={} freecam={} speed={} fullbright={}",
                     mc.player.position(), mc.player.getYRot(), mc.player.getXRot(),
-                    mc.gameRenderer.mainCamera().position(), com.nvidia.rtxremix.minecraft.camera.Freecam.isActive(),
+                    mc.gameRenderer.mainCamera().position(), mc.gameRenderer.mainCamera().yRot(),
+                    mc.gameRenderer.mainCamera().xRot(), mc.level.dimension().identifier(), com.nvidia.rtxremix.minecraft.camera.Freecam.isActive(),
                     com.nvidia.rtxremix.minecraft.camera.Freecam.speed(), com.nvidia.rtxremix.minecraft.light.Fullbright.level());
+            case "probe" -> {
+                var pos = new net.minecraft.core.BlockPos(Integer.parseInt(w[2]), Integer.parseInt(w[3]), Integer.parseInt(w[4]));
+                var chunk = mc.level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4);
+                Probe previous = probes.get(w[1]);
+                String lifetime = w.length > 6 ? w[6] : "";
+                if (lifetime.equals("absent")) {
+                    if (chunk != null) throw new IllegalStateException("Expected unloaded chunk at " + pos);
+                    LOGGER.info("probe {}: absent chunk at {}", w[1], pos);
+                    break;
+                }
+                if (chunk == null) throw new IllegalStateException("Missing client chunk at " + pos);
+                var section = chunk.getSections()[chunk.getSectionIndex(pos.getY())];
+                var state = chunk.getBlockState(pos);
+                long revision = ((com.nvidia.rtxremix.minecraft.vulkan.FarSectionRevision) section).rtxremix$farRevision();
+                String block = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                if (!block.equals(w[5])) throw new IllegalStateException("Expected " + w[5] + " at " + pos + ", got " + state);
+                if (lifetime.equals("same") && (previous == null || previous.chunk != chunk || previous.section != section)) {
+                    throw new IllegalStateException("Chunk or section identity changed at " + pos);
+                }
+                if (lifetime.equals("new") && (previous == null || previous.chunk == chunk || previous.section == section)) {
+                    throw new IllegalStateException("Expected replacement chunk and section at " + pos);
+                }
+                if (previous != null && previous.section == section && previous.state != state && previous.revision >= revision) {
+                    throw new IllegalStateException("Content changed without advancing its section revision at " + pos);
+                }
+                LOGGER.info("probe {}: pos={} block={} chunk={} section={} revision={} previousRevision={} lifetime={} clock={}",
+                        w[1], pos, block, System.identityHashCode(chunk), System.identityHashCode(section), revision,
+                        previous == null ? -1 : previous.revision, lifetime, System.nanoTime());
+                probes.put(w[1], new Probe(chunk, section, state, revision));
+            }
             case "diag" -> {
                 var srv = mc.getSingleplayerServer();
                 LOGGER.info("diag: pos={} fps={}", mc.player.position(), mc.getFps());

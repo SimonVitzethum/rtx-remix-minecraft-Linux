@@ -378,6 +378,9 @@ public class SkyRenderer {
 
     /** The texture the dome light shows: the far-field composite when it exists, else the procedural sky. */
     private long domeTextureHandle() {
+        if (currentWorld != null && currentWorld.dimensionType().skybox() != DimensionType.Skybox.OVERWORLD) {
+            return skyTextureAsset.getHandle();
+        }
         com.nvidia.rtxremix.minecraft.vulkan.FarField farField = com.nvidia.rtxremix.minecraft.vulkan.FarField.get();
         long far = farField == null ? 0L : farField.textureHandle();
         return far != 0L ? far : skyTextureAsset.getHandle();
@@ -1069,6 +1072,8 @@ public class SkyRenderer {
     private void releaseSkyLights() {
         destroyAsset(skyDomeLightAsset);
         skyDomeLightAsset = null;
+        // Far-field jobs and their dome belong to this world too, including transitions to a fixed sky with no far-field tick.
+        com.nvidia.rtxremix.minecraft.vulkan.FarField.shutdown();
         destroyAsset(skyTextureAsset);
         skyTextureAsset = null;
         atmosphericTexturePatch.pixelData = null;

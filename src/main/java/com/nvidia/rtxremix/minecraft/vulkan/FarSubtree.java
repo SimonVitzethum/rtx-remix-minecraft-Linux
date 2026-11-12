@@ -8,7 +8,7 @@ package com.nvidia.rtxremix.minecraft.vulkan;
  * Builds the sub-DAG of one 256 x 256 block column (all height slabs of 256 blocks) from
  * <ul>
  * <li>a LOD height grid (cell = 2^lg blocks, column top + RGB565 colour, from {@link FarLodSource}) where the client has
- * no chunk: a cell is a solid voxel of 2^lg blocks when at least half of it is below the top, coloured with the column colour
+ * no chunk: horizontal cells keep their exact integer surface height, coloured with the column colour
  * in the top two cells and a constant rock colour below (so the volume under the surface collapses to single leaves), and
  * <li>exact 1-block voxel sections of client chunks that are loaded but outside the path-traced radius.
  * </ul>
@@ -25,7 +25,7 @@ final class FarSubtree {
     record Result(int[] nodes, int nodeCount, int[] roots, long leaves) {}
 
     /**
-     * @param lg        log2 of the grid cell size in blocks (2..4), the grid is {@code 256 >> lg} cells square
+     * @param lg        log2 of the grid cell size in blocks (1..4), the grid is {@code 256 >> lg} cells square
      * @param top       cube-relative top (blocks above the cube floor) per cell or {@link #EMPTY_TOP}; null = no LOD data
      * @param rgb       RGB565 per cell
      * @param exact     16 x 16 chunk columns (index {@code cz * 16 + cx}), each null or sections indexed by section number
@@ -101,27 +101,29 @@ final class FarSubtree {
     }
 
     private int region(int level, int x, int y, int z) {
+        if (level >= 6 && Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
         int size = 1 << level;
         int yAbs = slabBase + y;
         if (level >= 4 && exactCount(x >> 4, z >> 4, size >> 4) > 0) {
             if (level == 4) return exactSection(x >> 4, z >> 4, yAbs >> 4);
             return children(level, x, y, z);
         }
-        int k = level - lg;
+        int k = Math.max(0, level - lg);
         int m = n >> k;
-        int idx = (z >> level) * m + (x >> level);
+        int idx = (z >> Math.max(level, lg)) * m + (x >> Math.max(level, lg));
         int mn = minT[k][idx], mx = maxT[k][idx];
         int s = 1 << lg;
-        if (mx < yAbs + s / 2) return 0;
+        if (mx <= yAbs) return 0;
         if (mn - (yAbs + size) >= s) {
             leaves++;
             return ROCK;
         }
-        if (level == lg) {
-            int depth = mn - (yAbs + s);
+        if (level <= lg && mn >= yAbs + size) {
             leaves++;
-            return depth < s ? FarFieldDag.LEAF | (rgb[idx] & 0xFFFF) : ROCK;
+            return FarFieldDag.LEAF | (rgb[idx] & 0xFFFF);
         }
+        // Only the surface boundary subdivides below the horizontal cell size. Integer tops end at block precision;
+        // the homogeneous volume below still collapses, and all repeated children are shared by the existing DAG.
         return children(level, x, y, z);
     }
 

@@ -5,7 +5,7 @@
 package com.nvidia.rtxremix.minecraft.vulkan;
 
 /**
- * Coarse terrain for chunks the client does not have: tiles of 64 x 64 cells of 2^lg blocks (lg 2..4) with the surface height
+ * Coarse terrain for chunks the client does not have: tiles of 64 x 64 cells of 2^lg blocks (lg 1..4) with the surface height
  * and an RGB565 colour per cell. Implemented by {@link FarLodSource} (integrated server, generated from the world generator) and
  * {@link FarCacheSource} (multiplayer, built from the chunks this client received earlier).
  */
@@ -24,6 +24,11 @@ interface FarTileSource {
     int pending();
 
     void close();
+
+    /** Completes when closed workers can no longer access the cache files. Never awaited by the render thread. */
+    default java.util.concurrent.CompletableFuture<Void> flushed() {
+        return java.util.concurrent.CompletableFuture.completedFuture(null);
+    }
 
     long generatedCount();
 

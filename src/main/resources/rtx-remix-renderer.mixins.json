@@ -27,6 +27,7 @@
         "DownloadingTerrainScreenMixin",
         "EntityRenderDispatcherMixin",
         "FoliageColorsMixin",
+        "FarSectionRevisionMixin",
         "ClientInputAccessor",
         "FreecamCameraMixin",
         "FreecamInputMixin",

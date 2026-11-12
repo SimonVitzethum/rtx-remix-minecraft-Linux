@@ -561,6 +561,7 @@ public class RtxRemixMod implements ClientModInitializer {
         });
 
         ClientChunkEvents.CHUNK_UNLOAD.register((world, chunk) -> {
+            com.nvidia.rtxremix.minecraft.vulkan.FarField.onChunkUnload(world, chunk);
             ChunkPos pos = chunk.getPos();
             if (renderer != null && renderer.getChunkManager() != null) {
                 renderer.getChunkManager().onChunkUnloaded(pos);
