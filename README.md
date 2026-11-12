@@ -92,6 +92,28 @@ We hope the community helps fill it out. If something breaks,
 [report it](docs/PLAYING.md#reporting-a-bug); if you can fix it, see
 [Contributing](#contributing).
 
+## Universal drop-in distribution (release gate pending)
+
+The root `./gradlew build` (Windows: `gradlew.bat build`) now targets one
+`build/libs/rtx-remix-renderer-universal.jar` for Linux and Windows on both
+x86-64 and ARM64. Fabric API 0.165.2+26.3 is nested inside it. Minecraft 26.3,
+Fabric Loader >=0.19.5 and Java 25 remain launcher prerequisites. The player
+installation requires no C/C++ compiler; native selection and installation are
+automatic, and shader compilation is permitted.
+
+**No four-platform combined-API release exists yet.** The build refuses to label a
+partial distribution as universal: the runtime source/ABI freeze and all four
+matching precompiled packages are still release gates. Historical Linux tests
+used API 0.16.2; its runtime requires **glibc 2.44**, and the tested
+Vulkan **1.4.351** / NVIDIA **615.78.08** versions do not establish a lower driver
+minimum. Windows/ARM64 hardware validation remains outstanding. This does not
+promise every Linux ABI or driver. See [the exact package and compatibility
+contract](docs/NATIVE_DISTRIBUTION.md) and [build instructions](docs/GETTING_STARTED.md).
+
+External texture/resource packs stay local and are not included in the mod
+JAR. The renderer's own assets, baseline textures and two required runtime DDS
+files remain part of the distribution.
+
 ## Upstream Windows Download
 
 This section describes NVIDIA's original Windows distribution and optional
@@ -157,8 +179,8 @@ From the mod checkout, with `JAVA_HOME` pointing to a **64-bit JDK 25**:
 
 ```bash
 tools/stage_linux_runtime.sh ../dxvk-remix ../dxvk-deps
-"$JAVA_HOME/bin/java" -cp gradle/wrapper/gradle-wrapper.jar \
-  org.gradle.wrapper.GradleWrapperMain build test package verifyPackageJar -Parch=linux64
+./gradlew test jar  # Java development; native release gates are described above
+./gradlew setupRuntime -Parch=linux64  # explicit local JNI build and runtime staging
 tools/linux/rtx.sh launch
 ```
 

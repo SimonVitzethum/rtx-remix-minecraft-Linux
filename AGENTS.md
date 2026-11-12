@@ -27,32 +27,22 @@ subdirectory may carry its own `AGENTS.md`; read the nearest one as well.
 
 ## Build, Run, Package, Test
 
-Java 21, Windows, and the C++ toolchain are required. Gradle fetches a missing
-Remix runtime automatically. [Getting Started](docs/GETTING_STARTED.md) covers local overrides.
+JDK 25 is required. The executable root `./gradlew` works on Linux;
+`gradlew.bat` is the Windows equivalent. `./gradlew test jar` compiles Java and
+runs JVM tests without native compilers or runtime staging. Explicit native
+producer tasks and `setupRuntime` remain available; `runClient` depends on
+runtime setup.
 
-```powershell
-.\gradlew.bat build
-.\tools\rtx.bat launch
-.\gradlew.bat test
-.\gradlew.bat package -Parch=win64
-```
+`./gradlew build` produces the installable universal JAR in `build/libs/`,
+including Fabric API, runtime textures, licenses and verified native archives
+for Linux/Windows x86-64/ARM64. `verifyNativeBundles` and `verifyPackageJar` are
+mandatory. Combined-API packages are currently unavailable, so standard builds
+fail with a precise four-platform blocker until the manifest can be frozen.
+Never substitute the older Packman API 0.16.2 payload. `-Parch=` is an explicit
+single-platform developer option. `package` aliases `build` without a task cycle.
+Java-only JARs live in `build/intermediates/`. Source/release gates and minimum
+ABI/driver facts are in [Native Distribution](docs/NATIVE_DISTRIBUTION.md).
 
-Linux builds use `-Parch=linux64` and stage the runtime with
-`tools/stage_linux_runtime.sh`.
-
-`tools\rtx.bat launch` builds the mod, installs it into a checkout-specific
-Prism Launcher instance, and starts Minecraft through Prism. Installed Prism
-reuses its normal account profile; portable Prism keeps its profile under
-`run-prism/`. Use `tools\rtx.bat prism signin` with a Microsoft account that
-owns Minecraft: Java Edition. See
-[Getting Started](docs/GETTING_STARTED.md#sign-in-to-prism).
-
-`classes` depends on `setupRuntime`, which compiles the JNI bridge, fetches a
-missing runtime, and stages it, so even `test` needs the C++ toolchain.
-`build` leaves a lightweight JAR in `build/libs/`; `package` embeds
-the runtime and payload in `build/distributions/`. It verifies inclusion of
-every `packaging/licenses/` file and excludes Python interpreter and binding
-payloads. Staged and packaged contents must agree with `NativeExtractor`.
 A release carries four files, which `stageReleaseAssets` collects: the JAR;
 the RTX Remix Materials and RTX Remix Showcase World zips, which
 `materialsArchive` and `worldArchive` build from what `fetchReleaseContent`
@@ -487,14 +477,13 @@ and the mod, so check all three layers explicitly. Renderer behavior and the
 C API surface belong in dxvk-remix; marshalling and Java API types belong in
 the shim.
 
-Once the matching runtime package is published, update both architecture pins
-in `packman/remix-sdk.packman.xml`, the copied header, JNI marshalling in
+Once matching runtime packages pass the coordinated freeze, update all four
+platform pins in `packaging/native-bundles/manifest.properties`, the copied header, JNI marshalling in
 `rtxremix-java/native/remixbridge.cpp`, `RemixBridge.java`, `RemixAPI.java`,
 affected data-holder types, and mod callers together. The copied header
-matches the pinned runtime, which can be ahead of dxvk-remix `main`; never
-edit it in isolation. From the repository root, restore the SDKs with
-`.\tools\rtx.bat sdk packman --arch all` and rebuild the bridges with
-`.\gradlew.bat compileNativeWin64 compileNativeArm64`.
+matches the frozen runtime; never edit it in isolation. Build all four bridges
+against that header, generate their inventories and run the native distribution
+gate. Old Packman runtimes are not replacements for an unpublished own API.
 
 `StructType.java` constants must exactly match `REMIXAPI_STRUCT_TYPE_*` in
 the copied header. Parallel API additions can claim the same number; after

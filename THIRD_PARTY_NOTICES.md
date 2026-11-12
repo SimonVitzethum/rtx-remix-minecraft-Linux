@@ -8,7 +8,7 @@ locations given.
 
 ### Gradle wrapper
 
-- Files: `gradlew.bat`, `gradle/wrapper/`, `forge-1.12.2/gradlew*`, `forge-1.12.2/gradle/wrapper/`
+- Files: `gradlew`, `gradlew.bat`, `gradle/wrapper/`, `forge-1.12.2/gradlew*`, `forge-1.12.2/gradle/wrapper/`
 - Copyright Gradle Inc. and the original authors
 - License: Apache License, Version 2.0 (see [LICENSE](LICENSE))
 - Source: https://github.com/gradle/gradle
@@ -25,8 +25,9 @@ Source: https://github.com/JOML-CI/JOML/tree/1.10.5
 Packaged release JARs bundle the NVIDIA RTX Remix runtime (staged under
 `native/` inside the JAR). The runtime is built from
 [dxvk-remix](https://github.com/NVIDIAGameWorks/dxvk-remix) and carries the
-third-party components that project redistributes. For the pinned runtime
-version those are:
+third-party components that project redistributes. The following historical
+upstream component list does not certify a new platform package; current
+combined-API releases are gated by exact per-platform inventories:
 
 - DXVK
 - Pixar OpenUSD, together with its USD plugin payload
@@ -140,27 +141,42 @@ Toolkit EULA, whose redistribution terms cover these runtime libraries. That
 text is published at <https://docs.nvidia.com/cuda/eula/> and is not
 reproduced in this repository.
 
-## Runtime dependencies that are NOT distributed with this project
+## Fabric API (redistributed)
 
-The following are required at runtime but are not contained in this
-repository or its release artifacts. The installer in the installer bundle
-downloads the ones marked below from their publishers at install time, with
-their own licenses; it does not redistribute them.
+The Fabric mod JAR includes the unmodified Fabric API **0.165.2+26.3** as
+`META-INF/jars/fabric-api-0.165.2+26.3.jar`, declared through Fabric's nested
+JAR metadata. It retains its own nested modules and their license notices.
+Copyright FabricMC contributors; Apache License, Version 2.0. The original
+`LICENSE-fabric-api` remains inside that archive and is also included at
+[packaging/licenses/fabric-api/LICENSE.txt](packaging/licenses/fabric-api/LICENSE.txt).
+Source: https://github.com/FabricMC/fabric
+Published artifact: https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/0.165.2+26.3/fabric-api-0.165.2+26.3.jar
+SHA-256: `2612a078a5daa06d9a14cabad40fe66de36b8cb22ee8cdf346d5d9894478c392`.
 
-- Minecraft (Mojang Studios), subject to the Minecraft EULA; supplied by the
-  player's own installation
-- Fabric Loader and Fabric API (FabricMC), Apache License, Version 2.0;
-  downloaded by the installer from FabricMC's Maven repository
-- Java 21 runtime: Eclipse Temurin (Eclipse Adoptium), GPL-2.0 with the
-  Classpath Exception; downloaded by the installer when no suitable JDK is
-  present
-- Prism Launcher, GPL-3.0; downloaded by the installer from the project's
-  GitHub releases when the player chooses Prism
+The main mod's Apache-2.0 license does not relicense the native runtime,
+its MIT/zlib components, or proprietary NVIDIA libraries. Each native platform
+bundle must carry `inventory.properties` with the exact redistributed files,
+checksums, and `license.*` references to included texts. This requirement
+applies to HTTPS downloads as well as bundled archives. The historical
+component list above describes upstream packages; it is not evidence that a
+new platform package is licensed or complete. No standalone SDK archive or
+external resource pack is included in the universal JAR.
+
+## Runtime dependencies supplied by the launcher or system
+
+- Minecraft Java Edition **26.3**, subject to the Minecraft EULA; supplied by
+  the player's own installation.
+- Fabric Loader **0.19.5 or later**, Apache-2.0; installed by the launcher.
+- A matching 64-bit **Java 25** runtime, e.g. Eclipse Temurin, GPL-2.0 with the
+  Classpath Exception; installed by the launcher. The mod does not bundle a JRE.
+- The NVIDIA display driver and Vulkan loader, under their own licenses;
+  installed through the operating system/driver distribution.
+- Prism Launcher, if chosen, GPL-3.0; independently installed by the player.
 
 ## RTX Remix C API header (MIT)
 
 `rtxremix-java/native/include/remix_c.h` is the C API header of the RTX
-Remix runtime build pinned in `packman/remix-sdk.packman.xml`, from
+coordinated Remix runtime API, from
 [dxvk-remix](https://github.com/NVIDIAGameWorks/dxvk-remix); it can be ahead of
 the header on dxvk-remix `main`. Copyright (c) 2023-2026, NVIDIA CORPORATION,
 under the MIT License, whose text is embedded in the file header. The JNI

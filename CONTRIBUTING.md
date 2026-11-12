@@ -17,13 +17,11 @@ for any change is which repository it belongs in.
   terrain, entity, texture, particle, and cloud pipelines, the gameplay-driven
   conf layers, the settings screen, and the Fabric mixins that feed them.
 
-Wrapper and mod changes belong in the same pull request. The pinned runtime is
-built from an NVIDIA branch of dxvk-remix whose source is not public yet, so
-runtime changes are made by the maintainers: propose one on the
-[RTX Remix tracker](https://github.com/NVIDIAGameWorks/rtx-remix/issues), or as
-a pull request to dxvk-remix where it applies there too. Once a matching
-runtime is published, the SDK manifest, the copied header, the JNI bridge, the
-Java facade, and the mod callers are updated together here. The copied header at
+Wrapper and mod changes belong in the same pull request. The community runtime source is published on `runtime/native-linux` in this
+fork. Native API changes require a coordinated source/header/JNI freeze and
+matching precompiled bundles for all four platforms; see
+[Native Distribution](docs/NATIVE_DISTRIBUTION.md). The manifest, copied header,
+JNI bridge, Java facade and callers are updated together. The copied header at
 `rtxremix-java/native/include/remix_c.h` matches the pinned runtime build and
 must not be edited in isolation or ahead of the published runtime package.
 
@@ -267,24 +265,22 @@ in injection annotations. Remove the diagnostic flag and export afterwards.
 The suite covers JVM-side behavior and data contracts.
 
 It does not cross the JNI boundary and it does not render, so it cannot tell you
-that a change looks right. Two things follow. First, `test` still needs the C++
-toolchain, because every task that reaches `classes` builds the bridge and
-fetches and stages a missing runtime first. Second, a rendering change is not
+that a change looks right. Two things follow. Java tests do not require a C++ toolchain or staged runtime. A rendering change is not
 reviewed until someone has looked at it in a running game: build and launch it
 with `tools\rtx.bat launch`, and say in the pull request what you looked at and
 what you saw. Screenshots of the before and after, taken from the same
 position, are the most useful thing you can attach.
 
-For wrapper changes, the same root Gradle workflow compiles the shim with its
-mod callers and builds the bridge into `build/native/{win64|arm64}/`.
-Visual Studio C++ tools and `JAVA_HOME` pointing to a 64-bit JDK 21 are
-required. Gradle fetches the pinned runtime automatically when it is missing.
-Use `.\tools\rtx.bat sdk local --path <runtime dir> --arch win64` for a local build,
-as described in [Getting Started](docs/GETTING_STARTED.md#get-a-runtime).
-Packman-managed runtimes in `remix-runtime/{win64|arm64}/` are junctions into
-the shared cache. Never copy bridge outputs into them or commit SDKs or native
-build outputs. Launch with `tools\rtx.bat launch` before requesting review on an
-API change: Java compilation alone does not validate native loading.
+For wrapper changes, root `./gradlew test jar` compiles the facade and callers
+without compiling/staging natives. Actual bridge production is explicit through
+`compileNativeLinux`, `compileNativeLinuxArm64`, `compileNativeWin64` or
+`compileNativeArm64`. Windows uses the MSVC C++ tools and Windows JNI headers;
+Linux uses a complete target GL/toolchain sysroot. All four producers include
+the voxel JNI and miniz sources. Run the CPU-only JNI probe and native ABI audit,
+then the separate rendering tests for changes that affect rendering. Native
+payloads, SDK caches and build outputs are never committed; their source/API,
+checksums and licenses are pinned in the platform manifest. See
+[Native Distribution](docs/NATIVE_DISTRIBUTION.md).
 
 The Python tooling has a separate check command:
 
@@ -317,7 +313,7 @@ runtime textures, under `build/release/` with the installer scripts, installer
 documentation, license notices, and the RTX Remix Materials and RTX Remix
 Showcase World zips, and writes a ZIP with the same layout under
 `build/distributions/`. Use `-Parch=win64` or `-Parch=arm64` for one
-architecture; omitting it includes both. The baseline resource pack is built
+architecture; omitting it includes all four platforms. The baseline resource pack is built
 into the mod. The pack and the world come from the `resourcePack` and `world`
 pins in `tools/config.json` that development launches use, so moving a pin
 changes the next release too. `.\gradlew.bat stageReleaseAssets` collects the
@@ -376,8 +372,9 @@ runners. [`check`](.github/workflows/check.yml) installs uv and runs
 `tools\rtx.bat check --tests`: Ruff formatting and lint, ty, the Python tests,
 and the public-boundary gate. On a pull request it also scans the commit
 messages from the base SHA to the head SHA.
-[`build`](.github/workflows/build.yml) installs JDK 21 and runs
-`gradlew.bat build test`. Both use read-only repository permissions and no
+[`build`](.github/workflows/build.yml) installs JDK 25 and runs Java compilation/tests on Linux and Windows. The
+manual native distribution gate verifies all four platform packages and JNI
+loads before the universal build. Both use read-only repository permissions and no
 secrets, including for fork pull requests. The build fetches the pinned
 runtime from public Packman, so it needs no credentials; never add private
 ones to a workflow.
