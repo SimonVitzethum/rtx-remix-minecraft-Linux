@@ -5,7 +5,7 @@
 package com.nvidia.rtxremix.minecraft.vulkan;
 
 /**
- * Coarse terrain for chunks the client does not have: tiles of 64 x 64 cells of 2^lg blocks (lg 2..4) with the surface height
+ * Coarse terrain for chunks the client does not have: tiles of 64 x 64 cells of 2^lg blocks (lg 1..4) with the surface height
  * and an RGB565 colour per cell. Implemented by {@link FarLodSource} (integrated server, generated from the world generator) and
  * {@link FarCacheSource} (multiplayer, built from the chunks this client received earlier).
  */

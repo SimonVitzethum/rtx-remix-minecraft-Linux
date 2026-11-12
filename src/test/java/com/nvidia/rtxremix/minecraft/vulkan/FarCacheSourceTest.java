@@ -38,6 +38,44 @@ class FarCacheSourceTest {
     }
 
     @Test
+    void sessionHandoffWaitsForTileReadersThatCanStillEvictDirtyRegions() throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        FarTileSource fallback = new FarTileSource() {
+            public FarLodSource.Tile get(int lg, int tx, int tz) {
+                if (Thread.currentThread().getName().equals("RemixFarCacheTiles")) {
+                    entered.countDown();
+                    boolean interrupted = false;
+                    while (release.getCount() != 0) {
+                        try { release.await(); }
+                        catch (InterruptedException e) { interrupted = true; }
+                    }
+                    if (interrupted) Thread.currentThread().interrupt();
+                }
+                return null;
+            }
+            public boolean has(int lg, int tx, int tz) { return false; }
+            public void setCenter(int x, int z) {}
+            public void trim(int blocks) {}
+            public int pending() { return 0; }
+            public long generatedCount() { return 0; }
+            public long diskCount() { return 0; }
+            public void close() {}
+        };
+        var source = new FarCacheSource(directory, Path.of("server/dimension"), 16, fallback, CompletableFuture.completedFuture(null));
+        try {
+            source.get(1, 0, 0);
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            source.close();
+            assertThrows(java.util.concurrent.TimeoutException.class, () -> source.flushed().get(1500, TimeUnit.MILLISECONDS));
+        } finally {
+            release.countDown();
+            source.close();
+            source.flushed().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void unavailableFineNoiseDoesNotPublishEmptyTerrainOverAnOlderCoarseTile() throws Exception {
         AtomicBoolean ready = new AtomicBoolean();
         FarLodSource.Tile terrain = new FarLodSource.Tile();

@@ -131,7 +131,14 @@ final class FarCacheSource implements FarTileSource {
         }
         FarChunkSnapshot remaining;
         while ((remaining = recordQueue.poll()) != null) store(remaining.sample());
+        // Tile builds can evict dirty regions while reading. They must release disk ownership before the final flush.
+        boolean interrupted = false;
+        while (tileThread.isAlive()) {
+            try { tileThread.join(); }
+            catch (InterruptedException e) { interrupted = true; }
+        }
         housekeeping(true);
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     synchronized void store(FarChunkSnapshot.Surface surface) {
