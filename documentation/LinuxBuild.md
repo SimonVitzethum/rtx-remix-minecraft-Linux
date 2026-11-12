@@ -136,8 +136,7 @@ Both log to stderr/stdout and write no files.
 
 ## Known Limitations
 
-- DLSS frame generation and neural reconstruction, XeSS, NRC, Reflex,
-  Aftermath, and NVAPI are compiled out on POSIX (`REMIX_NO_NRC`,
+- XeSS, NRC, Reflex, Aftermath, and NVAPI are compiled out on POSIX (`REMIX_NO_NRC`,
   `REMIX_NO_XESS`, `REMIX_NO_NVAPI`, `REMIX_NO_REFLEX`,
   `REMIX_NO_AFTERMATH`).
 - RTXIO is disabled (`-Denable_rtxio=false`).
