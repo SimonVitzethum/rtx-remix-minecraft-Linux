@@ -140,3 +140,26 @@ caves, determinism and flat-volume sharing. `FarSurfaceTilesTest` checks fine ti
 and negative/coarse tile offsets. `FarCacheSourceTest` exercises real asynchronous tiles,
 unchanged surfaces, colour/height updates, persistent reopen and received overrides.
 These JVM checks do not prove mixin execution, visual quality or game performance.
+
+Native terrain pages follow the current camera radius through retained-instance visibility transitions. A page installed outside the radius is made visible when the camera or radius moves over it; disabling Far field restores the native pages without rebuilding their meshes. Unchanged visibility performs no native update.
+
+The scripted `diag` command logs a monotonic timestamp, raw native rendered/presented
+frame counters with their success flag and actual output/internal dimensions and
+upscaler, plus simulation distance. `diag coverage` also requests the detailed DAG and native page snapshots. The plain command avoids constructing those range maps for per-second frame sampling. Far-field diagnostics distinguish wanted keys,
+accepted cache entries, the GPU-committed DAG, submitted work and the completed DAG
+whose GPU readback completed and whose runtime texture update was accepted. Each stage carries its session/generation,
+subtree row ranges, missing current wanted keys and changed source revisions. Empty
+subtrees count as covered but not as geometry. Ranges use 256-block subtree coordinates,
+with inclusive X spans per Z row. These are DAG source coverage, not pixel visibility
+or an assertion that procedural approximations reproduce exact terrain.
+
+Source counters distinguish native-region chunks, live exact chunks, Bobby exact
+chunks and surface fallback chunks. Native-region chunks can also have a surface
+backdrop, so these counters overlap; surface fallback can blend cached received
+and procedural heights. They do not claim a count of purely procedural pixels.
+The terrain visibility diagnostic reports per-distance page totals, visible pages
+and visible solid pages in Chebyshev chunk rings about the actual camera. With
+`cut=1`, native coverage uses distance `< radius`, and the far cut uses `>= radius`.
+The page counts describe retained submissions, not independently verified ray hits.
+
+A published coverage snapshot is source provenance for a completed far-field GPU image and an accepted runtime patch, not a fence proving that every later presented pixel sampled that image. Correlate generations, camera, native page rings and captured output before asserting visible end-to-end coverage. Diagnostic collection itself has a CPU cost and should be reported with measurements.

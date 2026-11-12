@@ -189,7 +189,9 @@ public final class FarField {
 
     /** Merged DAG: {@code nodes[0 .. words)} valid. */
     private record Build(int[] nodes, int words, int root, int levels, int originSx, int originSz, int minY,
-                         int subtrees, int nodeCount, double mergeMs, long session, int generation) {}
+                         int subtrees, int nodeCount, double mergeMs, long session, int generation, FarFieldCoverage coverage) {}
+
+    private record Subtree(FarSubtree.Result geometry, FarFieldCoverage.Sources sources) {}
 
     /** Loaded client chunks of one column, filled on the render thread. */
     private static final class ColumnIn {
@@ -226,10 +228,23 @@ public final class FarField {
         final ColumnIn input;
         final FarChunkSnapshot[] snapshots = new FarChunkSnapshot[256];
         int next;
+        final FarFieldCoverage.Sources sources;
 
         Capture(int sx, int sz, int lg, int minY, int slabs, long key, long signature, FarSurfaceTiles tile, ColumnIn input) {
             this.sx = sx; this.sz = sz; this.lg = lg; this.minY = minY; this.slabs = slabs;
             this.key = key; this.signature = signature; this.tile = tile; this.input = input;
+            int nativeRegion = 0, liveExact = 0, bobbyExact = 0;
+            if (input != null) {
+                for (int i = 0; i < input.cls.length; i++) {
+                    if (input.cls[i] == 1) nativeRegion++;
+                    else if (input.cls[i] == 2) {
+                        if (BobbyCompat.isFake(input.chunks[i])) bobbyExact++;
+                        else liveExact++;
+                    }
+                }
+            }
+            sources = new FarFieldCoverage.Sources(nativeRegion, liveExact, bobbyExact,
+                    tile == null ? 0 : 256 - liveExact - bobbyExact);
         }
     }
 
@@ -239,7 +254,7 @@ public final class FarField {
     private final ByteBuffer skyCopy = ByteBuffer.allocateDirect(SKY_W * SKY_H * 8).order(ByteOrder.nativeOrder());
     private final ByteBuffer push = ByteBuffer.allocateDirect(FarFieldGpu.PUSH_BYTES).order(ByteOrder.nativeOrder());
     private final AtomicReference<Build> built = new AtomicReference<>();
-    private final FarBuildCache<FarSubtree.Result> cache;
+    private final FarBuildCache<Subtree> cache;
     private int epoch;
     private volatile long session;
     private Capture capturing;
@@ -279,7 +294,8 @@ public final class FarField {
     private float[] lastAmbient = {0.1f, 0.1f, 0.1f};
     private double lastRenderGpuMs;
     private long renders;
-    private Build renderedBuild;
+    private Build renderedBuild, publishedBuild;
+    private Vec3 publishedRenderCam;
 
     private FarField() {
         gpu = new FarFieldGpu(width, width / 2);
@@ -337,8 +353,10 @@ public final class FarField {
 
         // 1. finished readback -> Remix
         ByteBuffer pixels = gpu.poll();
-        if (pixels != null && current != null) {
+        if (pixels != null && current != null && renderedBuild != null && renderedBuild.session == session) {
             publish(api, pixels);
+            publishedBuild = renderedBuild;
+            publishedRenderCam = lastRenderCam;
             renders++;
             lastRenderGpuMs = gpu.lastGpuMs();
             if (renders <= 5 || renders % 20 == 0 || Boolean.getBoolean("rtxremix.farfield.diagnostics")) {
@@ -399,6 +417,7 @@ public final class FarField {
                     capturing == null ? 0 : 1, cache.pending(), buildThreads * 2, recordQueue.size(), deferredRecords);
             LOGGER.info("FarField observed-to-subtree-publication: mean {} ms, max {} ms (includes initial population)",
                     String.format("%.2f", cache.meanPublicationMs()), String.format("%.2f", cache.maxPublicationMs()));
+            if (Boolean.getBoolean("rtxremix.farfield.diagnostics")) LOGGER.info("FarField coverage: {}", diagnostics());
         }
 
         // 4. render when something changed
@@ -415,6 +434,34 @@ public final class FarField {
         }
     }
 
+    /** Read-only owner-thread provenance; surface fallback may blend received and procedural data. */
+    public static String diagnostics() {
+        FarField f = instance;
+        String settings = "enabled=" + enabled + " settingRadius=" + radius + " distance=" + distance + " cut=" + cut;
+        if (f == null) return settings + " instance=none";
+        HashMap<Long, FarFieldCoverage.Source> cached = new HashMap<>();
+        for (long key : f.wantedKeys) {
+            var value = f.cache.get(key);
+            if (value != null) cached.put(key, new FarFieldCoverage.Source(value.signature(),
+                    !(value.data().geometry.nodeCount() <= 1 && allZero(value.data().geometry.roots())), value.data().sources));
+        }
+        return settings + " session=" + f.session + " radius=" + f.lastRadius
+                + " plannedDistance=" + Math.max(distance, f.lastRadius + 8)
+                + " planTimeMs=" + f.lastPlanMs + " renderSubmitTimeMs=" + f.lastRenderMs + " publishedRenders=" + f.renders
+                + " cameraChunk=" + f.camChunkX + "," + f.camChunkZ
+                + " wanted=" + f.wantedKeys.length + " wantedRanges=" + FarFieldCoverage.ranges(f.wantedKeys)
+                + " cache=" + new FarFieldCoverage(cached).summarize(f.wantedKeys, f.cache::matches)
+                + " current=" + f.describe(f.current) + " uploading=" + f.describe(f.uploading)
+                + " submitted=" + f.describe(f.renderedBuild) + " submittedCamera=" + f.lastRenderCam
+                + " published=" + f.describe(f.publishedBuild) + " publishedCamera=" + f.publishedRenderCam;
+    }
+
+    private String describe(Build build) {
+        if (build == null) return "none";
+        return "{session=" + build.session + " generation=" + build.generation + " origin=" + build.originSx + "," + build.originSz
+                + " cubeBlocks=" + (1 << build.levels) + " coverage=" + build.coverage.summarize(wantedKeys, cache::matches) + "}";
+    }
+
     private void newLevel(ClientLevel level) {
         levelKey = level;
         session++;
@@ -428,6 +475,9 @@ public final class FarField {
         built.set(null);
         current = null;
         uploading = null;
+        renderedBuild = null;
+        publishedBuild = null;
+        publishedRenderCam = null;
         if (texture != null && !texture.isDeleted()) texture.destroy();
         texture = null;
         mergedEpoch = -1;
@@ -595,15 +645,19 @@ public final class FarField {
             final long[] fw = wanted;
             final long mergeSession = session;
             final int mergeGeneration = mergedEpoch;
-            final HashMap<Long, FarSubtree.Result> entries = new HashMap<>();
+            final HashMap<Long, Subtree> entries = new HashMap<>();
+            final HashMap<Long, Long> signatures = new HashMap<>();
             for (long key : wanted) {
                 var value = cache.get(key);
-                if (value != null) entries.put(key, value.data());
+                if (value != null) {
+                    entries.put(key, value.data());
+                    signatures.put(key, value.signature());
+                }
             }
             final int fl = levels, fox = originSx, foz = originSz, fy = minY, fslabs = slabs;
             pool.execute(() -> {
                 try {
-                    built.set(merge(entries, fw, fl, fox, foz, fy, fslabs, mergeSession, mergeGeneration));
+                    built.set(merge(entries, signatures, fw, fl, fox, foz, fy, fslabs, mergeSession, mergeGeneration));
                 } catch (Throwable t) {
                     LOGGER.error("FarField merge failed", t);
                 } finally {
@@ -725,21 +779,26 @@ public final class FarField {
             } finally {
                 if (diagnostics) LOGGER.info("FarField build end: session {} key {},{} signature {} clock {} result {}", jobSession,
                         capture.sx, capture.sz, capture.signature, System.nanoTime(), result != null);
-                cache.finish(ticket, result);
+                cache.finish(ticket, result == null ? null : new Subtree(result, capture.sources));
                 taskNanos.addAndGet(System.nanoTime() - start);
                 tasksDone.incrementAndGet();
             }
         });
     }
 
-    private Build merge(Map<Long, FarSubtree.Result> entries, long[] wanted, int levels, int originSx, int originSz, int minY, int slabs, long mergeSession, int generation) {
+    private Build merge(Map<Long, Subtree> entries, Map<Long, Long> signatures, long[] wanted, int levels, int originSx, int originSz, int minY, int slabs, long mergeSession, int generation) {
         long t0 = System.nanoTime();
         FarFieldDag dag = new FarFieldDag();
         HashMap<Long, int[]> roots = new HashMap<>();
         int present = 0;
+        HashMap<Long, FarFieldCoverage.Source> coverage = new HashMap<>();
         for (long k : wanted) {
-            FarSubtree.Result result = entries.get(k);
-            if (result == null || result.nodeCount() <= 1 && allZero(result.roots())) continue;
+            Subtree entry = entries.get(k);
+            if (entry == null) continue;
+            FarSubtree.Result result = entry.geometry;
+            boolean geometry = !(result.nodeCount() <= 1 && allZero(result.roots()));
+            coverage.put(k, new FarFieldCoverage.Source(signatures.get(k), geometry, entry.sources));
+            if (!geometry) continue;
             int off = dag.append(result.nodes(), result.nodeCount());
             int[] r = new int[slabs];
             for (int i = 0; i < slabs; i++) {
@@ -756,7 +815,7 @@ public final class FarField {
         LOGGER.info("FarField merge: {} subtrees, {} nodes ({} MiB), cube {} blocks, merge {} ms (avg subtree build {} ms over {} tasks)",
                 present, dag.nodeCount(), (long) words * 4 >> 20, 1 << levels, String.format("%.1f", ms),
                 String.format("%.1f", taskNanos.get() / 1e6 / tasks), tasks);
-        return new Build(dag.rawNodes(), words, root, levels, originSx, originSz, minY, present, dag.nodeCount(), ms, mergeSession, generation);
+        return new Build(dag.rawNodes(), words, root, levels, originSx, originSz, minY, present, dag.nodeCount(), ms, mergeSession, generation, new FarFieldCoverage(coverage));
     }
 
     private static boolean allZero(int[] a) {

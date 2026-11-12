@@ -78,6 +78,10 @@ final class FarBuildCache<V> {
     }
 
     Value<V> get(long key) { return values.get(key); }
+    boolean matches(long key, long signature) {
+        Request request = wanted.get(key);
+        return request != null && request.signature == signature;
+    }
     int size() { return values.size(); }
     double meanPublicationMs() { return publicationNanos / 1e6 / Math.max(1, published); }
     double maxPublicationMs() { return maxPublicationNanos / 1e6; }

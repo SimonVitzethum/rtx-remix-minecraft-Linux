@@ -43,7 +43,7 @@ import java.util.List;
  * shot [marker] NAME       mark a screenshot; optional file acknowledgement yields without blocking rendering
  * scmd TEXT...             integrated-server command (test world only)
  * probe LABEL X Y Z BLOCK [same|new|absent]  verify client state and chunk/section lifetime
- * diag                     log client/server loaded chunk counts and view distances
+ * diag [coverage]          raw frame counters, chunk/pool health; optional DAG provenance and native page rings
  * close                    close the menu like Alt+X does
  * altx                     Alt+X chord through KeyboardHandler.keyPress (toggles the developer menu)
  * move X Y [DX DY]         cursor in window coordinates; "c" is the window centre; X and Y may be fractions like 0.5
@@ -344,7 +344,13 @@ public final class RemixInputTestScript {
             }
             case "diag" -> {
                 var srv = mc.getSingleplayerServer();
-                LOGGER.info("diag: pos={} fps={}", mc.player.position(), mc.getFps());
+                long timestamp = System.nanoTime();
+                long[] frameStats = new long[8];
+                boolean haveFrameStats = org.lwjgl.system.Platform.get() == org.lwjgl.system.Platform.LINUX
+                        && com.nvidia.rtxremix.RemixBridge.linuxFrameStats(frameStats);
+                LOGGER.info("diag: pos={} fps={} clock={} simulationDistance={} runtimeStatsSuccess={} renderedFrames={} presentedFrames={} multiplier={} renderWidth={} renderHeight={} outputWidth={} outputHeight={} upscaler={}",
+                        mc.player.position(), mc.getFps(), timestamp, mc.options.simulationDistance().get(), haveFrameStats,
+                        frameStats[0], frameStats[1], frameStats[2], frameStats[3], frameStats[4], frameStats[5], frameStats[6], frameStats[7]);
                 LOGGER.info("diag: clockTime={} rain={} thunder={}", mc.level.getDefaultClockTime(),
                         mc.level.getRainLevel(1.0f), mc.level.getThunderLevel(1.0f));
                 LOGGER.info("diag: client loaded chunks={} effectiveRD={} optionRD={} serverViewDistance={} serverLoaded={}",
@@ -352,6 +358,18 @@ public final class RemixInputTestScript {
                         mc.options.renderDistance().get(),
                         srv == null ? -1 : srv.getPlayerList().getViewDistance(),
                         srv == null ? -1 : srv.overworld().getChunkSource().getLoadedChunksCount());
+                var renderer = RtxRemixMod.getInstance().getRenderer();
+                if (renderer != null && renderer.getChunkManager() != null) {
+                    LOGGER.info("diag: terrain {}", renderer.getChunkManager().getTerrainDiagnostics());
+                    LOGGER.info("diag: directBuffers allocated={} pooled={} regionArrays={}",
+                            com.nvidia.rtxremix.minecraft.util.DirectBufferPool.allocatedBytes(),
+                            com.nvidia.rtxremix.minecraft.util.DirectBufferPool.pooledBytes(),
+                            com.nvidia.rtxremix.minecraft.terrain.capture.RenderRegionStoragePool.pooledCount());
+                    if (w.length > 1 && w[1].equals("coverage")) {
+                        LOGGER.info("diag: farfield {}", com.nvidia.rtxremix.minecraft.vulkan.FarField.diagnostics());
+                        LOGGER.info("diag: terrainVisibility {}", renderer.getChunkManager().visibilityDiagnostics(mc.gameRenderer.mainCamera().position()));
+                    }
+                }
             }
             case "close" -> {
                 if (RtxRemixMod.getRemixInputGate().isCaptureSessionOpen()) {
