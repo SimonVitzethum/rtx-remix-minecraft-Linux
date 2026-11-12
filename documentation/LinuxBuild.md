@@ -162,6 +162,8 @@ for six phases: 0 queues `EndFrame`, 1 records interop copies, 2 flushes the CS
 chunk, 3 waits for the CS thread, 4 waits for queue submission and the presenter's
 existing synchronization, and 5 performs an explicitly requested device-idle wait.
 `SubmitTraceSlow` records all six phases for submissions lasting at least 100 ms.
+`ApiSubmit` separates retained-instance command emission from the complete interop
+call, including device-lock acquisition before its individual phase timers.
 `SubmissionWait` separates time waiting for queued submissions from presenter
 synchronization when their combined duration reaches 100 ms. `DriverSubmit`
 records existing driver submission calls taking at least 100 ms.

@@ -2186,10 +2186,24 @@ namespace {
       return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
     }
 
+    static const bool traceSubmit = std::getenv("REMIX_TRACE_SUBMIT") != nullptr;
+    using Clock = std::chrono::steady_clock;
+    const auto begin = traceSubmit ? Clock::now() : Clock::time_point {};
     emitRetainedInstances(remixDevice);
     g_retainedEmittedBySubmit.store(true);
+    const auto retained = traceSubmit ? Clock::now() : Clock::time_point {};
 
-    if (FAILED(swapchain->SubmitInterop(info ? info->interopFlags : 0))) {
+    const HRESULT result = swapchain->SubmitInterop(info ? info->interopFlags : 0);
+    if (traceSubmit) {
+      const auto done = Clock::now();
+      const double retainedMs = std::chrono::duration<double, std::milli>(retained - begin).count();
+      const double interopMs = std::chrono::duration<double, std::milli>(done - retained).count();
+      if (retainedMs + interopMs >= 100.0) {
+        dxvk::Logger::info(dxvk::str::format("[ApiSubmit] retained_cpu_ms=", retainedMs,
+          " interop_cpu_ms=", interopMs));
+      }
+    }
+    if (FAILED(result)) {
       return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
     }
     return REMIXAPI_ERROR_CODE_SUCCESS;
