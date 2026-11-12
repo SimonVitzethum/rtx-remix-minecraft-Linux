@@ -3,7 +3,8 @@
 `REMIX_CLUSTER_AS=1` requests `VK_NV_cluster_acceleration_structure` at device
 creation. The default remains the ordinary KHR renderer. Unsupported devices,
 formats, material states and exhausted budgets use that renderer. This is an
-experimental implementation until matched game validation is recorded below.
+experimental implementation. Matched game validation is recorded below, with no
+measured performance advantage for the tested workload.
 There is no PTLAS, camera culling, user installation or API version change.
 
 ## Architecture
@@ -66,106 +67,163 @@ for cached geometry. Diagnostics include live CLAS, cluster BLAS and ordinary op
 counts. Build and cache counters are cumulative CPU-side record counts,
 not GPU completion or performance measurements.
 
-## Validation status — 2026-11-11
+## Validation status — 2026-11-12
 
-The implementation remains experimental. The complete production link and
-matched game validation are **pending**, following an explicit resource-priority
-handoff to the block audit. This is not a completed game optimization or a
-measured game speedup. No hard Vulkan/API blocker has been found.
+The serial Release link and expanded GPU regression are complete. The renderer
+uses live CLAS in a real game, with a matched 600-warmup/600-record-frame pair.
+The tested workload shows **no performance advantage**, so the feature remains
+an experimental opt-in. It must not be enabled by default or advertised as a
+measured game speedup.
 
-The source baseline is `b07f55fac673e9a32d2eb53e96597ae13f616311`, including
-API 0.16.2 and the `f3f569d` ELF COMDAT shader embedding fix. Committed main fix
-`95793098b4eb5e16ae7a1a2eb9d35aa1ecab6276` is included locally as
-`3f5dd79349b1ec17d7cbe7bfd64a0f84d54a8681`. Production source and the expanded
-harness are at `c8deb130dfed770b45506741d7d2882f3af72700` before this documentation
-update. The only pre-existing untracked state is `submodules/nrc`, which was
-preserved.
+### Exact tested artifacts
 
-### Completed checks
+The renderer source is `47ab12010f8d7e0754e4164e91e914ff350f6a17`, based on
+`b07f55fac673e9a32d2eb53e96597ae13f616311`, including the `f3f569d` ELF COMDAT
+fix and API 0.16.2. Main diagnostic fix `9579309` is present as `3f5dd79` and
+main inotify fix `2bc9ba1` as `47ab120`. The later process-test and documentation
+commits do not change the tested renderer sources.
 
-- The production planner passes coverage/ordering tests for 1, 63, 64, 65, 127,
-  128, 65535 and 65536 primitives. Empty/oversized/overflow input, insufficient
-  vertex/triangle capabilities and the strict geometry-index bound fall back.
-- The actual DXVK lifetime tracker passes tests for outstanding submissions,
-  cache unload, previous-TLAS references and unsubmitted-command cancellation.
-  Reservations stay charged until references retire. The current CPU checks
-  and harness build pass at `c8deb13` (416186368-byte compile-scope peak).
-- Production shaders compile and validate, including the hit normalization
-  helpers and gather shader. The cluster production C++ object compiled with
-  `-O3`, and the existing production build directory is reused incrementally.
-- GPU regression at `bdc9927e53520ffdfae38ad35b208ad2a16eae88` passes on an NVIDIA
-  GeForce RTX 5070 Laptop GPU, cluster extension revision 4. Queried limits:
-  256 triangles/256 vertices per cluster, max geometry index 16777215, CLAS/BLAS/
-  scratch alignment 128/256/256 bytes. The checked-in headers expose revision 2;
-  only the common supported operations are used.
-- That run verifies hit/miss, distance and normalized primitive/geometry/cluster
-  IDs on a bounded 8×8 grid, including zero surviving clusters. It also executes
-  the actual production gather for reverse-indexed/interleaved uint16 and uint32
-  input, a 65-triangle partial final cluster and an inactive primitive inside
-  the first cluster. All gather/identity checks have zero mismatches. PTLAS
-  regressions also pass in the isolated harness; PTLAS is not used in production.
-- Synchronization validation reports no VUID/SYNC violation in that run. Its
-  only warning concerns a deprecated test-layer configuration setting; subsequent
-  prepared runs use `VK_LAYER_VALIDATE_SYNC=1`.
+- Raw runtime SHA256: `ed8e004b9f8f42f29b57edba63a55aba29fc6e92fa399acb4a8ac5a6239cd897`.
+- Staged and actually loaded runtime SHA256: `e03c04cb3d39e8b3f172c7a18d3ac4c2034cceab9f686f9a38b9652cd3556ec2`.
+- Private JAR SHA256: `6a2eb1a820a176f23778a753a78545764459f4547c868fdb83b4f68ce4628d4f`.
+- JNI SHA256: `ad40f114652e080efee598953e43111e5356c1de9ac40cff687a28b0df7d196e`.
+- Java base: `d11513cfcf284517b31aa24fbd6e1b3affbb01ae`, original JAR SHA256
+  `ebbfe437bbb9a10029c5106ac098b8a6d5ab55b1f240756bb33d800cbe7c03b4`.
+  The main owner's 859 passing JVM tests/package verification are reused for
+  that exact base. They are not reported as a new JVM test run by this task.
 
-The initial GPU executable SHA256 is
-`d0cb925af739c5f93f5d7d28ebe331e06ff4a27e2a23130a799cca870b818ddc`.
-The GPU test's host scope peak is 123383808 bytes. These are isolated correctness
-results, not game, VRAM or renderer-performance measurements. The initial harness
-contains synthetic unconditional KHR rebuild timings; they are not a retained
-cache baseline and are not used to claim a performance benefit.
+The package lives under `../port-artifacts/scratch/cluster-next/stage/`. Its
+embedded `META-INF/cluster-validation.json` and `stage-status.json` distinguish
+raw, staged, loaded and Java-base provenance. Staging refuses an unsuccessful
+link, a different exact HEAD or changed raw runtime bytes. Rebuilding/restaging
+is required before running those scripts against a subsequent HEAD.
 
-### Audit-priority interruption and continuation
+### Correctness checks
 
-The resumed serial `-O3` build was interrupted explicitly for resource
-coordination at **74/154**. Its scope retired completely and all owned resource
-wrapper processes ended. Peak host scope memory was 3148054528 bytes; high, max,
-OOM and OOM-kill counters were zero. This interruption is not a source failure
-or memory failure. Finished TUs and the existing compiler cache remain available.
-No user program was terminated and no main source/staging file was changed.
+- The resumed `-O3`, `ninja -j1` runtime build completed its remaining 84 steps
+  in about 767 seconds, reusing the existing build directory. The scope peak
+  was 5123502080 bytes; high/max/OOM/OOM-kill events were zero. Two shader workers
+  and the existing compiler GC prefix were retained.
+- Planner and actual DXVK lifetime-tracker tests pass at the tested source,
+  including partial clusters, insufficient capabilities, strict geometry-index
+  bounds, previous-TLAS retention, unload and cancelled-command reservations.
+  The imported Linux file-watcher regression also passes.
+- All 574 linked ELF shader symbols match the cached SPIR-V bytes and alignment,
+  including `cluster_pack`. Selected production shaders validate and contain no
+  NV cluster SPIR-V capability. C API 0.16.0/1/2 canaries succeed and incompatible
+  versions return the expected rejection without overwriting the output buffer.
+- The expanded GPU executable SHA256 is
+  `37f9f354ffe0e5a92a6b2ee314f75268726b3d01509c771e11e040e8dc0be2f9`.
+  It passes on an RTX 5070 Laptop GPU, driver 615.78.08, extension revision 4.
+  Queried limits are 256 triangles/256 vertices, max geometry index 16777215 and
+  CLAS/BLAS/scratch alignments 128/256/256. Only common header-revision-2 operations
+  are used. Synchronization validation reports no VUID/SYNC error.
+- The GPU test executes the production committed-hit macro and production gather
+  for reversed/interleaved uint16 and uint32 input, 65 triangles, a partial final
+  cluster and an inactive primitive. Hit/distance/primitive/geometry/cluster,
+  surface/material/custom-index/view-model checks have zero mismatches. Grid and
+  zero-survivor tests pass. Its synthetic rebuild timings are not a game baseline.
 
-All build/GPU/game continuation must wait until the priority audit has completed,
-then use the shared `resource-run.sh` admission and lock again. Prepared scripts
-and exact logs/statuses are under `../port-artifacts/scratch/cluster-next/`:
+### Real renderer and performance evidence
 
-- `after-priority-compile.py`: serial expanded-harness/lifetime checks, then the
-  remaining incremental native build. It keeps release optimization, two shader
-  workers, `ninja -j1`, compiler GC limits and the existing embedding fix.
-- `gpu-check.py`: the expanded GPU regression now also consumes the real
-  production committed-hit macro and checks surface ID, material type and
-  custom-index/view-model flags. This **expanded GPU execution is still pending**.
-- `stage.py`: refuses staging without a successful exact-HEAD native build and
-  matching raw runtime hash. It writes only its own scratch package. The prepared
-  Java base is `e2300af` (main owner's 854 passing tests), jar SHA256
-  `81f01c858e62df0d2387799836780078ffa6b7b4faf6e7db63490b8c388a70d3`.
-- `game-session.py on|off`: private S25 instance/profile, identical package,
-  feature settings, resource pack, scene script and poses; virtual game-window
-  captures only. It covers material views, natural terrain, block changes and
-  unload/reload, followed by the existing deterministic Java camera benchmark
-  (600 warmup and 600 recorded frames). It uses an alias to the existing private
-  test world, never a copied world, and restores configuration/removes its alias.
-  Every loaded runtime/JNI path and hash, PID/cwd/start time and cleanup result is
-  checked. The whole session, including cleanup, belongs inside the game wrapper.
+Private S25 sessions use the same JAR/runtime/JNI, Simplista ZIP, settings and
+world. PID/start-time/cwd/instance and actual loaded paths/hashes are checked.
+Both runs restore settings, remove their private world alias, reap their owned
+processes and finish with zero high/max/OOM events. All build/GPU/game work is
+serialized through `resource-run.sh` and its existing global lock.
 
-There is no game-stage artifact or game result from this branch yet. The prepared
-session scripts have not been executed and may need ordinary harness fixes.
+The game reports, for example, 68 cluster BLAS, 940 active CLAS and 68 ordinary
+opaque-TLAS instances referencing them. The traversal uses the normal instance
+masks, transforms, SBT and material/surface mappings. During the recorded camera
+path, 11 cluster BLAS/77 CLAS remain active. Build count stays at 303 while hits
+increase from 989897 to 996497, demonstrating retained reuse rather than forced
+per-frame rebuilds. The measured pair's largest sampled rounded reservation was 6574080 bytes;
+this workload does not test budget pressure at the 256 MiB limit.
 
-### Remaining evidence and integration
+The existing fixed-60-Hz Java camera path records 600 frames after 600 warmup
+frames, at 1280×720 and render distance 6. Reported simulation distance is 12 in
+both runs. The KHR baseline keeps its ordinary cache and all rendering features.
 
-Complete the native link, run the expanded GPU check, then prove nonzero live
-CLAS/cluster BLAS and opaque-TLAS instance counters in the actual game renderer.
-Review matched material, shadow and reflection images. Compare retained-cache
-hits/builds and frame distributions, CPU recording cost, host memory and measured
-VRAM; do not infer game GPU AS-build time from standalone timestamps. Game GPU
-AS-build timings and any performance advantage remain unmeasured.
+| Frame time (ms) | KHR/off | CLAS/on |
+| --- | ---: | ---: |
+| Mean | 8.643 | 8.827 |
+| p50 | 9.530 | 9.483 |
+| p95 | 12.443 | 12.483 |
+| p99, linear quantile | 16.711 | 18.755 |
+| Maximum | 21.379 | 25.909 |
 
-Unsupported-device behavior is guarded by advertised extension/features and
-queried limits, and the shader mapping uses ordinary KHR builtins. Planner
-fallback cases are tested in software. No Nouveau/AMD/older-NVIDIA hardware
-validation is claimed. Maximum-page/budget pressure and real game reload/retirement
-still need execution.
+Neither run records a frame above 33 ms. On has 2.13% higher mean frame time in
+this single sequential pair, which is not evidence of a speedup or a statistical
+estimate of a universal regression. Four conservative interior 120-call CPU
+windows show dynamic-BLAS phases of 0.031317 ms off and 0.033429 ms on. These are
+CPU recording phases, not GPU AS timestamps. Most frame time belongs to ordinary
+submit/render and atlas work; no production GPU AS build timestamp was isolated.
+There is no rebuild saving to claim during a window with unchanged CLAS builds.
 
-No Java contract or public Remix API change is needed. Parent integration should
-include the cluster commits and retain the main `9579309` diagnostic fix; when
-cherry-picking into a branch already containing that fix, skip its local duplicate
-`3f5dd79`. No push, PR, user installation or main merge was performed.
+Global `nvidia-smi` peaks are 2391 MiB off and 2435 MiB on; these include other
+applications and the compositor and are not precise CLAS allocations. Sampled
+Java RSS peaks are 6206968 KiB off and 8515340 KiB on. The shared session scope
+peak is cumulatively 9189801984 bytes. Startup/JIT/charged file-cache differences
+are not attributed to CLAS storage. Raw frame series, CPU windows, memory samples,
+artifact comparisons and the chart are preserved in `scratch/cluster-next/`.
+
+### Visual checks and harness fixes
+
+All 26 original images in the follow-up pair were opened and reviewed. All 13
+actual player/camera poses and the JAR/runtime/JNI/pack/configuration hashes match.
+The wall material layout, colored glass, shulkers, end-portal sources, ordinary
+shadows and refracted/reflected surfaces remain present. The stone edit is visible
+and server-confirmed, then removed; the fixture is present again after unload and
+reload. Fullbright stays off. Direct/indirect displacement lighting, NEE cache and
+ReSTIR GI are queried as enabled. These are bounded scene observations, not
+exhaustive pixel equivalence for stochastic lighting or every reflected ray.
+
+A transient purple geometry streak appeared in the first flag-off freecam image;
+it is absent in both corresponding matched-pose follow-up images. No fix for that
+baseline observation is claimed. Preserve and validate the parent's later render
+fixes when integrating. The natural-terrain pair retains the same coastline and
+water geometry, with differing temporal water/lighting samples under heavy fog.
+
+Evidence is in `game-on-20261112-021631`, `game-off-20261112-022051`,
+`visual-on-20261112-023947`, `visual-off-20261112-024339`,
+`pair-analysis.json`, `benchmark-cpu-windows.json` and
+`matched-visual-status.json`, all under `../port-artifacts/scratch/cluster-next/`.
+
+The first launch attempt did not start a Game JVM because an old private Prism
+instance stored its Java path in the UI section. The harness now sets General's
+Java override and a 60-second JVM start bound. A serial-controller cleanup defect
+was also found: collecting every cgroup PID included the parent Python controller.
+The shared `tools/cluster_selftest/session_processes.py` excludes the full ancestor
+lineage and preserves PID/start-time ownership for cleanup even after a scope
+error. Its nested-controller regression and subsequent real serial sessions test
+this behavior. The live follow-up used helper SHA256 `e8450238c3b3fadac8c6a5df3202dc869d19b6d38d16ee0b03a72655c7b07662`.
+The final process-only regression also covers the added stale-PID and cgroup
+identity guards in helper SHA256 `7300f8b8e54b65003a72a1f737636f59a25ba0ee8cb30a1557329598512a11f2`.
+It reaps the real nested launcher/session, passes, and records a 16404480-byte
+scope peak with zero memory events. Restore data is persisted before launch as
+well as held in memory.
+The failed attempt is recorded separately and is not a successful game check.
+
+The first pair's close wall images had a camera-angle race: the existing `tp`
+hook sets client angles before the queued server teleport completes. The visual
+follow-up reapplies `look` after teleport acknowledgement and records the actual
+pose before every shot. It does not reuse mismatched images as a visual pass.
+
+### Remaining bounds and parent integration
+
+No physical unsupported-device, maximum-page or budget-pressure execution is
+claimed. Software capability/limit rejection and the flag-off KHR game path are
+covered. Full production Vulkan validation, exhaustive reflected/indirect ray
+coverage and isolated game GPU AS timestamps are not established by these runs.
+Natural-terrain views at the selected pose are heavily affected by distance fog.
+The targeted fixture review is not a replacement for the separate block audit.
+
+Main advanced during this task to later render fixes, including `fdb4fb9`'s
+AS-scratch destination write synchronization and `5e82180`'s explicit API-instance
+sidedness. They are outside this immutable measured artifact. Parent integration
+must retain those changes, render-pass/format/frame-generation fixes and the
+cluster hierarchy lifetimes, then rebuild, verify exact loaded hashes and run a
+bounded combined regression. These results do not validate that future artifact.
+Skip the duplicate local `3f5dd79` and `47ab120` when importing into a main branch
+that already contains `9579309` and `2bc9ba1`. No main source/staging changes,
+user installation, push, PR, new checkout or subagent was performed by this task.
