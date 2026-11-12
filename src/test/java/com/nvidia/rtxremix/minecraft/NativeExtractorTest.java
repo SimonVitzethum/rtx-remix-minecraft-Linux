@@ -47,10 +47,35 @@ class NativeExtractorTest {
             "aarch64, remix-sdk-arm64",
             "amd64, remix-sdk-win64",
             "x86_64, remix-sdk-win64",
-            "ppc64le, remix-sdk-win64"
+            "arm64, remix-sdk-arm64"
     })
     void detectedArchitecturesResolveToTheirSdkDirectories(String arch, String expectedDirectory) {
         assertEquals(expectedDirectory, NativeExtractor.detectPlatformSdkDir(arch));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"amd64,Linux,remix-sdk-linux64", "x86_64,Linux,remix-sdk-linux64",
+            "arm64,Linux,remix-sdk-linuxarm64", "aarch64,Linux,remix-sdk-linuxarm64",
+            "arm64,Windows 11,remix-sdk-arm64", "aarch64,Windows 11,remix-sdk-arm64",
+            "amd64,Windows 10,remix-sdk-win64", "x86_64,Windows 11,remix-sdk-win64"})
+    void mapsEverySupportedOsCpuPair(String arch, String os, String expected) {
+        assertEquals(expected, NativeExtractor.detectPlatformSdkDir(arch, os));
+    }
+
+    @Test
+    void rejectsUnsupportedHostsWithoutAnX86Fallback() {
+        assertThrows(IllegalArgumentException.class, () -> NativeExtractor.detectPlatformSdkDir("ppc64le", "Linux"));
+        assertThrows(IllegalArgumentException.class, () -> NativeExtractor.detectPlatformSdkDir("amd64", "Mac OS X"));
+        assertThrows(IllegalArgumentException.class, () -> NativeExtractor.detectPlatformSdkDir("x86", "Windows 11"));
+    }
+
+    @Test
+    void failedSdkPublicationRestoresThePreviousInstallation(@TempDir Path tmp) throws IOException {
+        Path live = Files.createDirectory(tmp.resolve("remix-sdk"));
+        Files.writeString(live.resolve("user-settings.conf"), "preserved");
+        assertThrows(NoSuchFileException.class, () -> NativeExtractor.retireAndSwap(
+                live, tmp.resolve("missing-staging"), INLINE_CLEANUP));
+        assertEquals("preserved", Files.readString(live.resolve("user-settings.conf")));
     }
 
     @Test

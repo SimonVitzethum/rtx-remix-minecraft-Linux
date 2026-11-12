@@ -27,20 +27,16 @@ def gitDirty = providers.exec {
     commandLine 'git', 'status', '--porcelain', '--untracked-files=no'
 }.standardOutput.asText.map { it.trim().isEmpty() ? '' : '-dirty' }
 
-// --- Build target architectures ------------------------------------------
-// Gradle -Parch flag controls which platforms are included in the JAR and
-// which native bridges are compiled. Omit for the default dual-arch fat JAR;
-// pass -Parch=win64 or -Parch=arm64 for a single-arch dev JAR.
+// The default artifact covers both CPUs on Linux and Windows. Native production
+// is explicit; Java compilation and tests never invoke a host compiler.
+def supportedArches = ['linux64', 'linuxarm64', 'win64', 'arm64']
 def archProperty = project.findProperty('arch')
-if (archProperty && !(archProperty in ['win64', 'arm64', 'linux64'])) {
-    throw new GradleException(
-        "Invalid -Parch value: '${archProperty}'. Use win64, arm64 or linux64 " +
-        "(or omit for dual-arch fat JAR).")
+if (archProperty && !(archProperty in supportedArches)) {
+    throw new GradleException("Invalid -Parch=${archProperty}; use ${supportedArches.join(', ')}")
 }
-def buildArches = archProperty ? [archProperty] : ['win64', 'arm64']
+def buildArches = archProperty ? [archProperty] : supportedArches
 def isSingleArchJar = archProperty != null
-logger.lifecycle("Build target arches: ${buildArches.join(', ')}" +
-        (isSingleArchJar ? " (single-arch JAR mode)" : " (fat JAR)"))
+logger.lifecycle("Build target arches: ${buildArches.join(', ')}")
 
 def archSuffix = isSingleArchJar ? "-${archProperty}" : ''
 version = "${baseVersion}-${buildTimestamp}-${gitShortHash.get()}${gitDirty.get()}${archSuffix}"
@@ -52,56 +48,6 @@ def benchmarkTracyJavaMaxDepth = providers.gradleProperty("benchmarkTracyJavaMax
 def benchmarkJfrThrowables = providers.gradleProperty("benchmarkJfrThrowables")
         .orElse(providers.environmentVariable("RTX_BENCHMARK_JFR_THROWABLES"))
         .orElse("false")
-
-// --- Fat-JAR source homogeneity check ------------------------------------
-// When building the dual-arch fat JAR, both platforms' SDKs must come from
-// the same source: both staged locally, or both from a managed source. Mixed
-// sources inside a single JAR would be confusing and are disallowed.
-// Single-arch JARs (isSingleArchJar) skip this check trivially.
-def checkPackageSourceHomogeneity = { ->
-    if (isSingleArchJar) return
-
-    def sources = [:]
-    ['win64', 'arm64'].each { arch ->
-        def sentinel = file("remix-runtime/${arch}/.local-sdk-source")
-        sources[arch] = sentinel.exists()
-                ? [type: 'local', detail: sentinel.text.trim()]
-                : [type: 'managed', detail: '']
-    }
-
-    def uniqueTypes = sources.values().collect { it.type }.unique()
-    if (uniqueTypes.size() == 1) return  // homogeneous, all good
-
-    // Mixed: build an actionable error.
-    def localArches = sources.findAll { k, v -> v.type == 'local' }.collect { k, v -> k }
-    def managedArches = sources.findAll { k, v -> v.type == 'managed' }.collect { k, v -> k }
-
-    def msg = new StringBuilder()
-    msg.append("\nERROR: fat JAR requires both platforms from the same source.\n")
-    sources.each { arch, info ->
-        if (info.type == 'local') {
-            def line1 = info.detail.readLines().find { it.startsWith('source:') } ?: 'source: (unknown)'
-            def line2 = info.detail.readLines().find { it.startsWith('staged_at_utc:') } ?: ''
-            msg.append("  remix-runtime/${arch}/   staged locally  (${line1.trim()} ${line2.trim()})\n")
-        } else {
-            msg.append("  remix-runtime/${arch}/   managed source  (no .local-sdk-source)\n")
-        }
-    }
-    msg.append("\nTo proceed, choose one:\n")
-    msg.append("  (a) Build a single-platform JAR from an architecture you have staged:\n")
-    localArches.each { msg.append("        .\\gradlew.bat package -Parch=${it}\n") }
-    msg.append("  (b) Stage the remaining platform(s) the same way, then build again:\n")
-    managedArches.each {
-        msg.append("        .\\tools\\rtx.bat sdk local --arch ${it} --path <runtime dir>\n")
-    }
-    msg.append("      docs/GETTING_STARTED.md#get-a-runtime says where to get one.\n")
-    msg.append("  (c) Restore the managed source for ${localArches.join(', ')}:\n")
-    localArches.each {
-        msg.append("        .\\tools\\rtx.bat sdk packman --arch ${it}\n")
-    }
-
-    throw new GradleException(msg.toString())
-}
 
 // Shared exclusion rules for both setupRuntime and packageJar.
 //   - Strip dxvk PDBs (~100MB), keep remixbridge.pdb (small, useful for debugging)
@@ -212,6 +158,7 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:${fabricLoaderVersion}"
 
     implementation fabricApiCoordinate
+    include(fabricApiCoordinate) { transitive = false }
 
     // Testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
@@ -267,7 +214,8 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 def isLinuxHost = System.getProperty("os.name", "").toLowerCase().contains("linux")
-def currentRuntimeArch = isLinuxHost ? "linux64" : (System.getProperty("os.arch") == "aarch64" ? "arm64" : "win64")
+def armHost = System.getProperty("os.arch", "").toLowerCase(java.util.Locale.ROOT) in ["aarch64", "arm64"]
+def currentRuntimeArch = isLinuxHost ? (armHost ? "linuxarm64" : "linux64") : (armHost ? "arm64" : "win64")
 def runtimeArch = archProperty ?: currentRuntimeArch
 def runtimeSdkDir = "remix-runtime/${runtimeArch}"
 def runtimeBridgeDir = "build/native/${runtimeArch}"
@@ -327,6 +275,13 @@ def checkLinuxRuntimeTask = tasks.register('checkLinuxRuntimeStaged') {
     }
 }
 fetchRuntimeSdkTasks['linux64'] = checkLinuxRuntimeTask
+fetchRuntimeSdkTasks['linuxarm64'] = tasks.register('checkLinuxArm64RuntimeStaged') {
+    doLast {
+        if (!file('remix-runtime/linuxarm64/libremixapi.so').isFile()) {
+            throw new GradleException('Stage a matching Linux ARM64 runtime in remix-runtime/linuxarm64 first.')
+        }
+    }
+}
 
 // Dev run/ keeps full SDK contents including PDBs so debugger sessions against
 // a locally-built (possibly debug-flavor) dxvk can resolve symbols. packageJar
@@ -334,7 +289,7 @@ fetchRuntimeSdkTasks['linux64'] = checkLinuxRuntimeTask
 // stay excluded so the freshly-built build/native/{arch} copy wins.
 def syncRuntimeSdkTask = tasks.register('syncRuntimeSdk', Sync) {
     dependsOn fetchRuntimeSdkTasks[runtimeArch]
-    dependsOn runtimeArch == "arm64" ? 'compileNativeArm64' : (runtimeArch == "linux64" ? 'compileNativeLinux' : 'compileNativeWin64')
+    dependsOn([win64: 'compileNativeWin64', arm64: 'compileNativeArm64', linux64: 'compileNativeLinux', linuxarm64: 'compileNativeLinuxArm64'][runtimeArch])
     doFirst {
         // Sync treats a missing `from` dir as empty and would silently strip
         // run/remix-sdk down to just the bridge DLL. Fail with the fix instead.
@@ -465,7 +420,7 @@ tasks.register('setupRuntime') {
             syncRuntimeRemixModsTask, migrateDevelopmentResourcePacksTask
 }
 
-tasks.named('classes') {
+tasks.named('runClient') {
     dependsOn 'setupRuntime'
 }
 
@@ -547,169 +502,103 @@ jar {
     }
 }
 
-// `build` leaves Loom's remapped lightweight JAR in build/libs for fast dev
-// iteration. packageJar starts with that already-remapped JAR and adds only the
-// selected native payload, writing the distributable JAR to build/distributions.
-// Packaging therefore depends on an explicit task instead of guessing intent
-// from Gradle's command-line task names (`package` versus `:package`).
-def remapJarTask = tasks.named('jar')
-def packageJarTask = tasks.register('packageJar', Zip) {
-    description = 'Assembles the remapped distributable JAR with the selected platform SDKs bundled'
-    group = 'build'
-    dependsOn remapJarTask
-    dependsOn buildArches.collect { fetchRuntimeSdkTasks[it] }
-    if (buildArches.contains('win64')) dependsOn 'compileNativeWin64'
-    if (buildArches.contains('arm64')) dependsOn 'compileNativeArm64'
-    if (buildArches.contains('linux64')) dependsOn 'compileNativeLinux'
+// A single manifest binds each bundle to the runtime API, bridge ABI, source
+// revisions, hashes, file inventory and platform contract. Missing platforms are
+// release blockers, never silently omitted from a universal artifact.
+def nativeManifest = file('packaging/native-bundles/manifest.properties')
+def nativeBundleDir = providers.gradleProperty('nativeBundlesDir')
+        .map { file(it) }.orElse(layout.buildDirectory.dir('native-bundles').map { it.asFile })
+def verifyNativeBundles = tasks.register('verifyNativeBundles', JavaExec) {
+    group = 'verification'
+    description = 'Verifies all selected precompiled native bundles; never compiles natives'
+    dependsOn 'classes'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.nvidia.rtxremix.minecraft.NativeBundles'
+    maxHeapSize = '256m'
+    args 'verify', nativeManifest.absolutePath, nativeBundleDir.get().absolutePath,
+            buildArches.join(','), projectDir.absolutePath
+}
 
+def verifyFabricApi = tasks.register('verifyFabricApi') {
+    def api = configurations.detachedConfiguration(dependencies.create(fabricApiCoordinate))
+    api.transitive = false
+    inputs.files(api)
+    doLast {
+        def hash = java.security.MessageDigest.getInstance('SHA-256')
+        api.singleFile.withInputStream { input ->
+            byte[] buffer = new byte[65536]
+            int count
+            while ((count = input.read(buffer)) != -1) hash.update(buffer, 0, count)
+        }
+        if (hash.digest().encodeHex().toString() != '2612a078a5daa06d9a14cabad40fe66de36b8cb22ee8cdf346d5d9894478c392') {
+            throw new GradleException('Fabric API 0.165.2+26.3 SHA-256 mismatch')
+        }
+    }
+}
+
+def remapJarTask = tasks.named('jar')
+remapJarTask.configure {
+    dependsOn verifyFabricApi
+    archiveClassifier.set('dev')
+    destinationDirectory.set(layout.buildDirectory.dir('intermediates'))
+}
+tasks.named('sourcesJar') { destinationDirectory.set(layout.buildDirectory.dir('intermediates')) }
+
+def packageJarTask = tasks.register('packageJar', Zip) {
+    description = 'Assembles the installable universal mod JAR with verified native bundles and Fabric API'
+    group = 'build'
+    dependsOn remapJarTask, verifyNativeBundles, fetchRuntimeTexturesTask
     archiveBaseName.set(projectArchiveName)
     archiveVersion.set(resolvedBuildVersion)
     archiveExtension.set('jar')
-    destinationDirectory.set(layout.buildDirectory.dir('distributions'))
+    destinationDirectory.set(layout.buildDirectory.dir('libs'))
     duplicatesStrategy = DuplicatesStrategy.FAIL
     preserveFileTimestamps = false
     reproducibleFileOrder = true
-
     from({ zipTree(remapJarTask.get().archiveFile.get().asFile) })
-
-    doFirst {
-        checkPackageSourceHomogeneity()
+    from(nativeManifest) { into 'native'; rename { 'manifest.properties' } }
+    buildArches.each { arch ->
+        from(nativeBundleDir.map { new File(it, "${arch}.zip") }) { into 'native/bundles' }
     }
-
-    // Layer the per-arch SDK and our locally-built bridge into a single
-    // native/remix-sdk-{arch}/ subtree inside the JAR. The explicit remixbridge.*
-    // excludes keep a stale copy inside an SDK directory from winning over the
-    // freshly-built per-arch bridge.
-    if (buildArches.contains('win64')) {
-        from("remix-runtime/win64") {
-            into("native/remix-sdk-win64")
-            exclude sdkExclusions
-            exclude 'remixbridge.dll', 'remixbridge.pdb'
-        }
-        from("build/native/win64") {
-            into("native/remix-sdk-win64")
-            include "remixbridge.dll", "remixbridge.pdb"
-        }
-    }
-    if (buildArches.contains('arm64')) {
-        from("remix-runtime/arm64") {
-            into("native/remix-sdk-arm64")
-            exclude sdkExclusions
-            exclude 'remixbridge.dll', 'remixbridge.pdb'
-        }
-        from("build/native/arm64") {
-            into("native/remix-sdk-arm64")
-            include "remixbridge.dll", "remixbridge.pdb"
-        }
-    }
-
-    if (buildArches.contains('linux64')) {
-        from("remix-runtime/linux64") {
-            into("native/remix-sdk-linux64")
-            exclude 'remixbridge.so'
-        }
-        from("build/native/linux64") {
-            into("native/remix-sdk-linux64")
-            include "remixbridge.so"
-        }
-    }
-
-    from("packaging/rtx.conf") {
-        into("native")
-    }
-    from("packaging/rtx-remix") {
-        into("native/rtx-remix")
-    }
-    // License texts for the redistributed runtime payload, under the same path
-    // THIRD_PARTY_NOTICES.md links to. Kept outside native/ so NativeExtractor's
-    // payload layout is unchanged.
-    from("packaging/licenses") {
-        into("packaging/licenses")
-    }
-    // The runtime textures the mod loads from <gameDir>/textures/.
-    // NativeExtractor writes them there, so a JAR that a launcher installs on
-    // its own, with no installer beside it, is complete.
-    dependsOn fetchRuntimeTexturesTask
-    from(runtimeTexturesDir) {
-        into("native/textures")
-        include runtimeTextureFiles
-    }
+    from('packaging/rtx.conf') { into 'native' }
+    from('packaging/rtx-remix') { into 'native/rtx-remix' }
+    from('packaging/licenses') { into 'packaging/licenses' }
+    from(runtimeTexturesDir) { into 'native/textures'; include runtimeTextureFiles }
 }
-
 def packageJarArchive = packageJarTask.flatMap { it.archiveFile }
-def remixModsPayloadDir = file('packaging/rtx-remix')
-def licensesPayloadDir = file('packaging/licenses')
-def verifyPackageJarTask = tasks.register('verifyPackageJar') {
-    description = 'Verifies the distributable JAR contains exactly the selected native payloads, the runtime textures, and the license texts'
+def verifyPackageJarTask = tasks.register('verifyPackageJar', JavaExec) {
+    description = 'Checks the final drop-in JAR, nested Fabric API and every selected native inventory'
     group = 'verification'
     dependsOn packageJarTask
-    inputs.file(packageJarArchive)
-    inputs.dir(remixModsPayloadDir)
-    inputs.dir(licensesPayloadDir)
-
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.nvidia.rtxremix.minecraft.NativeBundles'
+    maxHeapSize = '256m'
+    args 'jar', packageJarArchive.get().asFile.absolutePath, buildArches.join(','), projectDir.absolutePath
     doLast {
         def archive = packageJarArchive.get().asFile
-        def zip = new java.util.zip.ZipFile(archive)
-        try {
-            // NativeExtractor refuses to extract without the shipped payload history.
-            def required = ['META-INF/MANIFEST.MF', 'fabric.mod.json', 'native/rtx.conf',
-                            'rtx-remix-shipped-payload.sha256']
-            buildArches.each { arch ->
-                if (arch == 'linux64') {
-                    required.add("native/remix-sdk-${arch}/libremixapi.so")
-                    required.add("native/remix-sdk-${arch}/remixbridge.so")
-                    return
-                }
-                required.add("native/remix-sdk-${arch}/d3d9.dll")
-                required.add("native/remix-sdk-${arch}/remixbridge.dll")
-                required.add("native/remix-sdk-${arch}/remixbridge.pdb")
-            }
-            runtimeTextureFiles.each { name ->
-                required.add("native/textures/${name}")
-            }
-            def payloadEntries = { File dir, String jarPrefix ->
-                fileTree(dir).files.collect { payloadFile ->
-                    jarPrefix + dir.toPath().relativize(payloadFile.toPath()).toString().replace('\\', '/')
-                }
-            }
-            required.addAll(payloadEntries(remixModsPayloadDir, 'native/rtx-remix/'))
-            required.addAll(payloadEntries(licensesPayloadDir, 'packaging/licenses/'))
-            def missing = required.findAll { zip.getEntry(it) == null }
-            if (!missing.isEmpty()) {
-                throw new GradleException(
-                    "Distributable JAR ${archive} is missing required entries: ${missing.join(', ')}")
-            }
-
-            def entryNames = zip.entries().collect { it.name }
-            if (entryNames.contains('README.md')) {
-                throw new GradleException('Distributable JAR must not contain repository resource notes')
-            }
-            def unexpectedArches = ['win64', 'arm64', 'linux64'].findAll { !buildArches.contains(it) }
-            unexpectedArches.each { arch ->
-                def prefix = "native/remix-sdk-${arch}/"
-                if (entryNames.any { it.startsWith(prefix) }) {
-                    throw new GradleException("Distributable JAR unexpectedly contains ${prefix}")
-                }
-            }
-            // The runtime is built against OpenUSD without Python support. An
-            // interpreter or the USD Python bindings in the payload would be unused
-            // code that binary vulnerability scanners flag against the release.
-            def pythonEntry = ~/(?i)native\/remix-sdk-[^\/]+\/(.*\/)?([^\/]*python[^\/]*\.dll|[^\/]*\.(pyd|pyc)|python\d*(\.\d+)?\/.*)/
-            def pythonOffender = entryNames.find { it ==~ pythonEntry }
-            if (pythonOffender != null) {
-                throw new GradleException(
-                    "Distributable JAR must not contain a Python runtime: ${pythonOffender}")
-            }
-        } finally {
-            zip.close()
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        archive.withInputStream { input ->
+            byte[] buffer = new byte[65536]
+            int count
+            while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count)
         }
+        new File(archive.path + '.sha256').text = digest.digest().encodeHex().toString() + '  ' + archive.name + '\n'
+        logger.lifecycle("Installable mod: ${archive}")
     }
 }
-
+tasks.named('build') { dependsOn verifyPackageJarTask }
 tasks.register('package') {
-    description = 'Builds a distributable JAR with the selected platform SDKs bundled'
+    description = 'Alias for the standard installable build'
     group = 'build'
-    dependsOn 'build', verifyPackageJarTask
+    dependsOn 'build'
+}
+
+tasks.register('compileNativeLinuxArm64', Exec) {
+    description = 'Explicit maintainer producer for the Linux ARM64 JNI bridge'
+    group = 'native production'
+    commandLine 'bash', file('rtxremix-java/native/build_native.sh').absolutePath, 'arm64'
+    inputs.files fileTree('rtxremix-java/native')
+    outputs.file 'build/native/linuxarm64/remixbridge.so'
 }
 
 // --- Release content -----------------------------------------------------

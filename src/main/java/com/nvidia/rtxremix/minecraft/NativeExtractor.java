@@ -54,26 +54,14 @@ public final class NativeExtractor {
 
     private NativeExtractor() {}
 
-    /**
-     * Maps Java's os.arch property to the SDK subdirectory in the JAR under the
-     * historical Windows convention: aarch64 -> remix-sdk-arm64; anything else
-     * (amd64, x86_64, etc.) -> remix-sdk-win64. Kept for tests and any caller
-     * that is Windows-specific.
-     */
+    /** Historical Windows-only overload used by development callers. */
     static String detectPlatformSdkDir(String osArch) {
-        return "aarch64".equals(osArch) ? "remix-sdk-arm64" : "remix-sdk-win64";
+        return detectPlatformSdkDir(osArch, "Windows");
     }
 
-    /**
-     * Maps os.arch + os.name to the SDK subdirectory. On Linux this selects the
-     * POSIX payloads (remix-sdk-linux64 / remix-sdk-linuxarm64); otherwise it
-     * falls back to the Windows layout.
-     */
+    /** Selects an exact OS/CPU pair. Unsupported hosts never fall back to x86-64. */
     static String detectPlatformSdkDir(String osArch, String osName) {
-        if (osName != null && osName.toLowerCase().contains("linux")) {
-            return "aarch64".equals(osArch) ? "remix-sdk-linuxarm64" : "remix-sdk-linux64";
-        }
-        return detectPlatformSdkDir(osArch);
+        return "remix-sdk-" + NativeBundles.platform(osName, osArch);
     }
 
     /**
@@ -126,7 +114,7 @@ public final class NativeExtractor {
      * <p>The SDK and {@code rtx.conf} are first built in
      * {@code remix-sdk.staging/} and {@code rtx.conf.staging}, then moved over
      * their live paths. This avoids constructing the live SDK file-by-file, but
-     * the multi-path update is not a rollback transaction. Those two are
+     * SDK swap rolls back its retired directory if publishing the new SDK fails. Those two are
      * mod-owned and are always replaced.
      * The live {@code remix-sdk/} is retired by rename to
      * {@code remix-sdk.old-<nanoTime>/} rather than deleted in-place, allowing
@@ -145,9 +133,8 @@ public final class NativeExtractor {
      *
      * <p>The version marker is written only after the copy and both staged
      * moves succeed. A failure before that point leaves the marker stale so the
-     * next launch retries extraction. Auxiliary directories may already be
-     * partially updated, and a failed SDK swap can leave the live SDK path
-     * absent; callers must not rely on rollback to the prior payload.
+     * next launch retries extraction. Auxiliary directories may already be partially updated; they are repaired
+     * on the next launch. The prior SDK is restored if its staged swap fails.
      *
      * @return false when extraction failed with an error this launch, so the
      *         caller can say why the runtime is missing
@@ -161,14 +148,13 @@ public final class NativeExtractor {
                 LOGGER.warn("Cannot find own mod container, skipping native extraction");
                 return true;
             }
-            extractIfNeeded(
-                    container.getRootPaths().get(0).resolve(JAR_NATIVE_ROOT),
-                    FabricLoader.getInstance().getGameDir(),
-                    container.getMetadata().getVersion().getFriendlyString(),
-                    detectPlatformSdkDir(System.getProperty("os.arch"),
-                            System.getProperty("os.name")),
-                    ShippedPayloadHistory.loadBundled(),
-                    RETIRED_SDK_CLEANUP);
+            String platform = NativeBundles.platform(System.getProperty("os.name"), System.getProperty("os.arch"));
+            Path nativeRoot = container.getRootPaths().get(0).resolve(JAR_NATIVE_ROOT);
+            NativeBundles.Bundle bundle = NativeBundles.manifest(nativeRoot.resolve("manifest.properties"),
+                    java.util.List.of(platform)).get(platform);
+            extractIfNeeded(nativeRoot, FabricLoader.getInstance().getGameDir(),
+                    container.getMetadata().getVersion().getFriendlyString(), "remix-sdk-" + platform,
+                    ShippedPayloadHistory.loadBundled(), RETIRED_SDK_CLEANUP, bundle);
             return true;
         } catch (Exception e) {
             LOGGER.error("Native extraction failed; the mod may not function correctly. "
@@ -184,30 +170,39 @@ public final class NativeExtractor {
      */
     static void extractIfNeeded(Path nativeRoot, Path gameDir, String modVersion, String archDir,
                                 ShippedPayloadHistory history, Executor retiredSdkCleanup) throws IOException {
-        String expectedMarker = buildMarker(modVersion, archDir);
+        extractIfNeeded(nativeRoot, gameDir, modVersion, archDir, history, retiredSdkCleanup, null);
+    }
+
+    private static void extractIfNeeded(Path nativeRoot, Path gameDir, String modVersion, String archDir,
+                                       ShippedPayloadHistory history, Executor retiredSdkCleanup,
+                                       NativeBundles.Bundle bundle) throws IOException {
+        NativeBundles.safeDirectory(gameDir);
+        String expectedMarker = buildMarker(modVersion, archDir)
+                + (bundle == null ? "" : "|" + bundle.identity());
         Path versionFile = gameDir.resolve(VERSION_MARKER);
         Path remixSdkDir = gameDir.resolve("remix-sdk");
 
-        // Reclaim retired SDKs even when the current payload needs no repair.
-        cleanupRetiredSdkDirs(gameDir);
         if (!Files.isDirectory(nativeRoot)) {
-            LOGGER.warn("No native/ directory in mod JAR, skipping extraction");
-            return;
+            throw new IOException("No native payload in mod JAR; install the verified distribution artifact.");
         }
 
         AtomicInteger fileCount = new AtomicInteger();
         AtomicLong totalBytes = new AtomicLong();
         AtomicInteger keptCount = new AtomicInteger();
+        NativeBundles.rejectLink(versionFile);
+        NativeBundles.rejectLink(remixSdkDir);
         if (Files.exists(versionFile)) {
             String existing = Files.readString(versionFile).strip();
             if (markerMatches(existing, expectedMarker)) {
-                if (Files.isRegularFile(remixSdkDir.resolve(sdkMarkerBinary()))) {
+                if (bundle == null ? Files.isRegularFile(remixSdkDir.resolve(sdkMarkerBinary()))
+                        : NativeBundles.installedMatches(remixSdkDir, bundle)) {
                     if (restoreMissingRtxConf(nativeRoot, gameDir)) {
                         LOGGER.info("Restored mod-owned {} after it was deleted since the last extraction",
                                 RTX_CONF);
                     }
                     extractTextures(nativeRoot, gameDir, true, fileCount, totalBytes);
                     extractAuthorPayload(nativeRoot, gameDir, history, fileCount, totalBytes, keptCount);
+                    cleanupRetiredSdkDirs(gameDir);
                     LOGGER.info("Native runtime {} already extracted; restored or updated {} payload file(s)",
                             expectedMarker, fileCount.get());
                     return;
@@ -218,34 +213,26 @@ public final class NativeExtractor {
             }
         }
 
-        // Single-platform JARs must fail before changing the live payload when
-        // their SDK does not match the host architecture.
-        Set<String> jarArchDirs;
-        try (var scanStream = Files.list(nativeRoot)) {
-            jarArchDirs = scanStream
-                    .filter(Files::isDirectory)
-                    .map(p -> p.getFileName().toString())
-                    .filter(name -> name.startsWith("remix-sdk-"))
-                    .collect(Collectors.toSet());
+        if (bundle == null && !Files.isDirectory(nativeRoot.resolve(archDir))) {
+            throw new IOException("This JAR does not contain the required platform: " + archDir);
         }
-
-        if (!archSubdirPresent(jarArchDirs, archDir)) {
-            LOGGER.error(
-                    "This JAR contains SDK binaries for {} but the current "
-                    + "machine requires {}. This is a single-platform JAR "
-                    + "built for a different architecture. Use a dual-platform "
-                    + "or matching single-platform JAR instead.",
-                    jarArchDirs, archDir);
-            return;  // No marker written; mod init will fail loudly later.
-        }
+        // Acquire and verify before touching the live installation or its staging.
+        Path archive = bundle == null ? null : NativeBundles.acquire(bundle,
+                nativeRoot.resolve("bundles/" + bundle.platform() + ".zip"),
+                gameDir.resolve(".rtx-remix-cache"));
 
         Path sdkStaging = gameDir.resolve("remix-sdk.staging");
         Path rtxConfFile = gameDir.resolve(RTX_CONF);
         Path rtxConfStaging = gameDir.resolve(RTX_CONF + ".staging");
 
-        // Clean any leftover staging from a previously-interrupted run.
+        // Never follow user-controlled links when preparing mod-owned paths.
+        NativeBundles.rejectLink(sdkStaging);
+        NativeBundles.rejectLink(rtxConfFile);
+        NativeBundles.rejectLink(rtxConfStaging);
         if (Files.exists(sdkStaging)) deleteRecursively(sdkStaging);
         Files.deleteIfExists(rtxConfStaging);
+
+        if (bundle != null) NativeBundles.validate(archive, bundle, sdkStaging);
 
         // Mod-owned files stage first and replace their live copies only once
         // every copy succeeds. Author-owned directories are repaired in place.
@@ -253,9 +240,12 @@ public final class NativeExtractor {
             for (Path entry : (Iterable<Path>) topStream::iterator) {
                 String name = entry.getFileName().toString();
                 if (Files.isDirectory(entry)) {
-                    if (name.equals(archDir)) {
+                    if (bundle == null && name.equals(archDir)) {
                         extractTree(entry, sdkStaging, fileCount, totalBytes);
                     }
+                } else if (name.equals("manifest.properties")) {
+                    // Manifest belongs to the JAR, never the game directory.
+                    continue;
                 } else if (RTX_CONF.equals(name)) {
                     Files.copy(entry, rtxConfStaging, StandardCopyOption.REPLACE_EXISTING);
                     fileCount.incrementAndGet();
@@ -284,7 +274,11 @@ public final class NativeExtractor {
                     Thread::sleep, RENAME_RETRY_DELAYS_MS);
         }
 
-        Files.writeString(versionFile, expectedMarker);
+        Path markerStaging = Files.createTempFile(gameDir, ".rtx-remix-version-", ".staging");
+        try {
+            Files.writeString(markerStaging, expectedMarker);
+            Files.move(markerStaging, versionFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally { Files.deleteIfExists(markerStaging); }
         LOGGER.info("Extracted {} files ({} MB) for {} to {}{}",
                 fileCount.get(),
                 totalBytes.get() / (1024 * 1024),
@@ -301,7 +295,8 @@ public final class NativeExtractor {
         try (var topStream = Files.list(nativeRoot)) {
             for (Path entry : (Iterable<Path>) topStream::iterator) {
                 String name = entry.getFileName().toString();
-                if (Files.isDirectory(entry) && !name.startsWith("remix-sdk-") && !TEXTURES_DIR.equals(name)) {
+                if (Files.isDirectory(entry) && !name.startsWith("remix-sdk-")
+                        && !"bundles".equals(name) && !TEXTURES_DIR.equals(name)) {
                     extractAuthorTree(entry, gameDir.resolve(name), name, history, fileCount, totalBytes, keptCount);
                 }
             }
@@ -325,13 +320,15 @@ public final class NativeExtractor {
             for (Path texture : (Iterable<Path>) stream::iterator) {
                 String name = texture.getFileName().toString();
                 Path live = texturesDir.resolve(name);
+                NativeBundles.rejectLink(live);
                 if (!Files.isRegularFile(texture) || (onlyMissing && Files.exists(live))) {
                     continue;
                 }
                 // Through a staging file, so an interrupted copy never leaves a
                 // truncated texture that a matching marker would then keep.
-                Files.createDirectories(texturesDir);
+                NativeBundles.safeDirectory(texturesDir);
                 Path staging = texturesDir.resolve(name + ".staging");
+                NativeBundles.rejectLink(staging);
                 Files.copy(texture, staging, StandardCopyOption.REPLACE_EXISTING);
                 Files.move(staging, live, StandardCopyOption.REPLACE_EXISTING);
                 fileCount.incrementAndGet();
@@ -357,6 +354,7 @@ public final class NativeExtractor {
      */
     static boolean restoreMissingRtxConf(Path nativeRoot, Path gameDir) throws IOException {
         Path liveConf = gameDir.resolve(RTX_CONF);
+        NativeBundles.rejectLink(liveConf);
         if (Files.exists(liveConf)) {
             return false;
         }
@@ -373,7 +371,7 @@ public final class NativeExtractor {
      * file. The SDK staging directory wants exactly this: the mod owns it outright.
      */
     static void extractTree(Path src, Path dst, AtomicInteger fileCount, AtomicLong totalBytes) throws IOException {
-        Files.createDirectories(dst);
+        NativeBundles.safeDirectory(dst);
         Files.walkFileTree(src, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
@@ -406,7 +404,7 @@ public final class NativeExtractor {
     static void extractAuthorTree(Path src, Path dst, String historyRoot, ShippedPayloadHistory history,
                                   AtomicInteger fileCount, AtomicLong totalBytes,
                                   AtomicInteger keptCount) throws IOException {
-        Files.createDirectories(dst);
+        NativeBundles.safeDirectory(dst);
         Files.walkFileTree(src, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
@@ -418,6 +416,7 @@ public final class NativeExtractor {
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                 String rel = src.relativize(file).toString().replace('\\', '/');
                 Path target = dst.resolve(rel);
+                NativeBundles.rejectLink(target);
                 if (Files.exists(target)) {
                     String liveHash = ShippedPayloadHistory.contentHash(target);
                     if (liveHash.equals(ShippedPayloadHistory.contentHash(file))) {
@@ -438,13 +437,15 @@ public final class NativeExtractor {
     private static void createTargetDirectory(Path src, Path dst, Path dir) throws IOException {
         Path rel = src.relativize(dir);
         if (!rel.toString().isEmpty()) {
-            Files.createDirectories(dst.resolve(rel.toString()));
+            NativeBundles.safeDirectory(dst.resolve(rel.toString()));
         }
     }
 
     private static void copyFile(Path file, Path target, BasicFileAttributes attrs,
                                  AtomicInteger fileCount, AtomicLong totalBytes) throws IOException {
-        Files.createDirectories(target.getParent());
+        NativeBundles.safeDirectory(target.getParent());
+        NativeBundles.rejectLink(target);
+        if (attrs.isSymbolicLink() || !attrs.isRegularFile()) throw new IOException("Unsafe payload file: " + file);
         try (InputStream in = Files.newInputStream(file)) {
             Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
         }
@@ -476,9 +477,7 @@ public final class NativeExtractor {
      * a file another process still has open fails outright, while a rename
      * can succeed once that process lets go. The retired copy is then deleted
      * through {@code cleanup}; any failure there is picked up by
-     * {@link #cleanupRetiredSdkDirs} on a later launch. This helper does not
-     * provide rollback: cleanup starts before the staged move, so a move
-     * failure can leave no live SDK directory.
+     * {@link #cleanupRetiredSdkDirs} on a later launch. The previous SDK remains available for rollback until the staged move succeeds.
      *
      * <p>Both renames retry through {@link #retrying}. Windows refuses to
      * rename a directory while any file inside it is open without delete
@@ -486,16 +485,28 @@ public final class NativeExtractor {
      * just written, so on a first launch the swap often fails for a few
      * seconds and then succeeds.
      */
-    private static void retireAndSwap(Path remixSdkDir, Path sdkStaging, Executor cleanup) throws IOException {
+    static void retireAndSwap(Path remixSdkDir, Path sdkStaging, Executor cleanup) throws IOException {
+        Path retired = null;
         if (Files.exists(remixSdkDir)) {
-            Path retired = remixSdkDir.resolveSibling(
-                    remixSdkDir.getFileName() + ".old-" + System.nanoTime());
-            retrying("Retiring " + remixSdkDir, () -> Files.move(remixSdkDir, retired),
+            retired = remixSdkDir.resolveSibling(remixSdkDir.getFileName() + ".old-" + System.nanoTime());
+            Path previous = retired;
+            retrying("Retiring " + remixSdkDir, () -> Files.move(remixSdkDir, previous),
                     Thread::sleep, RENAME_RETRY_DELAYS_MS);
-            cleanup.execute(() -> deleteQuietly(retired));
         }
-        retrying("Moving " + sdkStaging + " to " + remixSdkDir, () -> Files.move(sdkStaging, remixSdkDir),
-                Thread::sleep, RENAME_RETRY_DELAYS_MS);
+        try {
+            retrying("Moving " + sdkStaging + " to " + remixSdkDir, () -> Files.move(sdkStaging, remixSdkDir),
+                    Thread::sleep, RENAME_RETRY_DELAYS_MS);
+        } catch (IOException failure) {
+            if (retired != null) {
+                try { Files.move(retired, remixSdkDir); }
+                catch (IOException rollback) { failure.addSuppressed(rollback); }
+            }
+            throw failure;
+        }
+        if (retired != null) {
+            Path previous = retired;
+            cleanup.execute(() -> deleteQuietly(previous));
+        }
     }
 
     /**
