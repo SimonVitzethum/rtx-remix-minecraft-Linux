@@ -249,8 +249,8 @@ $script:PRISM_KNOWN_HASHES = @{
 }
 
 # Pinned SHA-256 hashes for artifacts whose publishers' checksum sidecars
-# we don't want to rely on as the sole integrity signal. Left empty by
-# default; the installer falls back to the publisher's sibling checksum
+# we don't want to rely on as the sole integrity signal. Empty entries
+# fall back to the publisher's sibling checksum
 # (Maven .sha256, GitHub release asset digest, Adoptium asset metadata)
 # and fails closed if that too is unavailable in -Unattended mode.
 #
@@ -258,11 +258,8 @@ $script:PRISM_KNOWN_HASHES = @{
 #   (Get-FileHash -Algorithm SHA256 <file>).Hash.ToLower()
 # and paste below. Update when bumping the VER constants above.
 $script:FABRIC_INSTALLER_SHA256 = ''
-# TODO(26.3): pin the SHA-256 of the Fabric API jar for 0.165.2+26.3
-# (net/fabricmc/fabric-api/fabric-api/0.165.2+26.3/fabric-api-0.165.2+26.3.jar)
-# here. Unknown at port time, so left empty; the installer falls back to the
-# Maven .sha256 sidecar and fails closed if that is unavailable.
-$script:FABRIC_API_SHA256       = ''
+# Fabric API 0.165.2+26.3: verified against the Fabric Maven SHA-256 sidecar.
+$script:FABRIC_API_SHA256       = '2612a078a5daa06d9a14cabad40fe66de36b8cb22ee8cdf346d5d9894478c392'
 
 # Minimum Prism Launcher version we'll install as a fresh portable. Prism
 # 9.0's official release notes tagged the Windows MSVC portable asset as
