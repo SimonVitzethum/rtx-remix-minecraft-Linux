@@ -113,6 +113,25 @@ Compare both sides and a shallow view against raster before judging coverage fro
 an elevated overview. End portal and gateway surfaces use their separate baked
 starfield material.
 
+End portal and gateway faces preserve vanilla's directed winding and use
+single-sided instances. Other retained entity parts keep their double-sided
+capture policy. API instance sidedness is explicit in the runtime, independently
+of the default culling option for captured raster draws.
+
+The portal starfield samples vanilla's per-layer game-time translation in a
+repeating world-space tile. One worker bakes at most one frame per surface per ten
+game ticks. Only drawn surfaces request updates, and completed frames patch the
+existing emissive texture on the render thread. Reload cancels outstanding bakes
+before retiring textures. This retains texture, material and mesh identities and
+does not upload the block atlas. `-Drtxremix.debug.portalTextures=true` logs patch
+handles and CPU payload hashes. These hashes are not GPU readback checksums.
+
+This does not reproduce vanilla's screen projection: API 0.16.2 supplies affine
+two-component texture coordinates, without a projective divisor or a custom
+material sampling expression. Reprojecting quad corners on the CPU would still
+interpolate a different function inside an oblique quad and in reflected views.
+A shared world-space material therefore keeps this limitation explicit.
+
 ## Material Updates And Surface Capacity
 
 `RemixMaterialStore.update` uses the runtime's `UpdateMaterial` to mutate a

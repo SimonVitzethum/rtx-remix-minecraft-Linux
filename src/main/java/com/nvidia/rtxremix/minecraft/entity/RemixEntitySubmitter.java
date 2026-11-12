@@ -589,6 +589,7 @@ public class RemixEntitySubmitter {
     private final Set<Identifier> resourceMissing = new HashSet<>();
     private LabPBRConverter.VariantCache labPBRVariants;
     private final EndPortalSurface endPortalSurfaces = new EndPortalSurface();
+    private static final boolean TRACE_PORTAL_TEXTURES = Boolean.getBoolean("rtxremix.debug.portalTextures");
     private boolean portalSeen;
     private boolean gatewaySeen;
 
@@ -2235,6 +2236,11 @@ public class RemixEntitySubmitter {
         byte[] pixels = endPortalSurfaces.poll(textureId, client.getResourceManager(), client.level.getGameTime());
         if (pixels != null) {
             updateTextureFromMemory(textures.emissive, pixels, EndPortalSurface.TILE_SIZE, EndPortalSurface.TILE_SIZE);
+            if (TRACE_PORTAL_TEXTURES) {
+                LOGGER.info("Portal texture patch {}: tick={}, handle={}, bytes={}, payloadHash={}",
+                        textureId, client.level.getGameTime(), textures.emissive.getHandle(),
+                        pixels.length, Integer.toUnsignedString(Arrays.hashCode(pixels), 16));
+            }
         }
     }
 
