@@ -2221,6 +2221,7 @@ namespace dxvk {
       EnsureInteropImage(extent.width, extent.height);
 
       static const bool profileSubmit = remixProfileFlag("REMIX_PROFILE_SUBMIT");
+      static const bool traceSubmit = std::getenv("REMIX_TRACE_SUBMIT") != nullptr;
       using ProfClock = std::chrono::steady_clock;
       static double profEnd = 0, profSync = 0, profGpu = 0; static uint32_t profN = 0;
       const auto profT0 = ProfClock::now();
@@ -2292,18 +2293,67 @@ namespace dxvk {
         ctx->flushCommandList();
       });
 
+      const auto traceRecorded = traceSubmit ? ProfClock::now() : ProfClock::time_point {};
       if (!(flags & kSubmitDisableQueueSubmit)) {
         m_parent->Flush();
       }
+      const auto traceFlushed = traceSubmit ? ProfClock::now() : ProfClock::time_point {};
+      auto traceCs = traceFlushed;
       if (!(flags & kSubmitDisableCpuWaitForVkSubmit)) {
         m_parent->SynchronizeCsThread();
+        traceCs = traceSubmit ? ProfClock::now() : ProfClock::time_point {};
         // Return only once vkQueueSubmit has been called. A client that waits for the done semaphore on the CPU would
         // otherwise block inside the driver while the submission that signals it is still queued.
         m_device->lockSubmission();
         m_device->unlockSubmission();
       }
+      const auto traceSubmitted = traceSubmit ? ProfClock::now() : ProfClock::time_point {};
       if (flags & kSubmitForceWaitDeviceIdle) {
         m_device->waitForIdle();
+      }
+      if (traceSubmit) {
+        // Measures existing CPU work and waits only. These durations are not GPU execution times.
+        const auto traceDone = ProfClock::now();
+        const double phases[] = {
+          std::chrono::duration<double, std::milli>(profT1 - profT0).count(),
+          std::chrono::duration<double, std::milli>(traceRecorded - profT1).count(),
+          std::chrono::duration<double, std::milli>(traceFlushed - traceRecorded).count(),
+          std::chrono::duration<double, std::milli>(traceCs - traceFlushed).count(),
+          std::chrono::duration<double, std::milli>(traceSubmitted - traceCs).count(),
+          std::chrono::duration<double, std::milli>(traceDone - traceSubmitted).count()
+        };
+        static thread_local double sum[6] {}, maximum[6] {};
+        static thread_local uint32_t count = 0;
+        double total = 0;
+        for (size_t i = 0; i < 6; ++i) {
+          sum[i] += phases[i];
+          maximum[i] = std::max(maximum[i], phases[i]);
+          total += phases[i];
+        }
+        const uint32_t frame = m_device->getCurrentFrameId();
+        if (total >= 100.0) {
+          Logger::info(str::format("[SubmitTraceSlow] frame=", frame,
+            " endFrame_ms=", phases[0], " record_ms=", phases[1], " flush_ms=", phases[2],
+            " cs_ms=", phases[3], " queue_ms=", phases[4], " idle_ms=", phases[5],
+            " total_ms=", total, " pending=", m_device->pendingSubmissions()));
+        }
+        if (++count == 120) {
+          for (size_t i = 0; i < 6; ++i) {
+            Logger::info(str::format("[SubmitTrace] frame=", frame, " samples=", count,
+              " phase=", i, " mean_ms=", sum[i] / count, " max_ms=", maximum[i]));
+            sum[i] = maximum[i] = 0;
+          }
+          const auto memory = m_device->adapter()->memoryProperties();
+          for (uint32_t heap = 0; heap < memory.memoryHeapCount; ++heap) {
+            const auto stats = m_device->getMemoryStats(heap);
+            Logger::info(str::format("[SubmitMemory] frame=", frame, " heap=", heap,
+              " allocated=", stats.totalAllocated(), " used=", stats.totalUsed(),
+              " buffers=", stats.usedByCategory(DxvkMemoryStats::Category::RTXBuffer),
+              " as=", stats.usedByCategory(DxvkMemoryStats::Category::RTXAccelerationStructure),
+              " geometry=", stats.usedByCategory(DxvkMemoryStats::Category::RTXReplacementGeometry)));
+          }
+          count = 0;
+        }
       }
       if (profileSubmit) {
         // Debug aid: REMIX_PROFILE_SUBMIT=1 waits for the GPU on the CPU and logs the averaged phase times every 120 frames.

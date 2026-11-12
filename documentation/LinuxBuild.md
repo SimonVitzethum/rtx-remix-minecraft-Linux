@@ -153,3 +153,25 @@ asset callbacks run outside the collector mutex. Enable texture reloads explicit
 with `DXVK_TEXTURES_HOTRELOAD=1`. Java resource reload and native file-backed asset
 reload are separate paths. `test_file_watch_linux` exercises the production event
 collector with real temporary files, including replacement and subtree moves.
+
+### Passive submission diagnostics
+
+`REMIX_TRACE_SUBMIT=1` measures the existing CPU submission path without adding
+GPU waits. Every 120 interop submissions it logs mean and maximum milliseconds
+for six phases: 0 queues `EndFrame`, 1 records interop copies, 2 flushes the CS
+chunk, 3 waits for the CS thread, 4 waits for queue submission and the presenter's
+existing synchronization, and 5 performs an explicitly requested device-idle wait.
+`SubmitTraceSlow` records all six phases for submissions lasting at least 100 ms.
+`SubmissionWait` separates time waiting for queued submissions from presenter
+synchronization when their combined duration reaches 100 ms. Frame identifiers
+are runtime present counters and can advance for generated frames.
+
+`SubmitMemory` reports allocated and assigned bytes per runtime Vulkan heap,
+including buffer, acceleration-structure and replacement-geometry categories.
+Assigned memory includes references held by in-flight work. These counters do
+not include the client's Vulkan device, Java heap, driver host allocations or
+process RSS. Correlate log timestamps with process and cgroup memory samples.
+The measurements are CPU wall durations, not isolated GPU execution times.
+
+`REMIX_PROFILE_SUBMIT=1` is a separate diagnostic that adds a CPU wait for the
+interop completion semaphore. Leave it unset for passive measurements.

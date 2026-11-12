@@ -19,6 +19,11 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+// NV-DXVK start: Passive interop submission diagnostics
+#include <chrono>
+#include <cstdlib>
+// NV-DXVK end
+
 #include "dxvk_device.h"
 #include "dxvk_queue.h"
 #include "dxvk_scoped_annotation.h"
@@ -113,16 +118,35 @@ namespace dxvk {
 
   void DxvkSubmissionQueue::synchronize() {
     ScopedCpuProfileZone();
+    // NV-DXVK start: Passive interop submission diagnostics
+    static const bool traceSubmit = std::getenv("REMIX_TRACE_SUBMIT") != nullptr;
+    using Clock = std::chrono::steady_clock;
+    const auto begin = traceSubmit ? Clock::now() : Clock::time_point {};
+    // NV-DXVK end
     std::unique_lock<dxvk::mutex> lock(m_mutex);
 
     m_submitCond.wait(lock, [this] {
       return m_submitQueue.empty();
     });
 
+    // NV-DXVK start: Passive interop submission diagnostics
+    const auto submitted = traceSubmit ? Clock::now() : Clock::time_point {};
+    // NV-DXVK end
     // NV-DXVK start: DLFG integration
     if (m_lastPresenter != nullptr) {
       m_lastPresenter->synchronize();
       m_lastPresenter = nullptr;
+    }
+    // NV-DXVK end
+    // NV-DXVK start: Passive interop submission diagnostics
+    if (traceSubmit) {
+      const auto done = Clock::now();
+      const double queuedMs = std::chrono::duration<double, std::milli>(submitted - begin).count();
+      const double presenterMs = std::chrono::duration<double, std::milli>(done - submitted).count();
+      if (queuedMs + presenterMs >= 100.0) {
+        Logger::info(str::format("[SubmissionWait] queued_ms=", queuedMs,
+          " presenter_ms=", presenterMs, " pending=", m_pending.load()));
+      }
     }
     // NV-DXVK end
   }
