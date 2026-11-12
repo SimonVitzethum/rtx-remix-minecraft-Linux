@@ -231,7 +231,7 @@ def createSlangTask(inputFile, variantSpec):
 
     command1 = f'{args.slangc} -entry main -target spirv -zero-initialize -emit-spirv-directly -verbose-paths {includePaths} ' \
             + f'-depfile {depFile} {inputFile} -D__SLANG__ {variantDefines} ' \
-            + f'-matrix-layout-column-major ' \
+            + f'-matrix-layout-column-major -default-image-format-unknown ' \
             + f'-Wno-30081 '
 
     # Add SER capability only for variants that use Shader Execution Reordering

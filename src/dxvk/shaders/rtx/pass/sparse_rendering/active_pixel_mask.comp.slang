@@ -31,7 +31,7 @@ Texture2D<float> PixelSamplingRate;
 
 // Outputs
 
-layout(binding = ACTIVE_PIXEL_MASK_BINDING_ACTIVE_PIXEL_MASK_OUTPUT)
+layout(r8ui, binding = ACTIVE_PIXEL_MASK_BINDING_ACTIVE_PIXEL_MASK_OUTPUT)
 RWTexture2D<uint> ActivePixelMask;
 
 [shader("compute")]
