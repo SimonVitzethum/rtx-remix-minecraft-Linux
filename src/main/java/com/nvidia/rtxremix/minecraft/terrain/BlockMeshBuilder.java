@@ -11,6 +11,7 @@ import com.nvidia.rtxremix.minecraft.asset.RemixMesh;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshSurface;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.terrain.capture.SectionMeshData;
+import com.nvidia.rtxremix.minecraft.terrain.capture.CompactQuadCapture;
 import com.nvidia.rtxremix.minecraft.terrain.lod.TerrainQuadMerger;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
@@ -142,7 +143,7 @@ public final class BlockMeshBuilder {
                     if (cat < 0 || cat >= catCount || !categorySelected(categoryMask, cat)) continue;
 
                     String bucketKey = surf.bucketKey();
-                    int bucketIndex = findBucket(buckets, bucketCount, cat, bucketKey);
+                    int bucketIndex = findBucket(buckets, bucketCount, cat, bucketKey, surf.compactQuads());
                     SurfaceBucket bucket;
                     if (bucketIndex >= 0) {
                         bucket = buckets[bucketIndex];
@@ -150,7 +151,7 @@ public final class BlockMeshBuilder {
                         if (bucketCount == buckets.length) {
                             buckets = Arrays.copyOf(buckets, buckets.length * 2);
                         }
-                        bucket = new SurfaceBucket(cat, bucketKey);
+                        bucket = new SurfaceBucket(cat, bucketKey, surf.compactQuads());
                         buckets[bucketCount++] = bucket;
                     }
                     bucket.add(surf,
@@ -173,6 +174,8 @@ public final class BlockMeshBuilder {
                     requireCanonicalQuadIndices(bucket);
                     if (lod > 0 && c == ChunkManager.CAT_SOLID && bucket.count > 0) {
                         appendMergedPages(bucket, mat, accumulator);
+                    } else if (bucket.compactQuads) {
+                        appendCompactPages(bucket, mat, accumulator);
                     } else {
                         appendCanonicalPages(bucket, mat, accumulator);
                     }
@@ -196,13 +199,15 @@ public final class BlockMeshBuilder {
     private static final class SurfaceBucket {
         final int category;
         final String key;
+        final boolean compactQuads;
         SurfaceRef[] surfaces = new SurfaceRef[4];
         int count;
         int totalVerts;
 
-        SurfaceBucket(int category, String key) {
+        SurfaceBucket(int category, String key, boolean compactQuads) {
             this.category = category;
             this.key = key;
+            this.compactQuads = compactQuads;
         }
 
         void add(SectionMeshData.Surface surface, int xOff, int yOff, int zOff) {
@@ -316,18 +321,61 @@ public final class BlockMeshBuilder {
         }
     }
 
+    private void appendCompactPages(SurfaceBucket bucket, RemixMaterial material, PageAccumulator accumulator) {
+        int maxQuads = (int) Math.max(1, maxPageBytes / BYTES_PER_CANONICAL_QUAD);
+        for (int first = 0, total = bucket.totalVerts / 4; first < total; ) {
+            int count = Math.min(maxQuads, total - first);
+            ByteBuffer output = DirectBufferPool.acquire(Math.multiplyExact(count, CompactQuadCapture.STRIDE));
+            boolean transferred = false;
+            try {
+                int sourceFirst = 0;
+                for (int i = 0; i < bucket.count; i++) {
+                    SurfaceRef ref = bucket.surfaces[i];
+                    if (ref.xOff() != 0 || ref.zOff() != 0) throw new IllegalArgumentException("Compact quad column offset");
+                    int sourceCount = ref.surface().vertexCount() / 4;
+                    int begin = Math.max(first, sourceFirst);
+                    int end = Math.min(first + count, sourceFirst + sourceCount);
+                    if (begin < end) {
+                        ByteBuffer source = ref.surface().vertexBuffer().duplicate().order(ByteOrder.LITTLE_ENDIAN);
+                        source.position((begin - sourceFirst) * CompactQuadCapture.STRIDE)
+                                .limit((end - sourceFirst) * CompactQuadCapture.STRIDE);
+                        output.put(source);
+                    }
+                    sourceFirst += sourceCount;
+                }
+                if (output.position() != count * CompactQuadCapture.STRIDE) throw new IllegalArgumentException("Compact quad page range");
+                output.flip();
+                RemixMeshSurface surface = new RemixMeshSurface(material).setCompactQuadData(output, count);
+                transferred = true;
+                accumulator.add(surface, (long) count * BYTES_PER_CANONICAL_QUAD);
+            } finally {
+                if (!transferred) DirectBufferPool.release(output);
+            }
+            first += count;
+        }
+    }
+
     /** LOD path: greedy-merges the bucket's block faces, then pages the result like the canonical path. */
     private void appendMergedPages(SurfaceBucket bucket,
                                    RemixMaterial material,
                                    PageAccumulator accumulator) {
         int totalQuads = bucket.totalVerts / VERTS_PER_QUAD;
         ByteBuffer merged = DirectBufferPool.acquire(Math.multiplyExact(totalQuads, VERTS_PER_QUAD * STRIDE));
+        List<ByteBuffer> expanded = new ArrayList<>();
         try {
             List<TerrainQuadMerger.Source> sources = new ArrayList<>(bucket.count);
             for (int s = 0; s < bucket.count; s++) {
                 SurfaceRef ref = bucket.surfaces[s];
-                sources.add(new TerrainQuadMerger.Source(ref.surface().vertexBuffer(),
-                        ref.surface().vertexCount(), ref.xOff(), ref.yOff(), ref.zOff()));
+                if (ref.surface().compactQuads()) {
+                    ByteBuffer vertices = DirectBufferPool.acquire(Math.multiplyExact(ref.surface().vertexCount(), STRIDE));
+                    expanded.add(vertices);
+                    CompactQuadCapture.expandForLod(ref.surface().vertexBuffer(), ref.surface().vertexCount() / 4, vertices);
+                    vertices.flip();
+                    sources.add(new TerrainQuadMerger.Source(vertices, ref.surface().vertexCount(), 0, 0, 0));
+                } else {
+                    sources.add(new TerrainQuadMerger.Source(ref.surface().vertexBuffer(),
+                            ref.surface().vertexCount(), ref.xOff(), ref.yOff(), ref.zOff()));
+                }
             }
             TerrainQuadMerger.Merged result = TerrainQuadMerger.merge(sources, merged, TILE_LOD_UV);
             int maxQuadsPerSurface = (int) Math.max(1L,
@@ -362,6 +410,7 @@ public final class BlockMeshBuilder {
                 firstQuad += quadCount;
             }
         } finally {
+            for (ByteBuffer vertices : expanded) DirectBufferPool.release(vertices);
             DirectBufferPool.release(merged);
         }
     }
@@ -450,10 +499,10 @@ public final class BlockMeshBuilder {
         }
     }
 
-    private static int findBucket(SurfaceBucket[] buckets, int bucketCount, int category, String key) {
+    private static int findBucket(SurfaceBucket[] buckets, int bucketCount, int category, String key, boolean compactQuads) {
         for (int i = 0; i < bucketCount; i++) {
             SurfaceBucket bucket = buckets[i];
-            if (bucket.category == category && Objects.equals(bucket.key, key)) {
+            if (bucket.category == category && bucket.compactQuads == compactQuads && Objects.equals(bucket.key, key)) {
                 return i;
             }
         }

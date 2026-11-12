@@ -19,7 +19,7 @@ public class PerformanceTimer {
 
     private static final int REPORT_INTERVAL = 300;
     private static final int MAX_SECTIONS = 32;
-    private static final int MAX_COUNTERS = 96;
+    private static final int MAX_COUNTERS = 128;
     private static final String FRAME_PLOT_NAME = "Java.Frame.ms";
 
     // Timing sections

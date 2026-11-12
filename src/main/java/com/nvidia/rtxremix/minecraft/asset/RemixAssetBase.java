@@ -5,6 +5,8 @@
 package com.nvidia.rtxremix.minecraft.asset;
 
 import com.nvidia.rtxremix.RemixAPI;
+import com.nvidia.rtxremix.RemixException;
+import com.nvidia.rtxremix.ErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -106,7 +108,8 @@ public abstract class RemixAssetBase {
         } catch (RuntimeException e) {
             this.handle = 0;
             cleanerHandleRef.set(0);
-            if (disposeData && !dataDisposed) {
+            boolean retryable = e instanceof RemixException exception && exception.getErrorCode() == ErrorCode.RESOURCE_BUSY;
+            if (disposeData && !dataDisposed && !retryable) {
                 try {
                     doDisposeData();
                     dataDisposed = true;

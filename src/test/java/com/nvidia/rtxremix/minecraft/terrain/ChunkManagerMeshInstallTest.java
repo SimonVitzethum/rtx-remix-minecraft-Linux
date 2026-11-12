@@ -32,6 +32,36 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ChunkManagerMeshInstallTest {
 
     @Test
+    void resourceBusyKeepsPendingPageAndOldPublicationOwnedByTheCursor() throws Exception {
+        com.nvidia.rtxremix.minecraft.asset.RemixMeshStore previous = com.nvidia.rtxremix.minecraft.asset.RemixMeshStore.get();
+        RemixAPI denied = null;
+        com.nvidia.rtxremix.minecraft.asset.RemixMeshStore.init(denied);
+        ChunkManager manager = new ChunkManager(null);
+        TrackingMesh pending = new TrackingMesh();
+        pending.createError = com.nvidia.rtxremix.ErrorCode.RESOURCE_BUSY;
+        try {
+            Object result = newDetachedResult(0);
+            BlockMeshBuilder.MeshPage[] pages = {new BlockMeshBuilder.MeshPage(ChunkManager.CAT_SOLID, pending)};
+            set(result, "pages", pages);
+            Object cursor = newCursor(result);
+            set(manager, "terrainFrame", 37L);
+            assertTrue((boolean) invoke(manager, "installNextPage", new Class<?>[] {nested("MeshInstallCursor"), RemixAPI.class}, cursor, denied));
+            assertEquals(0, intField(cursor, "nextPage"));
+            assertFalse(booleanField(cursor, "failed"));
+            assertSame(pending, pages[0].mesh());
+            assertEquals(0, pending.disposeCalls);
+            assertEquals(37L, longField(cursor, "admissionBlockedFrame"));
+        } finally {
+            pending.disposeData();
+            manager.destroy();
+            com.nvidia.rtxremix.minecraft.asset.RemixMeshStore.shutdown();
+            Field singleton = com.nvidia.rtxremix.minecraft.asset.RemixMeshStore.class.getDeclaredField("INSTANCE");
+            singleton.setAccessible(true);
+            singleton.set(null, previous);
+        }
+    }
+
+    @Test
     void retainedPageVisibilityFollowsRadiusTransitionsWithoutRepeatedSubmits() throws Exception {
         TrackingInstance instance = new TrackingInstance(false);
         try {
@@ -467,6 +497,12 @@ class ChunkManagerMeshInstallTest {
 
     private static final class TrackingMesh extends RemixMesh {
         int disposeCalls;
+        int createError;
+
+        @Override protected long doCreate(RemixAPI api, long hash) {
+            if (createError != 0) throw new com.nvidia.rtxremix.RemixException("admission", createError);
+            return super.doCreate(api, hash);
+        }
 
         TrackingMesh() {
             super(new RemixMeshSurface[0]);

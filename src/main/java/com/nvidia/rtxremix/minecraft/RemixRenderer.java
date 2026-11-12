@@ -486,6 +486,7 @@ public class RemixRenderer {
             confLayerDriver = driver;
             LOGGER.info("Config option-layers acquired - conf-layer blending active");
 
+            com.nvidia.rtxremix.minecraft.terrain.capture.CompactQuadCapture.configure(VulkanBackendSupport.isActive());
             initialized = true;
             LOGGER.info("RTX Remix renderer initialized successfully!");
 
@@ -509,6 +510,7 @@ public class RemixRenderer {
      * about to rethrow the original cause.
      */
     private void releasePartialInitialization() {
+        com.nvidia.rtxremix.minecraft.terrain.capture.CompactQuadCapture.configure(false);
         initialized = false;
         try {
             shutdown();
@@ -1725,6 +1727,7 @@ public class RemixRenderer {
      * Shuts down the renderer
      */
     public void shutdown() {
+        com.nvidia.rtxremix.minecraft.terrain.capture.CompactQuadCapture.configure(false);
         LOGGER.info("Shutting down RTX Remix renderer...");
 
         initialized = false;
