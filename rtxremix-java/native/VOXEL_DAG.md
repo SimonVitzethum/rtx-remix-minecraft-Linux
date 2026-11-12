@@ -13,13 +13,21 @@ its whole chunk column as exact; unspecified sections in that column are air.
 This prevents procedural terrain from filling exact caves or empty sections.
 Every surface cell must be supplied, including explicitly empty cells.
 
-Each builder has a fixed pool of 524,288 nodes (16 MiB), a fixed hash table
-(4 MiB), and less than 1 MiB of input grids, exact-section roots and metadata.
-At most two builders coexist. Capacity is admitted before allocation and remains
-reserved until the last operation holding the workspace finishes. The process
-budget is 64 MiB, shared with admitted disk-I/O scratch. A page that exceeds its
-node bound fails explicitly; callers must partition such a page while preserving
-its detail. It is never silently coarsened or clipped.
+Each builder starts with a 32 KiB node chunk and an 8 KiB hash table. Node
+capacity grows geometrically by appending chunks; existing nodes never move or
+get copied during growth. The hash table doubles when it reaches half occupancy.
+Both old and new tables count against admission during rehash, and the old table
+is freed before its reservation is released. Input grids, exact-section roots
+and metadata have a conservative fixed reservation below 1 MiB per builder.
+
+At most two builders coexist. The 64 MiB process budget includes all live builder
+capacities, temporary hash overlap, and admitted disk-I/O scratch. Capacity is
+admitted before allocation and remains reserved until the allocation is freed.
+Pages can use up to 1,048,576 nodes when the shared budget permits. A capacity
+failure is explicit backpressure; callers must defer work or partition a page
+while preserving detail. There is no forced GPU synchronization, silent
+coarsening or clipping. All workspace chunks retire with their page handle,
+so idle jobs retain no allocation high-water mark.
 
 `finish` seals the page and returns its node count; subsequent calls only return
 that count. Roots and output become immutable. Output is eight native-order
@@ -30,9 +38,15 @@ The caller copies the slice to device-local memory and keeps its resources alive
 through the transfer fence. It then destroys the CPU handle. Published GPU pages
 have no native CPU mirror.
 
-`metrics` returns the global limit, current/peak reserved buffer capacity, live
-builder count, current/peak used node bytes, and current/peak admitted I/O scratch.
-Used output includes unfinished builders and is a subset of reserved capacity.
+`metrics` keeps its first eight entries stable: global limit, current/peak
+reserved buffer capacity, live builder count, current/peak used node bytes,
+and current/peak admitted I/O scratch. Used output includes unfinished builders
+and is a subset of reserved capacity. Appended entries 8..15 count node-chunk
+allocations, hash rehashes, cumulative growth allocation bytes, rehash CPU
+nanoseconds, capacity rejections, copied bytes, copy CPU nanoseconds, and peak
+simultaneously allocated node capacity. Copy counters include disk saves and
+file-backed upload reads; GPU upload and fence timings belong to the caller.
+
 Small handle/stream metadata, the caller's Java buffers, GPU memory, driver memory
 and process RSS are separate quantities. Reservations include conservative
 headroom for all builder allocations; they are capacity bounds, not RSS samples.

@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <chrono>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -36,11 +37,36 @@ namespace {
   uint64_t reserved = 0, reservedPeak = 0, builders = 0;
   std::atomic<uint64_t> used {0}, usedPeak {0};
   uint64_t ioCurrent = 0, ioPeak = 0;
-  constexpr uint64_t kBuilderBytes = uint64_t(kMaxNodes) * 40 + 1024 * 1024;
+  constexpr uint64_t kBuilderBytes = 1024 * 1024;
+  std::atomic<uint64_t> nodeChunks {0}, hashRehashes {0}, growthBytes {0}, rehashNanos {0};
+  std::atomic<uint64_t> capacityRejections {0}, copyBytes {0}, copyNanos {0}, nodeCapacity {0}, nodeCapacityPeak {0};
+
+  void reserveBytes(uint64_t bytes) {
+    std::lock_guard<std::mutex> lock(budgetMutex);
+    if (reserved + bytes > kMemoryLimit) {
+      ++capacityRejections;
+      throw std::runtime_error("Native DAG capacity growth deferred by the 64 MiB global budget");
+    }
+    reserved += bytes;
+    reservedPeak = std::max(reservedPeak, reserved);
+  }
+
+  void releaseBytes(uint64_t bytes) {
+    std::lock_guard<std::mutex> lock(budgetMutex);
+    reserved -= bytes;
+  }
+
+  void addNodeCapacity(uint64_t bytes) {
+    const uint64_t current = nodeCapacity.fetch_add(bytes, std::memory_order_relaxed) + bytes;
+    uint64_t peak = nodeCapacityPeak.load(std::memory_order_relaxed);
+    while (peak < current && !nodeCapacityPeak.compare_exchange_weak(peak, current, std::memory_order_relaxed)) {
+    }
+  }
 
   void reserveBuilder() {
     std::lock_guard<std::mutex> lock(budgetMutex);
     if (builders >= 2 || reserved + kBuilderBytes > kMemoryLimit) {
+      ++capacityRejections;
       throw std::runtime_error("Native DAG workspace admission rejected (64 MiB global, two builders)");
     }
     reserved += kBuilderBytes;
@@ -48,9 +74,9 @@ namespace {
     ++builders;
   }
 
-  void releaseBuilder(uint64_t output) {
+  void releaseBuilder(uint64_t capacity, uint64_t output) {
     std::lock_guard<std::mutex> lock(budgetMutex);
-    reserved -= kBuilderBytes;
+    reserved -= capacity;
     used.fetch_sub(output, std::memory_order_relaxed);
     --builders;
   }
@@ -84,9 +110,11 @@ namespace {
   }
 }
 
-std::array<uint64_t, 8> metrics() {
+std::array<uint64_t, 16> metrics() {
   std::lock_guard<std::mutex> lock(budgetMutex);
-  return {kMemoryLimit, reserved, reservedPeak, builders, used.load(std::memory_order_relaxed), usedPeak.load(std::memory_order_relaxed), ioCurrent, ioPeak};
+  return {kMemoryLimit, reserved, reservedPeak, builders, used.load(std::memory_order_relaxed), usedPeak.load(std::memory_order_relaxed), ioCurrent, ioPeak,
+    nodeChunks.load(), hashRehashes.load(), growthBytes.load(), rehashNanos.load(), capacityRejections.load(),
+    copyBytes.load(), copyNanos.load(), nodeCapacityPeak.load()};
 }
 
 Builder::Builder(uint32_t lg, uint32_t slabs)
@@ -99,15 +127,26 @@ Builder::Builder(uint32_t lg, uint32_t slabs)
   try {
     m_n = 256 >> lg;
     m_cells = m_n * m_n;
-    m_nodes.reset(new uint32_t[size_t(kMaxNodes) * 8]);
-    std::fill_n(m_nodes.get(), 8, 0);
-    m_table.reset(new uint32_t[size_t(kMaxNodes) * 2] {});
+    growNodes();
+    std::fill_n(node(0), 8, 0);
+    m_tableCapacity = 2048;
+    reserveBytes(uint64_t(m_tableCapacity) * 4);
+    m_reserved += uint64_t(m_tableCapacity) * 4;
+    m_table.reset(new uint32_t[m_tableCapacity] {});
+    growthBytes.fetch_add(uint64_t(m_tableCapacity) * 4, std::memory_order_relaxed);
     m_exact.reset(new uint32_t[size_t(256) * slabs * 16] {});
     m_exactSupplied.reset(new uint8_t[size_t(256) * slabs * 16] {});
     m_top.fill(std::numeric_limits<int16_t>::min());
     addOutput(32);
   } catch (...) {
-    releaseBuilder(0);
+    for (auto& chunk : m_nodeChunks) {
+      chunk.reset();
+    }
+    m_table.reset();
+    m_exact.reset();
+    m_exactSupplied.reset();
+    nodeCapacity.fetch_sub(uint64_t(m_nodeCapacity) * 32, std::memory_order_relaxed);
+    releaseBuilder(m_reserved, 0);
     m_reserved = 0;
     throw;
   }
@@ -115,12 +154,15 @@ Builder::Builder(uint32_t lg, uint32_t slabs)
 
 Builder::~Builder() {
   // Release capacity only after every allocation has actually been freed.
-  m_nodes.reset();
+  for (auto& chunk : m_nodeChunks) {
+    chunk.reset();
+  }
+  nodeCapacity.fetch_sub(uint64_t(m_nodeCapacity) * 32, std::memory_order_relaxed);
   m_table.reset();
   m_exact.reset();
   m_exactSupplied.reset();
   if (m_reserved) {
-    releaseBuilder(uint64_t(m_nodeCount) * 32);
+    releaseBuilder(m_reserved, uint64_t(m_nodeCount) * 32);
   }
 }
 
@@ -149,6 +191,78 @@ void Builder::surface(uint32_t firstCell, uint32_t count, const void* packed) {
   }
 }
 
+uint32_t* Builder::node(uint32_t index) const {
+  uint32_t chunk = m_chunkCount - 1;
+  while (index < m_chunkFirst[chunk]) {
+    --chunk;
+  }
+  return m_nodeChunks[chunk].get() + size_t(index - m_chunkFirst[chunk]) * 8;
+}
+
+void Builder::growNodes() {
+  const uint32_t add = m_nodeCapacity ? m_nodeCapacity : 1024;
+  if (m_nodeCapacity + add > kMaxNodes || m_chunkCount == m_nodeChunks.size()) {
+    throw std::length_error("Native DAG page exceeds its node bound; partition without reducing detail");
+  }
+  const uint64_t bytes = uint64_t(add) * 32;
+  reserveBytes(bytes);
+  try {
+    auto chunk = std::unique_ptr<uint32_t[]>(new uint32_t[size_t(add) * 8]);
+    m_chunkFirst[m_chunkCount] = m_nodeCapacity;
+    m_chunkNodes[m_chunkCount] = add;
+    m_nodeChunks[m_chunkCount++] = std::move(chunk);
+  } catch (...) {
+    releaseBytes(bytes);
+    throw;
+  }
+  m_nodeCapacity += add;
+  m_reserved += bytes;
+  ++nodeChunks;
+  growthBytes.fetch_add(bytes, std::memory_order_relaxed);
+  addNodeCapacity(bytes);
+}
+
+void Builder::growHash() {
+  const auto begin = std::chrono::steady_clock::now();
+  const uint32_t capacity = m_tableCapacity * 2;
+  const uint64_t bytes = uint64_t(capacity) * 4;
+  reserveBytes(bytes);
+  std::unique_ptr<uint32_t[]> replacement;
+  try {
+    replacement = std::make_unique<uint32_t[]>(capacity);
+    for (uint32_t oldSlot = 0; oldSlot < m_tableCapacity; ++oldSlot) {
+      const uint32_t index = m_table[oldSlot];
+      if (!index) {
+        continue;
+      }
+      const uint32_t* children = node(index);
+      uint32_t hash = 0;
+      for (uint32_t i = 0; i < 8; ++i) {
+        hash = hash * 0x9E3779B1u + children[i] + (hash >> 15);
+      }
+      hash ^= hash >> 16;
+      uint32_t slot = hash & (capacity - 1);
+      while (replacement[slot]) {
+        slot = (slot + 1) & (capacity - 1);
+      }
+      replacement[slot] = index;
+    }
+  } catch (...) {
+    replacement.reset();
+    releaseBytes(bytes);
+    throw;
+  }
+  const uint64_t oldBytes = uint64_t(m_tableCapacity) * 4;
+  m_table.swap(replacement);
+  replacement.reset();
+  releaseBytes(oldBytes);
+  m_reserved += bytes - oldBytes;
+  m_tableCapacity = capacity;
+  ++hashRehashes;
+  growthBytes.fetch_add(bytes, std::memory_order_relaxed);
+  rehashNanos.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - begin).count(), std::memory_order_relaxed);
+}
+
 uint32_t Builder::make(const std::array<uint32_t, 8>& children) {
   if ((children[0] == 0 || (children[0] & kLeaf)) &&
       std::all_of(children.begin() + 1, children.end(), [&](uint32_t c) { return c == children[0]; })) {
@@ -159,19 +273,30 @@ uint32_t Builder::make(const std::array<uint32_t, 8>& children) {
     hash = hash * 0x9E3779B1u + value + (hash >> 15);
   }
   hash ^= hash >> 16;
-  uint32_t slot = hash & (kMaxNodes * 2 - 1);
+  uint32_t slot = hash & (m_tableCapacity - 1);
   while (m_table[slot]) {
     const uint32_t index = m_table[slot];
-    if (std::memcmp(m_nodes.get() + size_t(index) * 8, children.data(), 32) == 0) {
+    if (std::memcmp(node(index), children.data(), 32) == 0) {
       return index;
     }
-    slot = (slot + 1) & (kMaxNodes * 2 - 1);
+    slot = (slot + 1) & (m_tableCapacity - 1);
   }
   if (m_nodeCount >= kMaxNodes) {
+    ++capacityRejections;
     throw std::length_error("Native DAG page exceeds the fixed node workspace; partition the page without reducing detail");
   }
+  if (m_nodeCount * 2 > m_tableCapacity) {
+    growHash();
+    slot = hash & (m_tableCapacity - 1);
+    while (m_table[slot]) {
+      slot = (slot + 1) & (m_tableCapacity - 1);
+    }
+  }
+  if (m_nodeCount == m_nodeCapacity) {
+    growNodes();
+  }
   const uint32_t index = m_nodeCount++;
-  std::memcpy(m_nodes.get() + size_t(index) * 8, children.data(), 32);
+  std::memcpy(node(index), children.data(), 32);
   m_table[slot] = index;
   addOutput(32);
   return index;
@@ -313,8 +438,23 @@ void Builder::copy(uint32_t firstWord, uint32_t count, uint32_t offset, void* de
     throw std::invalid_argument("DAG copy destination is null");
   }
   if (count) {
-    std::memcpy(destination, m_nodes.get() + firstWord, size_t(count) * 4);
+    const auto begin = std::chrono::steady_clock::now();
+    uint32_t copied = 0;
+    while (copied < count) {
+      const uint32_t word = firstWord + copied;
+      const uint32_t index = word / 8;
+      uint32_t chunk = m_chunkCount - 1;
+      while (index < m_chunkFirst[chunk]) {
+        --chunk;
+      }
+      const uint32_t available = (m_chunkFirst[chunk] + m_chunkNodes[chunk]) * 8 - word;
+      const uint32_t slice = std::min(available, count - copied);
+      std::memcpy(static_cast<uint8_t*>(destination) + size_t(copied) * 4, node(index) + word % 8, size_t(slice) * 4);
+      copied += slice;
+    }
     relocate(destination, count, offset, m_nodeCount);
+    copyBytes.fetch_add(uint64_t(count) * 4, std::memory_order_relaxed);
+    copyNanos.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - begin).count(), std::memory_order_relaxed);
   }
 }
 
@@ -328,6 +468,7 @@ namespace {
     explicit IoLease(uint64_t bytes = 1u << 20) : m_bytes(bytes) {
       std::lock_guard<std::mutex> lock(budgetMutex);
       if (reserved + bytes > kMemoryLimit) {
+        ++capacityRejections;
         throw std::runtime_error("Native DAG I/O scratch admission rejected (64 MiB global)");
       }
       reserved += bytes;
@@ -455,6 +596,7 @@ namespace {
       if (!count) {
         return;
       }
+      const auto begin = std::chrono::steady_clock::now();
       m_file.clear();
       m_file.seekg(kHeaderBytes + uint64_t(first) * 4);
       m_file.read(static_cast<char*>(destination), size_t(count) * 4);
@@ -463,6 +605,8 @@ namespace {
       }
       // Supported JNI targets are little-endian; the disk format is explicitly little-endian.
       relocate(destination, count, offset, m_count);
+      copyBytes.fetch_add(uint64_t(count) * 4, std::memory_order_relaxed);
+      copyNanos.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - begin).count(), std::memory_order_relaxed);
     }
   private:
     static void checkReference(uint32_t value, uint32_t beforeNode) {

@@ -176,7 +176,7 @@ JNIEXPORT void JNICALL Java_com_nvidia_rtxremix_VoxelDag_destroy(JNIEnv* env, jc
 JNIEXPORT jlongArray JNICALL Java_com_nvidia_rtxremix_VoxelDag_metrics(JNIEnv* env, jclass) {
   return guard<jlongArray>(env, [&] {
     const auto values = rtx::voxel::metrics();
-    std::array<jlong, 8> result;
+    std::array<jlong, 16> result;
     std::copy(values.begin(), values.end(), result.begin());
     jlongArray array = env->NewLongArray(jsize(result.size()));
     if (array) {

@@ -14,11 +14,11 @@
 namespace rtx::voxel {
 
 constexpr uint32_t kLeaf = 0x80000000u;
-constexpr uint32_t kMaxNodes = 1u << 19;
+constexpr uint32_t kMaxNodes = 1u << 20;
 constexpr uint64_t kMemoryLimit = 64ull << 20;
 
 // Metrics count owned capacity separately from the used portion of builder output.
-std::array<uint64_t, 8> metrics();
+std::array<uint64_t, 16> metrics();
 
 class Page {
 public:
@@ -48,12 +48,18 @@ public:
 private:
   void writable() const;
   uint32_t make(const std::array<uint32_t, 8>& children);
+  uint32_t* node(uint32_t index) const;
+  void growNodes();
+  void growHash();
   uint32_t region(uint32_t level, uint32_t x, uint32_t y, uint32_t z);
   uint32_t section(const uint8_t* voxels, uint32_t level, uint32_t x, uint32_t y, uint32_t z);
   uint32_t m_lg, m_slabs, m_n, m_cells, m_nodeCount = 1;
   bool m_finished = false;
   uint64_t m_reserved = 0;
-  std::unique_ptr<uint32_t[]> m_nodes, m_table;
+  std::array<std::unique_ptr<uint32_t[]>, 11> m_nodeChunks;
+  std::array<uint32_t, 11> m_chunkFirst {}, m_chunkNodes {};
+  uint32_t m_chunkCount = 0, m_nodeCapacity = 0, m_tableCapacity = 0;
+  std::unique_ptr<uint32_t[]> m_table;
   std::array<int16_t, 16384> m_top {};
   std::array<uint16_t, 16384> m_rgb {};
   std::array<uint8_t, 16384> m_supplied {};

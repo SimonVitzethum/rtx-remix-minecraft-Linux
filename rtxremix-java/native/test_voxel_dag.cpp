@@ -63,6 +63,7 @@ int main(int argc, char** argv) {
     assert(metrics()[3] == 1);
   }
   assert(metrics()[1] == 0 && metrics()[4] == 0);
+  assert(metrics()[2] < 4u * 1024 * 1024);
   for (uint32_t lg = 1; lg <= 4; ++lg) {
     Builder page(lg, 2);
     rejects([&] { page.root(0); });
@@ -160,8 +161,22 @@ int main(int argc, char** argv) {
       }
     } catch (const std::length_error&) { bounded = true; }
     assert(bounded);
+    // A second workspace must include the first one's live pages and hash rehash overlap in admission.
+    Builder second(4, 2);
+    fill(second, 4);
+    bool denied = false;
+    try {
+      for (uint32_t chunk = 0; chunk < 256; ++chunk) {
+        for (uint32_t sy = 0; sy < 32; ++sy) {
+          for (auto& item : data) { item = uint16_t(random()); }
+          second.exact(chunk & 15, sy, chunk >> 4, data.data());
+        }
+      }
+    } catch (const std::runtime_error&) { denied = true; }
+    assert(denied && metrics()[1] <= kMemoryLimit);
   }
   const auto final = metrics();
   assert(final[1] == 0 && final[3] == 0 && final[4] == 0 && final[6] == 0 && final[2] <= kMemoryLimit);
-  std::cout << "Native DAG: exact/LOD/relocation/disk/overlay/admission/lifetime bounds PASS; reserved peak=" << final[2] << '\n';
+  assert(final[8] > 2 && final[9] > 0 && final[10] > 0 && final[11] > 0 && final[12] >= 3 && final[13] > 0 && final[14] > 0);
+  std::cout << "Native DAG: exact/LOD/relocation/disk/overlay/admission/lifetime bounds PASS; reserved peak=" << final[2] << " node chunks=" << final[8] << " hash rehashes=" << final[9] << " rejections=" << final[12] << '\n';
 }
