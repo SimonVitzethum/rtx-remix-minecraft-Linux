@@ -2238,8 +2238,24 @@ namespace dxvk {
         }
       }
 
+      // Debug aid: REMIX_DUMP_INTEROP=1 logs pixel statistics of every 30th rendered frame.
+      static const char* dumpDir = std::getenv("REMIX_DUMP_INTEROP");
+      static uint64_t dumpCounter = 0;
+      Rc<DxvkBuffer> dumpBuffer;
+      if (dumpDir && (dumpCounter++ % 30) == 0) {
+        DxvkBufferCreateInfo bufferInfo = {};
+        bufferInfo.size = VkDeviceSize(extent.width) * extent.height * 4;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        bufferInfo.access = VK_ACCESS_TRANSFER_WRITE_BIT;
+        dumpBuffer = m_device->createBuffer(bufferInfo,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+          DxvkMemoryStats::Category::RTXBuffer, "Interop dump");
+      }
+
       const uint64_t signalValue = ++m_interop.dxvkDoneValue;
       m_parent->EmitCs([cSrc = backBuffer,
+                        dumpBuffer,
                         cDepthDst = m_interop.depthImage,
                         cDst = m_interop.image,
                         cDone = m_interop.dxvkDone,
@@ -2258,6 +2274,11 @@ namespace dxvk {
           if (depth.isValid() && depth.image != nullptr && depth.image->info().extent == cDepthDst->info().extent) {
             RtxContext::blitImageHelper(ctx, depth.image, cDepthDst, VK_FILTER_NEAREST);
           }
+        }
+
+        if (dumpBuffer != nullptr) {
+          ctx->copyImageToBuffer(dumpBuffer, 0, 0, 0, cDst, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+                                 VkOffset3D{ 0, 0, 0 }, cDst->mipLevelExtent(0));
         }
 
 #ifdef REMIX_LINUX_NATIVE
@@ -2307,23 +2328,7 @@ namespace dxvk {
         m_interop.submitted = false;
       }
 
-      // Debug aid: REMIX_DUMP_INTEROP=1 logs pixel statistics of every 30th rendered frame.
-      static const char* dumpDir = std::getenv("REMIX_DUMP_INTEROP");
-      static uint64_t dumpCounter = 0;
-      if (dumpDir && (dumpCounter++ % 30) == 0) {
-        DxvkBufferCreateInfo bufferInfo = {};
-        bufferInfo.size = VkDeviceSize(extent.width) * extent.height * 4;
-        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        bufferInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        bufferInfo.access = VK_ACCESS_TRANSFER_WRITE_BIT;
-        auto dumpBuffer = m_device->createBuffer(bufferInfo,
-          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-          DxvkMemoryStats::Category::RTXBuffer, "Interop dump");
-        m_parent->EmitCs([dumpBuffer, cImage = m_interop.image](DxvkContext* ctx) {
-          ctx->copyImageToBuffer(dumpBuffer, 0, 0, 0, cImage, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-                                 VkOffset3D{ 0, 0, 0 }, cImage->mipLevelExtent(0));
-          ctx->flushCommandList();
-        });
+      if (dumpBuffer != nullptr) {
         m_parent->Flush();
         m_parent->SynchronizeCsThread();
         m_device->waitForIdle();
