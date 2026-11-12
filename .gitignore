@@ -43,3 +43,14 @@ metrics.txt
 nrc_session_log.txt
 python.dxvk-cache
 *.xml.user
+
+# Optional local resource/texture packs
+*.zip
+resourcepacks/
+texturepacks/
+resource-packs/
+texture-packs/
+
+# Nix build result links; flake.nix and flake.lock stay tracked
+/result
+/result-*

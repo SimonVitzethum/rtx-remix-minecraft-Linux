@@ -35,6 +35,31 @@ Minecraft integration through the Remix C API.
 - XeSS, NRC, Reflex, Aftermath and NVAPI are compiled out on Linux; RTXIO is
   disabled.
 
+## Nix Development Environment
+
+The committed `flake.nix` and `flake.lock` provide a pinned C++/shader tool
+environment for **x86-64 Linux and ARM64 Linux**:
+
+```bash
+nix develop
+```
+
+It supplies the compiler, Meson/Ninja, CMake, Vulkan headers/loader, Slang,
+glslang and SPIR-V Tools. OpenUSD, NRD, NVIDIA SDK payloads and the installed
+GPU driver retain their own version, platform and license requirements; they
+are not implicitly bundled by this shell. Follow
+[Linux Build](documentation/LinuxBuild.md) for those inputs and pass
+`-Dslangc="$(command -v slangc)"` when configuring Meson to select the shell's
+compiler instead of a separately installed Slang.
+
+`nix flake check --no-build` evaluates the flake. `nix flake update` intentionally
+changes the locked Nixpkgs version. The flake is a development shell, not a
+sandboxed derivation of the complete proprietary-SDK runtime. Native Windows
+development continues to use the Windows build workflow below.
+
+Keep optional texturepacks local in ignored `resourcepacks/` or `texturepacks/`
+directories; ZIP archives and Nix `result` links are ignored.
+
 ## Linux Performance Reference
 
 On November 12, 2026, the Minecraft integration was measured on an **RTX 5070
