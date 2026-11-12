@@ -368,7 +368,9 @@ namespace {
 
   std::atomic<uint64_t> tempId {0};
   std::filesystem::path tempPath(const std::filesystem::path& path) {
-    return path.string() + ".tmp-" + std::to_string(++tempId);
+    auto temporary = path;
+    temporary += std::filesystem::path(".tmp-" + std::to_string(++tempId));
+    return temporary;
   }
 
   void replaceFile(const std::filesystem::path& from, const std::filesystem::path& to) {
