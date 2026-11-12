@@ -67,6 +67,9 @@ namespace dxvk::ngx {
     if (function == nullptr) {
       return nullptr;
     }
+    if (std::strcmp(pName, "vkGetInstanceProcAddr") == 0) {
+      return reinterpret_cast<PFN_vkVoidFunction>(getInstanceProcAddr);
+    }
     if (std::strcmp(pName, "vkCmdClearColorImage") == 0) {
       return reinterpret_cast<PFN_vkVoidFunction>(clearColorImage);
     }

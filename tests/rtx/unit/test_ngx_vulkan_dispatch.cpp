@@ -36,7 +36,9 @@ namespace {
   const VkClearColorValue expectedColor = {{0.1f, 0.2f, 0.3f, 0.4f}};
 
   void check(bool condition) {
-    if (!condition) throw std::runtime_error("NGX Vulkan dispatch contract violated");
+    if (!condition) {
+      throw std::runtime_error("NGX Vulkan dispatch contract violated");
+    }
   }
 
   VKAPI_ATTR void VKAPI_CALL passthrough() { }
@@ -86,6 +88,7 @@ int main() {
     const auto instance = reinterpret_cast<VkInstance>(3);
     const auto device = reinterpret_cast<VkDevice>(4);
     check(getInstanceProcAddr(instance, "unsupported") == nullptr);
+    check(getInstanceProcAddr(instance, "vkGetInstanceProcAddr") == reinterpret_cast<PFN_vkVoidFunction>(getInstanceProcAddr));
     check(getDeviceProcAddr(device, "unsupported") == nullptr);
     check(getInstanceProcAddr(instance, "vkCreateDevice") == passthrough);
     check(getDeviceProcAddr(device, "vkCmdDraw") == passthrough);

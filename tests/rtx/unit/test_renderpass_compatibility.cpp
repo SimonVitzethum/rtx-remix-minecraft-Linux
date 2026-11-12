@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+* Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -46,7 +46,9 @@ namespace {
   }
 
   void check(bool condition) {
-    if (!condition) throw std::runtime_error("Incompatible render pass dependency variants");
+    if (!condition) {
+      throw std::runtime_error("Incompatible render pass dependency variants");
+    }
   }
 }
 
@@ -107,7 +109,9 @@ int main() {
             auto handle = pass.getHandle(ops);
             const auto& actual = dependencies.at(reinterpret_cast<uintptr_t>(handle) - 1);
             check(expected.size() == actual.size());
-            for (size_t i = 0; i < expected.size(); ++i) check(fields(expected[i]) == fields(actual[i]));
+            for (size_t i = 0; i < expected.size(); ++i) {
+              check(fields(expected[i]) == fields(actual[i]));
+            }
             check(handle == pass.getHandle(ops));
             ++cases;
           }
