@@ -19,6 +19,9 @@ public final class RemixBridge {
 
     private RemixBridge() {}
 
+    /** Compiled bridge/header contract, available before any runtime or Vulkan initialization. */
+    public static native long bridgeContract();
+
     /**
      * Loads d3d9.dll via SetDllDirectory + LoadLibrary, calls
      * remixapi_InitializeLibrary to fill the vtable.
@@ -63,6 +66,21 @@ public final class RemixBridge {
     public static native int shutdown();
 
     public static native int submit(int interopFlags);
+
+    /** Writes 24 context/budget values in the order defined by GpuWork.Context and GpuWork.Memory. */
+    public static native int getGpuContext(long[] output);
+
+    /** Writes ten resource values. All mappings and Vulkan handles remain runtime-owned. */
+    public static native int createGpuResource(int kind, int memory, long bytes, int usage,
+            int width, int height, int format, long[] output);
+
+    public static native int destroyGpuResource(long resource);
+
+    /** Copies resource IDs synchronously. Queued GPU work retains their actual allocations. */
+    public static native int submitGpuWork(long commands, long[] reads, long[] writes);
+
+    /** Writes state, error and serial without waiting for the CS thread or GPU. */
+    public static native int getGpuWorkStatus(long commands, long[] output);
 
     public static native int present(long hwndOverride,
                     int skipVulkanSwapchain,

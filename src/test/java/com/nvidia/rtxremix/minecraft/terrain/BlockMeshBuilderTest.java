@@ -27,6 +27,28 @@ class BlockMeshBuilderTest {
             4 * HardcodedVertex.STRIDE + 6 * Integer.BYTES;
 
     @Test
+    void compactPagesKeepDescriptorsAndExpandedByteAccountingWithoutCpuVertexBuffers() throws Exception {
+        BlockMeshBuilder builder = new BlockMeshBuilder(2L * QUAD_BYTES);
+        ByteBuffer descriptors = ByteBuffer.allocate(5 * 96).order(ByteOrder.LITTLE_ENDIAN);
+        for (int quad = 0; quad < 5; quad++) descriptors.putInt(quad * 96, quad + 100);
+        SectionMeshData data = meshData(new SectionMeshData.Surface(ChunkManager.CAT_SOLID, "solid",
+                descriptors, 20, 30, true, true));
+        BlockMeshBuilder.MeshPage[] pages = builder.buildColumnMesh(0, 0, List.of(snapshot(0, 0, 0, data)),
+                BlockMeshBuilder.ALL_CATEGORY_MASK, key -> testMaterial());
+        try {
+            assertEquals(3, pages.length);
+            assertArrayEquals(new long[] {2L * QUAD_BYTES, 2L * QUAD_BYTES, QUAD_BYTES}, pageBytes(pages));
+            for (int page = 0; page < pages.length; page++) {
+                RemixMeshSurface surface = firstSurface(pages[page].mesh());
+                ByteBuffer compact = surfaceBuffer(surface, "compactData");
+                assertEquals(100 + page * 2, compact.getInt(0));
+                org.junit.jupiter.api.Assertions.assertNull(surfaceBuffer(surface, "vertexData"));
+                org.junit.jupiter.api.Assertions.assertNull(surfaceBuffer(surface, "indexData"));
+            }
+        } finally { dispose(pages); }
+    }
+
+    @Test
     void canonicalIndexWriterRepeatsTheQuadPatternFromZero() {
         ByteBuffer indices = ByteBuffer.allocateDirect(12 * 4).order(ByteOrder.LITTLE_ENDIAN);
         BlockMeshBuilder.putCanonicalQuadIndices(indices, 8);
@@ -261,7 +283,8 @@ class BlockMeshBuilderTest {
     private static ByteBuffer surfaceBuffer(RemixMeshSurface surface, String name) throws Exception {
         Field field = RemixMeshSurface.class.getDeclaredField(name);
         field.setAccessible(true);
-        return ((ByteBuffer) field.get(surface)).duplicate().order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer buffer = (ByteBuffer) field.get(surface);
+        return buffer == null ? null : buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN);
     }
 
     private static int[] readInts(ByteBuffer buffer, int count) {

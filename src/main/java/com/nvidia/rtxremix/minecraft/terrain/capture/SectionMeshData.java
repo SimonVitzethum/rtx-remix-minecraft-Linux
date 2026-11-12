@@ -14,7 +14,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Pre-categorized interleaved mesh data for a single chunk section.
  * Each {@link Surface} is one (category, bucketKey) pair with vertex
- * data already in HardcodedVertex layout (64-byte stride).
+ * data in HardcodedVertex layout (64-byte stride) or compact GPU quad descriptors.
+ * Compact origins already include section Y; their counts describe expanded GPU output.
  *
  * <p>Positions are section-local. The column mesh builder adds each section's
  * offset within the column, and the Remix instance transform places the
@@ -40,13 +41,14 @@ public final class SectionMeshData {
      *
      * @param category     chunk manager category (CAT_SOLID, CAT_CUTOUT, etc.)
      * @param bucketKey    material bucket key (e.g. "solid", "cutout_mipped", "water", "solid_sss")
-     * @param vertexBuffer HardcodedVertex interleaved (64 bytes/vert); a pooled direct
+     * @param vertexBuffer HardcodedVertex interleaved (64 bytes/vert), or 96 bytes per compact quad; a pooled direct
      *                     buffer in production, positioned at 0 with the payload as limit
      * @param vertexCount  number of vertices
      * @param indexCount   number of indices
      * @param canonicalQuadIndices true when indices follow DirectQuadWriter's
      *                             fixed per-quad pattern; the only value this
      *                             pipeline produces, and paging requires it
+     * @param compactQuads whether the payload contains GPU descriptors rather than expanded vertices
      */
     public record Surface(
         int category,
@@ -54,8 +56,18 @@ public final class SectionMeshData {
         ByteBuffer vertexBuffer,
         int vertexCount,
         int indexCount,
-        boolean canonicalQuadIndices
-    ) {}
+        boolean canonicalQuadIndices,
+        boolean compactQuads
+    ) {
+        public Surface(int category, String bucketKey, ByteBuffer vertexBuffer, int vertexCount,
+                       int indexCount, boolean canonicalQuadIndices) {
+            this(category, bucketKey, vertexBuffer, vertexCount, indexCount, canonicalQuadIndices, false);
+        }
+        public int payloadBytes() {
+            return compactQuads ? Math.multiplyExact(vertexCount / 4, CompactQuadCapture.STRIDE)
+                    : Math.multiplyExact(vertexCount, 64);
+        }
+    }
 
     private final List<Surface> surfaces;
     private final int cachedHash;
@@ -175,8 +187,9 @@ public final class SectionMeshData {
         hash = hash * 31 + surface.indexCount;
         hash = hash * 31 + (surface.canonicalQuadIndices ? 1 : 0);
 
+        if (surface.compactQuads) hash = hash * 31 + 0x47505551;
         ByteBuffer vertices = surface.vertexBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN);
-        vertices.position(0).limit(surface.vertexCount * 64);
+        vertices.position(0).limit(surface.payloadBytes());
         while (vertices.remaining() >= Integer.BYTES) hash = hash * 31 + vertices.getInt();
 
         return hash;

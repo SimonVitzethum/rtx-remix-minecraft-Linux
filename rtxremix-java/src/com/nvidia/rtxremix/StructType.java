@@ -42,6 +42,11 @@ public final class StructType {
     public static final int CONFIG_VARIABLE_RESOLVED_INFO = 31;
 
     public static final int MESH_INFO_COMPACT_QUADS_EXT = 32;
+    public static final int GPU_CONTEXT_INFO = 33;
+    public static final int GPU_RESOURCE_CREATE_INFO = 34;
+    public static final int GPU_RESOURCE_INFO = 35;
+    public static final int GPU_WORK_SUBMIT_INFO = 36;
+    public static final int GPU_WORK_STATUS = 37;
 
     private StructType() {}
 }

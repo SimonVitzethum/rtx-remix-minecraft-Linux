@@ -26,6 +26,8 @@ public class RemixMeshSurface {
 
     private final RemixMaterial material;
 
+    private ByteBuffer compactData;
+    private int compactQuadCount;
     private ByteBuffer vertexData;
     private int vertexCount;
     private ByteBuffer indexData;
@@ -41,6 +43,13 @@ public class RemixMeshSurface {
 
     public RemixMeshSurface(RemixMaterial material) {
         this.material = material;
+    }
+
+    /** GPU construction path: owns direct version-1 affine quad descriptors, with no expanded CPU mesh. */
+    public RemixMeshSurface setCompactQuadData(ByteBuffer descriptors, int count) {
+        compactData = descriptors;
+        compactQuadCount = count;
+        return this;
     }
 
     /** Raw memory path (terrain): sets pre-built native vertex buffer. */
@@ -133,6 +142,8 @@ public class RemixMeshSurface {
     /** Converts to the JNI bridge structure for mesh creation. Package-private. */
     MeshInfoSurfaceTriangles toNative() {
         MeshInfoSurfaceTriangles surf = new MeshInfoSurfaceTriangles();
+        surf.compactQuadBuffer = compactData;
+        surf.compactQuadCount = compactQuadCount;
 
         if (structuredVertices != null) {
             int stride = HardcodedVertex.STRIDE;
@@ -171,6 +182,7 @@ public class RemixMeshSurface {
     /** Collects all native ByteBuffer objects for lifecycle management by RemixMesh. */
     List<ByteBuffer> collectNativeBuffers() {
         List<ByteBuffer> buffers = new ArrayList<>();
+        if (compactData != null) buffers.add(compactData);
         if (vertexData != null) buffers.add(vertexData);
         if (indexData != null) buffers.add(indexData);
         buffers.addAll(extraNativeBuffers);
@@ -178,6 +190,7 @@ public class RemixMeshSurface {
     }
 
     long estimatedNativeBytes() {
+        if (compactData != null) return (long) compactQuadCount * (4 * HardcodedVertex.STRIDE + 6 * Integer.BYTES);
         long bytes = structuredVertices != null
                 ? (long) structuredVertexCount * HardcodedVertex.STRIDE
                 : (long) vertexCount * HardcodedVertex.STRIDE;
@@ -189,6 +202,9 @@ public class RemixMeshSurface {
 
     /** Releases all data references, returning pooled direct buffers. */
     public void disposeData() {
+        DirectBufferPool.release(compactData);
+        compactData = null;
+        compactQuadCount = 0;
         DirectBufferPool.release(vertexData);
         DirectBufferPool.release(indexData);
         for (ByteBuffer b : extraNativeBuffers) DirectBufferPool.release(b);

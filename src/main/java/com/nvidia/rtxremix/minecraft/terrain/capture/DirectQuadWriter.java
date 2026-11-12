@@ -73,6 +73,7 @@ public final class DirectQuadWriter {
     private int lastBucketCategory = -1;
     private String lastBucketKey;
     private BucketBuffer lastBucket;
+    private int sectionMinY;
 
     public DirectQuadWriter() {
         for (int i = 0; i < bucketsByCategory.length; i++) {
@@ -87,6 +88,9 @@ public final class DirectQuadWriter {
         int vertexCount;
         int indexCount;
         int vertexHash;
+        ByteBuffer compact;
+        int compactCount;
+        int compactHash;
 
         BucketBuffer(int category, String key) {
             this.category = category;
@@ -95,7 +99,7 @@ public final class DirectQuadWriter {
             totalAllocatedBytes.addAndGet(INITIAL_VERT_SIZE);
         }
 
-        int allocatedBytes() { return vertices.capacity(); }
+        int allocatedBytes() { return vertices.capacity() + (compact == null ? 0 : compact.capacity()); }
 
         void writeQuad(float[] pos, int posOff,
                         float[] uvs, int uvOff,
@@ -129,6 +133,42 @@ public final class DirectQuadWriter {
             indexCount += INDICES_PER_QUAD;
         }
 
+        boolean writeCompact(float[] positions, int positionOffset, float[] uv, int uvOffset,
+                             float nx, float ny, float nz, int color, int boundsMin, int boundsMax, int sectionY) {
+            if (compact == null || compact.remaining() < CompactQuadCapture.STRIDE) {
+                int oldCapacity = compact == null ? 0 : compact.capacity();
+                int required = Math.multiplyExact(compactCount + 1, CompactQuadCapture.STRIDE);
+                int capacity = Math.max(required, oldCapacity == 0 ? INITIAL_QUADS * CompactQuadCapture.STRIDE
+                        : Math.multiplyExact(oldCapacity, 2));
+                ByteBuffer grown = ByteBuffer.allocate(capacity).order(ByteOrder.LITTLE_ENDIAN);
+                if (compact != null) {
+                    compact.flip();
+                    grown.put(compact);
+                }
+                compact = grown;
+                totalAllocatedBytes.addAndGet(capacity - oldCapacity);
+                totalGrowthEvents.incrementAndGet();
+                totalGrowthCopiedBytes.addAndGet((long) compactCount * CompactQuadCapture.STRIDE);
+            }
+            int start = compact.position();
+            if (!CompactQuadCapture.tryWrite(compact, positions, positionOffset, uv, uvOffset,
+                    nx, ny, nz, color, boundsMin, boundsMax, sectionY)) return false;
+            for (int word = start; word < compact.position(); word += 4) compactHash = compactHash * 31 + compact.getInt(word);
+            compactCount++;
+            return true;
+        }
+
+        int appendCompactToContentHash(int hash) {
+            int surfaceHash = category;
+            surfaceHash = surfaceHash * 31 + key.hashCode();
+            surfaceHash = surfaceHash * 31 + compactCount * 4;
+            surfaceHash = surfaceHash * 31 + compactCount * 6;
+            surfaceHash = surfaceHash * 31 + 1;
+            surfaceHash = surfaceHash * 31 + 0x47505551;
+            surfaceHash = appendHash(surfaceHash, compactHash, compactCount * (CompactQuadCapture.STRIDE / 4));
+            return hash * 31 + surfaceHash;
+        }
+
         private void ensureVertexCapacity(int requiredBytes) {
             if (requiredBytes <= vertices.capacity()) return;
             int oldCap = vertices.capacity();
@@ -149,6 +189,9 @@ public final class DirectQuadWriter {
             vertexCount = 0;
             indexCount = 0;
             vertexHash = 0;
+            compactCount = 0;
+            compactHash = 0;
+            if (compact != null) compact.clear();
         }
 
         int appendToContentHash(int h) {
@@ -222,6 +265,7 @@ public final class DirectQuadWriter {
 
     /** Resets all bucket buffers for a new section. */
     public void beginSection(int sectionMinX, int sectionMinY, int sectionMinZ) {
+        this.sectionMinY = sectionMinY;
         for (BucketBuffer bb : bucketOrder) bb.reset();
         lastBucketCategory = -1;
         lastBucketKey = null;
@@ -335,6 +379,9 @@ public final class DirectQuadWriter {
             int boundsMin = HardcodedVertex.packUnorm2x16(stageSU0[i], stageSV0[i]);
             int boundsMax = HardcodedVertex.packUnorm2x16(stageSU1[i], stageSV1[i]);
 
+            if (CompactQuadCapture.enabled() && (bb.category == ChunkManager.CAT_SOLID || bb.category == ChunkManager.CAT_CUTOUT)
+                    && bb.writeCompact(stagePos, i * 12, stageUvs, i * 8, stageNx[i], stageNy[i], stageNz[i],
+                    stageColor[i], boundsMin, boundsMax, sectionMinY)) continue;
             bb.writeQuad(stagePos, i * 12, stageUvs, i * 8,
                          stageNx[i], stageNy[i], stageNz[i],
                          stageColor[i], boundsMin, boundsMax);
@@ -431,6 +478,7 @@ public final class DirectQuadWriter {
         int activeBuckets = 0;
         int totalVerts = 0;
         for (BucketBuffer bb : bucketOrder) {
+            if (bb.compactCount > 0) { activeBuckets++; totalVerts += bb.compactCount * 4; }
             if (bb.vertexCount > 0) {
                 activeBuckets++;
                 totalVerts += bb.vertexCount;
@@ -449,6 +497,17 @@ public final class DirectQuadWriter {
             boolean transferred = false;
             try {
                 for (BucketBuffer bb : bucketOrder) {
+                    CompactQuadCapture.record(bb.compactCount, bb.vertexCount / 4);
+                    if (bb.compactCount > 0) {
+                        contentHash = bb.appendCompactToContentHash(contentHash);
+                        int bytes = Math.multiplyExact(bb.compactCount, CompactQuadCapture.STRIDE);
+                        ByteBuffer data = DirectBufferPool.acquire(bytes);
+                        ByteBuffer source = bb.compact.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+                        source.position(0).limit(bytes);
+                        data.put(source).flip();
+                        surfaces.add(new SectionMeshData.Surface(bb.category, bb.key, data,
+                                bb.compactCount * 4, bb.compactCount * 6, true, true));
+                    }
                     if (bb.vertexCount == 0) continue;
                     contentHash = bb.appendToContentHash(contentHash);
 

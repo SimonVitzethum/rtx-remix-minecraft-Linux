@@ -33,6 +33,6 @@ class CompactQuadApiTest {
         assertEquals("RESOURCE_BUSY", ErrorCode.toString(ErrorCode.RESOURCE_BUSY));
         assertNotEquals(ErrorCode.GENERAL_FAILURE, ErrorCode.RESOURCE_BUSY);
         assertEquals(32, StructType.MESH_INFO_COMPACT_QUADS_EXT);
-        assertEquals(3, RemixAPI.VERSION_PATCH);
+        assertEquals(4, RemixAPI.VERSION_PATCH);
     }
 }

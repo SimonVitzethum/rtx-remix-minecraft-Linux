@@ -448,6 +448,7 @@ public class ChunkManager {
         boolean failed;
         boolean abortRequested;
         boolean rollbackFailed;
+        long admissionBlockedFrame = Long.MIN_VALUE;
 
         MeshInstallCursor(MeshBuildResult result) {
             this.result = result;
@@ -498,6 +499,8 @@ public class ChunkManager {
                 new TerrainDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
+    private long lastGpuQuadCaptured, lastCpuQuadCaptured, lastCpuLodQuads;
+    private int cntGpuQuadCaptured, cntCpuQuadCaptured, cntCpuLodQuads;
     private int cntCap = -1, cntLightsCulled, cntLightsDrawn, cntLightsBeyondReach, cntReachable, cntWorkerMem, cntPooledDirectMB,
             cntBucketGrows, cntBucketGrowKB, cntPendingBuilds, cntPendingMeshMB, cntCaptureQueue,
             cntCaptureQueueMB, cntCaptureBackpressure, cntCaptureEvicted, cntLightRebuildsSkipped,
@@ -681,6 +684,9 @@ public class ChunkManager {
                 cntReachable = timer.registerCounter("Chunk.Reachable");
                 cntFloodIncrementalUs = timer.registerCounter("Chunk.FloodIncrementalUs");
                 cntWorkerMem = timer.registerCounter("Chunk.WorkerMemKB");
+                cntGpuQuadCaptured = timer.registerCounter("Chunk.GpuQuadDescriptors");
+                cntCpuQuadCaptured = timer.registerCounter("Chunk.CpuQuadFallbacks");
+                cntCpuLodQuads = timer.registerCounter("Chunk.CpuLodExpandedQuads");
                 cntPooledDirectMB = timer.registerCounter("Chunk.PooledDirectMB");
                 cntBucketGrows = timer.registerCounter("Chunk.BucketGrows");
                 cntBucketGrowKB = timer.registerCounter("Chunk.BucketGrowKB");
@@ -744,6 +750,15 @@ public class ChunkManager {
                 timer.count(cntCap, capturesProcessed);
                 genScope.captureCount(capturesProcessed);
                 timer.count(cntWorkerMem, DirectQuadWriter.getTotalAllocatedBytes() / 1024);
+                long gpuQuads = com.nvidia.rtxremix.minecraft.terrain.capture.CompactQuadCapture.compactQuads();
+                long cpuQuads = com.nvidia.rtxremix.minecraft.terrain.capture.CompactQuadCapture.cpuQuads();
+                long lodQuads = com.nvidia.rtxremix.minecraft.terrain.capture.CompactQuadCapture.cpuLodQuads();
+                timer.count(cntGpuQuadCaptured, gpuQuads - lastGpuQuadCaptured);
+                timer.count(cntCpuQuadCaptured, cpuQuads - lastCpuQuadCaptured);
+                timer.count(cntCpuLodQuads, lodQuads - lastCpuLodQuads);
+                lastGpuQuadCaptured = gpuQuads;
+                lastCpuQuadCaptured = cpuQuads;
+                lastCpuLodQuads = lodQuads;
                 // Retained section meshes live in the pool; this is the off-heap footprint
                 // the collector no longer accounts for.
                 timer.count(cntPooledDirectMB, DirectBufferPool.allocatedBytes() / (1024 * 1024));
@@ -1459,9 +1474,11 @@ public class ChunkManager {
                 continue;
             }
 
+            if (cursor.admissionBlockedFrame == terrainFrame) return;
             boolean attemptedNativePage;
             if (!cursor.staged) {
                 attemptedNativePage = installNextPage(cursor, api);
+                if (cursor.admissionBlockedFrame == terrainFrame) return;
                 if (!cursor.failed
                         && cursor.nextPage >= cursor.result.pages().length) {
                     stageHiddenPages(cursor);
@@ -1533,6 +1550,12 @@ public class ChunkManager {
                 cursor.installedPages.add(new InstalledMeshPage(
                         instance, category, categoryFlags, mesh.estimatedNativeBytes()));
             } catch (RuntimeException | Error e) {
+                if (mesh == null && e instanceof com.nvidia.rtxremix.RemixException exception
+                        && exception.getErrorCode() == com.nvidia.rtxremix.ErrorCode.RESOURCE_BUSY) {
+                    cursor.nextPage--;
+                    cursor.admissionBlockedFrame = terrainFrame;
+                    return true;
+                }
                 LOGGER.error("Native terrain install failed for category {}", category, e);
                 cursor.failed = true;
                 if (instance != null) {
