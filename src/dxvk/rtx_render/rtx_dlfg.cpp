@@ -700,6 +700,9 @@ namespace dxvk {
       DxvkDLFGScopeGuard releaseInputs([&]() {
         if (present.frameInterpolation.completionValue) {
           auto* completion = m_dlfgCommandLists.nextCmdList();
+          // A preceding input set may have completed on the ordinary present queue after a toggle.
+          completion->addWaitSemaphore(present.frameInterpolation.completionSemaphore,
+            present.frameInterpolation.completionValue - 1);
           completion->addSignalSemaphore(present.frameInterpolation.completionSemaphore,
             present.frameInterpolation.completionValue);
           completion->endRecording();

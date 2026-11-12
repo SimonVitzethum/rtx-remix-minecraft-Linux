@@ -2200,6 +2200,10 @@ namespace dxvk {
 #endif
 
     m_interop.depthImage = m_device->createImage(info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, DxvkMemoryStats::Category::RTXRenderTarget, "Interop depth image");
+    // A resize can leave no matching primary depth to copy on the first submission.
+    m_parent->EmitCs([cImage = m_interop.depthImage](DxvkContext* ctx) {
+      ctx->clearColorImage(cImage, VkClearColorValue {}, cImage->getAvailableSubresources());
+    });
   }
 
   HRESULT D3D9SwapChainEx::SubmitInterop(uint32_t flags) {

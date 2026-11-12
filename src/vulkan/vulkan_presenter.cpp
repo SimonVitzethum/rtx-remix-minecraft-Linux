@@ -167,11 +167,18 @@ namespace dxvk::vk {
     info.pResults           = nullptr;
 
     // NV-DXVK start: Release inputs when FG was disabled between capture and present.
-    if (frameInterpolation.completionValue) {
+    if (!isDlfgPresenting && frameInterpolation.completionValue) {
+      const uint64_t previousValue = frameInterpolation.completionValue - 1;
+      const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
       VkTimelineSemaphoreSubmitInfo timeline = { VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO };
+      timeline.waitSemaphoreValueCount = 1;
+      timeline.pWaitSemaphoreValues = &previousValue;
       timeline.signalSemaphoreValueCount = 1;
       timeline.pSignalSemaphoreValues = &frameInterpolation.completionValue;
       VkSubmitInfo submit = { VK_STRUCTURE_TYPE_SUBMIT_INFO, &timeline };
+      submit.waitSemaphoreCount = 1;
+      submit.pWaitSemaphores = &frameInterpolation.completionSemaphore;
+      submit.pWaitDstStageMask = &waitStage;
       submit.signalSemaphoreCount = 1;
       submit.pSignalSemaphores = &frameInterpolation.completionSemaphore;
       VkResult status = m_vkd->vkQueueSubmit(m_device.queue, 1, &submit, VK_NULL_HANDLE);
