@@ -69,9 +69,7 @@ namespace dxvk::vk {
 }
 
 namespace dxvk {
-  void Logger::err(const std::string& message) {
-    std::cerr << message << std::endl;
-  }
+  Logger Logger::s_instance("test_renderpass_compatibility.log");
 }
 
 int main() {
