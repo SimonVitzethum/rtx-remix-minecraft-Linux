@@ -620,17 +620,15 @@ namespace dxvk {
   bool DxvkDLFGPresenter::submitPresent(SwapchainImage& image, const PresentJob& present, uint64_t pacerSemaphoreWaitValue, VkSetPresentConfigNV* presentMetering) {
     const auto& reflex = m_ctx->getCommonObjects()->metaReflex();
 
+    // Every image needs a ready signal, including hardware-paced images without a CPU pacing wait.
+    DxvkDLFGCommandList* commandList = m_presentPacingCommandLists.nextCmdList();
     if (!kSkipPacerSemaphoreWait && pacerSemaphoreWaitValue != kPacerDoNotWait) {
       assert(presentMetering == nullptr);
-
-      // inject a command list that waits on the pacer semaphore and signals the present semaphore
-      // this will cause the present below to wait on this timeline semaphore, which the pacer thread will signal from the CPU
-      DxvkDLFGCommandList* commandList = m_presentPacingCommandLists.nextCmdList();
-      commandList->endRecording();
       commandList->addWaitSemaphore(m_dlfgPacerSemaphore->handle(), pacerSemaphoreWaitValue);
-      commandList->addSignalSemaphore(image.sync.present);
-      commandList->submit();
     }
+    commandList->addSignalSemaphore(image.sync.present);
+    commandList->endRecording();
+    commandList->submit();
 
     reflex.beginOutOfBandPresent(present.present.cachedReflexFrameId);
     DLFG_TRACE("queue present begin image=", image.index);
@@ -806,8 +804,6 @@ namespace dxvk {
             // emit the timestamp query that the pacer will read
             pacer.dlfgQueryIndex = queryPoolDLFG->writeTimestamp(commandList->getCmdBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 
-            // first interpolated frame presents immediately, so we signal the present semaphore here
-            commandList->addSignalSemaphore(swapchainImage.sync.present);
           }
         }
 
@@ -945,9 +941,6 @@ namespace dxvk {
 
         blitRenderedFrame(commandList, renderedSwapchainImage, present, false);
 
-        // The present below waits on this semaphore and, without interpolation, no pacing command list signals it.
-        // A stray wait only got satisfied by a later interpolated frame, which never comes when no frame is interpolated.
-        commandList->addSignalSemaphore(renderedSwapchainImage.sync.present);
         commandList->addSignalSemaphore(backbufferSignalSemaphore);
         commandList->endRecording();
         commandList->submit();

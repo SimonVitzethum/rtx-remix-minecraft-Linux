@@ -29,9 +29,12 @@
 
 namespace {
   std::vector<VkImageMemoryBarrier> barriers;
+  std::vector<VkBufferMemoryBarrier> bufferBarriers;
   bool cleared = false;
+  uint32_t filled = 0;
   VkCommandBuffer expectedCommand = reinterpret_cast<VkCommandBuffer>(1);
   VkImage expectedImage = reinterpret_cast<VkImage>(2);
+  VkBuffer expectedBuffer = reinterpret_cast<VkBuffer>(5);
   const VkImageLayout expectedLayout = VK_IMAGE_LAYOUT_GENERAL;
   const VkClearColorValue expectedColor = {{0.1f, 0.2f, 0.3f, 0.4f}};
 
@@ -55,11 +58,23 @@ extern "C" {
 
   VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier(VkCommandBuffer commandBuffer,
       VkPipelineStageFlags srcStages, VkPipelineStageFlags dstStages, VkDependencyFlags,
-      uint32_t memoryCount, const VkMemoryBarrier*, uint32_t bufferCount, const VkBufferMemoryBarrier*,
+      uint32_t memoryCount, const VkMemoryBarrier*, uint32_t bufferCount, const VkBufferMemoryBarrier* pBuffers,
       uint32_t imageCount, const VkImageMemoryBarrier* pImages) {
-    check(commandBuffer == expectedCommand && !cleared);
+    check(commandBuffer == expectedCommand);
     check(srcStages == VK_PIPELINE_STAGE_ALL_COMMANDS_BIT && dstStages == VK_PIPELINE_STAGE_TRANSFER_BIT);
-    check(memoryCount == 0 && bufferCount == 0 && imageCount == 1);
+    check(memoryCount == 0);
+    if (bufferCount) {
+      check(imageCount == 0 && bufferCount == 1);
+      check(pBuffers[0].buffer == expectedBuffer);
+      check(pBuffers[0].srcAccessMask == (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT));
+      check(pBuffers[0].dstAccessMask == VK_ACCESS_TRANSFER_WRITE_BIT);
+      check(pBuffers[0].srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+      check(pBuffers[0].dstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+      check(bufferBarriers.size() == filled);
+      bufferBarriers.push_back(pBuffers[0]);
+      return;
+    }
+    check(!cleared && imageCount == 1);
     check(pImages[0].image == expectedImage);
     check(pImages[0].oldLayout == expectedLayout && pImages[0].newLayout == expectedLayout);
     check(pImages[0].srcAccessMask & VK_ACCESS_MEMORY_WRITE_BIT);
@@ -79,6 +94,17 @@ extern "C" {
       check(std::memcmp(&barriers[i].subresourceRange, &pRanges[i], sizeof(pRanges[i])) == 0);
     }
     cleared = true;
+  }
+
+  VKAPI_ATTR void VKAPI_CALL vkCmdFillBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer,
+      VkDeviceSize offset, VkDeviceSize size, uint32_t data) {
+    check(commandBuffer == expectedCommand && buffer == expectedBuffer);
+    check(bufferBarriers.size() == filled + 1 && filled < 2);
+    check(offset == (filled ? 64 : 0));
+    check(size == (filled ? VK_WHOLE_SIZE : 128));
+    check(data == 0x12345678);
+    check(bufferBarriers.back().offset == offset && bufferBarriers.back().size == size);
+    ++filled;
   }
 }
 
@@ -103,7 +129,13 @@ int main() {
     };
     clear(expectedCommand, expectedImage, expectedLayout, &expectedColor, 2, ranges);
     check(cleared);
-    std::cout << "PASS NGX resolver forwarding and transfer synchronization for both clear ranges\n";
+    auto fill = reinterpret_cast<PFN_vkCmdFillBuffer>(resolver(device, "vkCmdFillBuffer"));
+    check(fill == fillBuffer);
+    check(getInstanceProcAddr(instance, "vkCmdFillBuffer") == reinterpret_cast<PFN_vkVoidFunction>(fill));
+    fill(expectedCommand, expectedBuffer, 0, 128, 0x12345678);
+    fill(expectedCommand, expectedBuffer, 64, VK_WHOLE_SIZE, 0x12345678);
+    check(filled == 2);
+    std::cout << "PASS NGX resolver forwarding and exact transfer synchronization for image clears and buffer fills\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

@@ -94,8 +94,8 @@ The CPU-visible submit completion does not replace either GPU semaphore wait.
 
 NGX receives application-supplied Vulkan procedure resolvers on Linux. They
 retain the loader's availability checks and dispatch, while wrapping SDK image
-clears with an image dependency from all earlier accesses to transfer writes.
-This dependency is recorded immediately before the clear inside the SDK command
+clears and buffer fills with range-specific dependencies from all earlier accesses
+to transfer writes. Each dependency is recorded immediately before the write inside the SDK command
 sequence; a barrier outside `EvaluateFeature` cannot order two internal commands.
 Validation remains in the dispatch chain. The vendor binaries are unmodified.
 
