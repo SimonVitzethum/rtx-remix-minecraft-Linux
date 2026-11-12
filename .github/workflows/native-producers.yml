@@ -1,0 +1,117 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: native Windows producers
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_repository:
+        description: Repository containing the reviewed native producer source
+        required: true
+        default: SimonVitzethum/rtx-remix-minecraft-Linux
+      runtime_sha:
+        description: Exact published 40-character runtime commit (never a branch or old SDK binary)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - { platform: win64, arch: x64, javaArch: x64, os: windows-2022 }
+          - { platform: arm64, arch: arm64, javaArch: aarch64, os: windows-11-arm }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 350
+    env:
+      GRADLE_OPTS: -Xmx256m
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: mod
+          persist-credentials: false
+      - name: Require an immutable source revision
+        shell: pwsh
+        env:
+          RUNTIME_SHA: ${{ inputs.runtime_sha }}
+        run: |
+          if ($env:RUNTIME_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Pass an exact source SHA' }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.runtime_repository }}
+          ref: ${{ inputs.runtime_sha }}
+          path: runtime
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '25'
+          architecture: ${{ matrix.javaArch }}
+      - name: Check the canonical API header before compilation
+        shell: pwsh
+        run: |
+          $canonical = (Get-FileHash runtime/public/include/remix/remix_c.h -Algorithm SHA256).Hash
+          $copied = (Get-FileHash mod/rtxremix-java/native/include/remix_c.h -Algorithm SHA256).Hash
+          if ($canonical -ne $copied) { throw 'Runtime and custom JNI sources do not share the frozen API' }
+          python -m pip install meson==1.9.2 ninja==1.13.0
+      - name: Build own runtime and platform dependencies with MSVC
+        shell: pwsh
+        run: >-
+          ./runtime/tools/native/build-windows.ps1 -Arch ${{ matrix.arch }}
+          -BuildDirectory _ProducerRelease_${{ matrix.platform }}
+      - name: Generate current custom JNI headers and build the target bridge
+        working-directory: mod
+        shell: pwsh
+        run: |
+          ./gradlew.bat classes --no-daemon --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx2g'
+          if ($LASTEXITCODE -ne 0) { throw 'Current JNI header generation failed' }
+          cmd /c "rtxremix-java\native\build_native.bat ${{ matrix.arch }}"
+          if ($LASTEXITCODE -ne 0) { throw 'Own JNI compilation failed' }
+      - name: Audit real PE machines and JNI exports (no GPU initialization)
+        shell: pwsh
+        run: |
+          $env:PATH += ";$env:ProgramFiles\LLVM\bin"
+          python mod/packaging/native-bundles/check-producer.py --platform ${{ matrix.platform }} --runtime runtime/_ProducerRelease_${{ matrix.platform }}/src/d3d9/d3d9.dll --bridge mod/build/native/${{ matrix.platform }}/remixbridge.dll --jni-headers mod/build/generated/jni --output mod/build/producer-check-${{ matrix.platform }}.json
+          if ($LASTEXITCODE -ne 0) { throw 'Native machine/export audit failed' }
+          javac -cp mod/build/classes/java/main -d mod/build/producer-probe mod/packaging/native-bundles/NativeBridgeProbe.java
+          java --enable-native-access=ALL-UNNAMED -cp "mod/build/producer-probe;mod/build/classes/java/main" NativeBridgeProbe mod/build/native/${{ matrix.platform }}/remixbridge.dll | Tee-Object mod/build/jni-probe-${{ matrix.platform }}.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Native JNI loader probe failed' }
+      # These jobs produce CPU build evidence. produce.py still requires a complete
+      # reviewed dependency/license inventory and an executed API compatibility gate.
+      # They do not publish releases or claim any GPU/driver validation.
+      - name: Negotiate the canonical API against the own runtime without initializing Vulkan
+        shell: pwsh
+        run: |
+          Push-Location runtime
+          . ./build_common.ps1
+          SetupBuild -BuildArch ${{ matrix.arch }}
+          Pop-Location
+          $probe = "$env:GITHUB_WORKSPACE/mod/build/producer-probe/runtime-probe.exe"
+          & cl /nologo /O2 /EHsc /std:c++17 /Imod/rtxremix-java/native/include mod/packaging/native-bundles/NativeRuntimeProbe.cpp "/Fe:$probe"
+          if ($LASTEXITCODE -ne 0) { throw 'API probe compilation failed' }
+          Copy-Item runtime/_ProducerRelease_${{ matrix.platform }}/src/d3d9/d3d9.dll runtime/_output/d3d9.dll -Force
+          & $probe runtime/_output/d3d9.dll | Tee-Object mod/build/api-probe-${{ matrix.platform }}.json
+          if ($LASTEXITCODE -ne 0) { throw 'Own runtime canonical API negotiation failed' }
+      - name: Retain producer results and exact evidence for review
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-producer-${{ matrix.platform }}-${{ inputs.runtime_sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            runtime/_ProducerRelease_${{ matrix.platform }}/src/d3d9/d3d9.dll
+            runtime/_ProducerRelease_${{ matrix.platform }}/meson-logs/meson-log.txt
+            runtime/_ProducerRelease_${{ matrix.platform }}/compile_commands.json
+            runtime/_output/**/*.dll
+            runtime/_output/usd/**
+            mod/build/native/${{ matrix.platform }}/remixbridge.dll
+            mod/build/generated/jni/*.h
+            mod/build/producer-check-${{ matrix.platform }}.json
+            mod/build/jni-probe-${{ matrix.platform }}.txt
+            mod/build/api-probe-${{ matrix.platform }}.json

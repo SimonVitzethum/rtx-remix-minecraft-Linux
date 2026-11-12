@@ -26,7 +26,11 @@ set "VCVARS_EXTRA_ARGS="
 if /I "%ARCH%"=="x64" (
     set "VCARCH=x64"
 ) else if /I "%ARCH%"=="arm64" (
-    set "VCARCH=x64_arm64"
+    if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+        set "VCARCH=arm64"
+    ) else (
+        set "VCARCH=x64_arm64"
+    )
 ) else (
     echo ERROR: Unknown architecture: %ARCH%. Use x64 or arm64.
     exit /b 1
@@ -65,6 +69,11 @@ if not defined JAVA_HOME (
 )
 if not exist "%JAVA_HOME%\include\jni.h" (
     echo ERROR: jni.h not found in %JAVA_HOME%\include
+    exit /b 1
+)
+
+if not exist "%JAVA_HOME%\include\win32\jni_md.h" (
+    echo ERROR: Windows JNI headers are missing. Set JAVA_HOME to a Windows JDK.
     exit /b 1
 )
 

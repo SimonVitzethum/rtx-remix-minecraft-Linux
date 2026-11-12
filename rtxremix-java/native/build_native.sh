@@ -5,7 +5,7 @@
 # build_native.sh: Compile remixbridge.so (Linux / ELF) using g++/clang.
 #
 # Usage: build_native.sh [x64|arm64]   (default: x64)
-# Requires: a C++17 compiler, JAVA_HOME pointing to a 64-bit JDK 21, and the
+# Requires: a C++17 compiler, JAVA_HOME pointing to a 64-bit JDK 25, and the
 # Linux Vulkan/OpenGL development headers (libgl1-mesa-dev).
 #
 # Output goes to build/native/{linux64|linuxarm64}/ under the repository root.
@@ -45,9 +45,8 @@ OUT_DIR="$ROOT/build/native/$OUT_ARCH"
 mkdir -p "$OUT_DIR"
 
 if [ "$ARCH" = "arm64" ]; then
-    if command -v aarch64-linux-gnu-g++ >/dev/null 2>&1; then
-        CXX=aarch64-linux-gnu-g++
-    else
+    CXX="${CXX:-aarch64-linux-gnu-g++}"
+    if ! command -v "$CXX" >/dev/null 2>&1; then
         echo "ERROR: aarch64-linux-gnu-g++ not found (needed for arm64)." >&2
         exit 1
     fi
@@ -55,8 +54,32 @@ else
     CXX="${CXX:-g++}"
 fi
 
+if [[ ! -f "$JAVA_HOME/include/linux/jni_md.h" ]]; then
+    echo "ERROR: Linux JNI headers are missing." >&2
+    exit 1
+fi
+machine=$("$CXX" -dumpmachine)
+case "$OUT_ARCH:$machine" in
+    linux64:x86_64*-linux-*) baseline=x86-64 ;;
+    linuxarm64:aarch64*-linux-*) baseline=armv8-a ;;
+    *) echo "ERROR: Compiler target $machine does not match $OUT_ARCH" >&2; exit 1 ;;
+esac
+extra=()
+if [[ -n "${NATIVE_SYSROOT:-}" ]]; then
+    extra+=("--sysroot=$NATIVE_SYSROOT")
+fi
+# Cross producers select target pkg-config metadata using PKG_CONFIG_LIBDIR/SYSROOT_DIR.
+if [[ "$OUT_ARCH" == linuxarm64 && "$(uname -m)" != aarch64 ]]; then
+    : "${PKG_CONFIG_LIBDIR:?Cross builds require target OpenGL pkg-config metadata}"
+    export PKG_CONFIG_PATH=
+fi
+gl_flags=$("${PKG_CONFIG:-pkg-config}" --cflags gl)
+gl_libraries=$("${PKG_CONFIG:-pkg-config}" --libs gl)
+read -r -a gl_cflags <<< "$gl_flags"
+read -r -a gl_libs <<< "$gl_libraries"
+
 echo "Compiling remixbridge.so for $OUT_ARCH using $CXX ..."
-"$CXX" -std=c++17 -O2 -fPIC -shared \
+"$CXX" -std=c++17 -O3 -march="$baseline" "${extra[@]}" "${gl_cflags[@]}" -fPIC -shared \
     -fvisibility=hidden \
     -DMINIZ_NO_ARCHIVE_APIS -DMINIZ_NO_STDIO -DMINIZ_USE_UNALIGNED_LOADS_AND_STORES=0 -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES \
     -DREMIX_WINAPI_NO_INCLUDE \
@@ -72,6 +95,6 @@ echo "Compiling remixbridge.so for $OUT_ARCH using $CXX ..."
     "$SRC/remixbridge.cpp" \
     "$SRC/voxel_dag.cpp" "$SRC/voxel_dag_jni.cpp" "$SRC/third_party/miniz/miniz.c" \
     -o "$OUT_DIR/remixbridge.so" \
-    -lGL -ldl -lpthread
+    "${gl_libs[@]}" -ldl -lpthread
 
 echo "remixbridge.so built successfully: $OUT_DIR/remixbridge.so"
