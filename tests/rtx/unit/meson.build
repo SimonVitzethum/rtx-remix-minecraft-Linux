@@ -66,6 +66,12 @@ test('test_render_target_motion_integration', exe, env : test_env)
 tests += exe
 
 if host_machine.system() == 'linux'
+  exe = executable('test_renderpass_compatibility', files('test_renderpass_compatibility.cpp'),
+    include_directories : test_include_path, dependencies : test_unit_deps, link_with : dxvk_lib,
+    override_options : ['cpp_std='+dxvk_cpp_std])
+  test('test_renderpass_compatibility', exe, env : test_env)
+  tests += exe
+
   exe = executable('test_file_watch_linux', files('test_file_watch_linux.cpp'),
     dependencies : dependency('threads'), override_options : ['cpp_std='+dxvk_cpp_std])
   test('test_file_watch_linux', exe, env : test_env)
