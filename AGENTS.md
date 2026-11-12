@@ -199,6 +199,17 @@ published pages (`ColumnRenderState.lod`), partial rebuilds keep it, and a bound
 crossing re-meshes the solid category through the normal staged install, at most
 `maxLodRebuildsPerFrame` columns per frame. Counters: `Chunk.RetainedTriangles`.
 
+**Far terrain.** `FarField` retains only revision/source metadata and GPU page addresses. `VoxelDag`
+provides bounded native CPU building and streaming disk pages through a Minecraft-independent
+JNI service; its nodes disappear after the upload fence. `FarTerrainSource` streams received
+FCC surfaces and stateless procedural samples without retaining Java tiles, copied chunks or
+voxel arrays. `GpuDagStorage` owns an unmapped device-local arena and lazy bounded staging;
+GPU-to-GPU growth preserves addresses, and old pages retire after both directory replacement
+and the last reader. Normal client/server chunks and temporary vanilla noise evaluators are
+separate from this far representation. The old Java source/build implementation lives only
+under tests as an independent wire reference. See `docs/FAR_FIELD.md` and
+`rtxremix-java/native/VOXEL_DAG.md` for budgets, source parity and evidence limits.
+
 **Allocation.** The collector's concurrent work is what stretches frames at
 high render distance, so the hot vanilla paths that run per section or per
 frame are ported allocation-free and kept that way: block model variant and part selection

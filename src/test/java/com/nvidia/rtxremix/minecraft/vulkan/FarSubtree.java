@@ -19,7 +19,7 @@ package com.nvidia.rtxremix.minecraft.vulkan;
 final class FarSubtree {
     static final int SIZE_LEVEL = 8; // 256 blocks
     static final int EMPTY_TOP = -1_000_000;
-    static final int ROCK = FarFieldDag.LEAF | 0x6B4D; // RGB565 of a mid grey
+    static final int ROCK = ReferenceDag.LEAF | 0x6B4D; // RGB565 of a mid grey
 
     /** Result of a build. */
     record Result(int[] nodes, int nodeCount, int[] roots, long leaves) {}
@@ -42,7 +42,7 @@ final class FarSubtree {
     private final short[] rgb;
     private final short[][][] exact;
     private final int[] exactPrefix = new int[17 * 17];
-    private final FarFieldDag dag = new FarFieldDag();
+    private final ReferenceDag dag = new ReferenceDag();
     private long leaves;
     private int slabBase;
 
@@ -120,7 +120,7 @@ final class FarSubtree {
         }
         if (level <= lg && mn >= yAbs + size) {
             leaves++;
-            return FarFieldDag.LEAF | (rgb[idx] & 0xFFFF);
+            return ReferenceDag.LEAF | (rgb[idx] & 0xFFFF);
         }
         // Only the surface boundary subdivides below the horizontal cell size. Integer tops end at block precision;
         // the homogeneous volume below still collapses, and all repeated children are shared by the existing DAG.
@@ -142,7 +142,7 @@ final class FarSubtree {
         short[] s = col[sy];
         if (s.length == 1) {
             leaves++;
-            return s[0] == 0 ? 0 : FarFieldDag.LEAF | (s[0] & 0xFFFF);
+            return s[0] == 0 ? 0 : ReferenceDag.LEAF | (s[0] & 0xFFFF);
         }
         return voxels(s, 0, 0, 0, 4);
     }
@@ -152,7 +152,7 @@ final class FarSubtree {
             int m = s[(y << 8) | (z << 4) | x] & 0xFFFF;
             if (m == 0) return 0;
             leaves++;
-            return FarFieldDag.LEAF | m;
+            return ReferenceDag.LEAF | m;
         }
         int half = 1 << (level - 1);
         int[] local = new int[8];

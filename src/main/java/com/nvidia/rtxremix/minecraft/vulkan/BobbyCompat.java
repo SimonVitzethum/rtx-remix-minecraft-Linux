@@ -11,7 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
@@ -38,11 +37,23 @@ public final class BobbyCompat {
 
     /** True for Bobby's {@code FakeChunk} (a chunk replayed from its disk cache, not a live one). */
     public static boolean isFake(LevelChunk chunk) {
-        return PRESENT && chunk.getClass().getName().startsWith(FAKE_PACKAGE);
+        return PRESENT && chunk != null && chunk.getClass().getName().startsWith(FAKE_PACKAGE);
     }
 
-    /** Snapshot of Bobby's fake chunks of this level; empty without Bobby or when its internals are not as expected. */
-    public static List<LevelChunk> fakeChunks(ClientLevel level) {
+    /** Visits existing fake chunks without allocating or retaining another chunk collection. */
+    public static void forEachFakeChunk(ClientLevel level, java.util.function.Consumer<LevelChunk> consumer) {
+        for (LevelChunk chunk : existingFakeChunks(level)) consumer.accept(chunk);
+    }
+
+    /** Finds an existing fake only; never asks Bobby to load or create one. */
+    public static LevelChunk fakeChunk(ClientLevel level, int cx, int cz) {
+        for (LevelChunk chunk : existingFakeChunks(level)) {
+            if (chunk.getPos().x() == cx && chunk.getPos().z() == cz) return chunk;
+        }
+        return null;
+    }
+
+    private static Collection<LevelChunk> existingFakeChunks(ClientLevel level) {
         if (!PRESENT || broken) return List.of();
         try {
             if (!resolved) {
@@ -58,7 +69,7 @@ public final class BobbyCompat {
             if (manager == null) return List.of();
             @SuppressWarnings("unchecked")
             Collection<LevelChunk> c = (Collection<LevelChunk>) getFakeChunks.invoke(manager);
-            return new ArrayList<>(c);
+            return c;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
             broken = true;
             LOGGER.warn("Bobby compat disabled (unexpected internals)", e);

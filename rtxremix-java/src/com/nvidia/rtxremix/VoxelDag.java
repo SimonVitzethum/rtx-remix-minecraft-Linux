@@ -30,13 +30,14 @@ public final class VoxelDag {
     public static native void surface(long handle, int firstCell, int count, ByteBuffer packed);
 
     /**
-     * Immediately compresses one exact section into the workspace. cx/cz are column-local chunk coordinates 0..15;
+     * Immediately compresses one exact section into the workspace. The first exact section marks its entire chunk
+     * column as exact; unspecified sections in that column are air. cx/cz are column-local chunk coordinates 0..15;
      * sy counts 16-block sections from minimum Y. The direct buffer contains 4096 native-order uint16 RGB565 values
      * indexed by (y<<8)|(z<<4)|x, with zero for air. Exact sections replace the procedural surface in that section.
      */
     public static native void exact(long handle, int cx, int sy, int cz, ByteBuffer voxels);
 
-    /** Seals all height slabs and returns the total node count, including reserved empty node zero. */
+    /** Seals all height slabs and returns the total node count, including reserved empty node zero; idempotent. */
     public static native int finish(long handle);
 
     /** Returns a finished slab's local root reference: zero empty, bit31 uniform RGB565 leaf, otherwise node index. */
@@ -53,9 +54,11 @@ public final class VoxelDag {
     public static native void destroy(long handle);
 
     /**
-     * Eight byte/count metrics: global capacity, reserved current, reserved peak, active handles, finished output
-     * current, finished output peak, I/O scratch current, I/O scratch peak. Reserved includes node capacity,
-     * hash capacity and bounded workspace inputs.
+     * Append-only metrics, indices 0..7: global capacity, reserved current, reserved peak, active builders, used node
+     * output current, used node output peak, I/O scratch current, I/O scratch peak. Output includes unfinished builders
+     * and is part of reserved capacity. Indices 8..15: node chunk allocations, hash rehashes, total growth bytes,
+     * rehash CPU nanoseconds, capacity rejections, copied bytes (including disk saves), copy CPU nanoseconds,
+     * peak global node capacity bytes. Reservations include old and new storage during replacement.
      */
     public static native long[] metrics();
 

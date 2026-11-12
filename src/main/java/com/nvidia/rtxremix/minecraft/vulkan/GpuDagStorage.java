@@ -18,7 +18,7 @@ import java.nio.IntBuffer;
 import java.util.function.BooleanSupplier;
 
 /**
- * Device-local DAG arena with one fixed 4 MiB upload buffer and no CPU node mirror. Every operation belongs to the
+ * Device-local DAG arena with lazy, bounded geometric upload buffers and no CPU node mirror. Every operation belongs to the
  * render thread. Uploads, arena growth and retirement are fenced; a page is published only after its last copy completes.
  * All node addresses survive GPU-to-GPU arena growth. The caller owns page visibility and releases pages only after
  * replacing their root references and completing the last image dispatch that could have read them.
@@ -26,6 +26,9 @@ import java.util.function.BooleanSupplier;
 final class GpuDagStorage implements AutoCloseable {
     static final int STAGING_BYTES = 4 * 1024 * 1024;
     private static final long INITIAL_BYTES = 8 * 1024 * 1024;
+    private static final long MAX_ARENA_BYTES = 128L * 1024 * 1024;
+    private static final long LIVE_GPU_BUDGET = 256L * 1024 * 1024;
+    private static final UploadBufferBudget STAGING_BUDGET = new UploadBufferBudget(64 * 1024, STAGING_BYTES, STAGING_BYTES * 2L);
     private record Buffer(long handle, long allocation, long bytes) {}
 
     private final VulkanDevice device;
@@ -33,40 +36,50 @@ final class GpuDagStorage implements AutoCloseable {
     private final long vma, maximumBytes;
     private final BooleanSupplier readerInFlight;
     private final GpuDagAllocator allocator;
-    private final Buffer staging;
-    private final ByteBuffer mapped;
+    private Buffer staging;
+    private ByteBuffer mapped;
     private final long commandPool, fence;
     private final VkCommandBuffer commands;
     private Buffer arena, previousArena;
-    private boolean copying;
-    private long peakDeviceBytes;
+    private boolean copying, failed;
+    private long peakDeviceBytes, peakStagingBytes, uploadBytes, uploadSubmissions, arenaGrowths, arenaCopyBytes;
+    private long stagingGrowths, capacityMisses, encodeNanos, growNanos, copyFenceNanos, lastSubmitNanos, lastUseMillis;
+    private com.nvidia.rtxremix.minecraft.profiling.PerformanceTimer counterOwner;
+    private final int[] counters = new int[11];
+    private final long[] previousCounts = new long[6];
 
     GpuDagStorage(VulkanDevice device, BooleanSupplier readerInFlight) {
         this.device = device;
         this.readerInFlight = readerInFlight;
         vk = device.vkDevice();
         vma = device.vma();
+        long createdPool = 0, createdFence = 0;
+        VkCommandBuffer createdCommands;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.malloc(stack);
             VK12.vkGetPhysicalDeviceProperties(vk.getPhysicalDevice(), properties);
-            maximumBytes = Integer.toUnsignedLong(properties.limits().maxStorageBufferRange());
+            maximumBytes = Math.min(MAX_ARENA_BYTES, Integer.toUnsignedLong(properties.limits().maxStorageBufferRange()));
             allocator = new GpuDagAllocator((int) Math.min(Integer.MAX_VALUE / 8, maximumBytes / 32));
-            LongBufferPair memory = createBuffer(STAGING_BYTES, VK12.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, stack);
-            staging = memory.buffer;
-            mapped = MemoryUtil.memByteBuffer(memory.address, STAGING_BYTES).order(java.nio.ByteOrder.nativeOrder());
             var out = stack.mallocLong(1);
             check(VK12.vkCreateCommandPool(vk, VkCommandPoolCreateInfo.calloc(stack).sType$Default()
                     .flags(VK12.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
                     .queueFamilyIndex(device.graphicsQueue().queueFamilyIndex()), null, out), "create DAG upload pool");
-            commandPool = out.get(0);
+            createdPool = out.get(0);
             var pointer = stack.mallocPointer(1);
             check(VK12.vkAllocateCommandBuffers(vk, VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
-                    .commandPool(commandPool).level(VK12.VK_COMMAND_BUFFER_LEVEL_PRIMARY).commandBufferCount(1), pointer),
+                    .commandPool(createdPool).level(VK12.VK_COMMAND_BUFFER_LEVEL_PRIMARY).commandBufferCount(1), pointer),
                     "allocate DAG upload commands");
-            commands = new VkCommandBuffer(pointer.get(0), vk);
+            createdCommands = new VkCommandBuffer(pointer.get(0), vk);
             check(VK12.vkCreateFence(vk, VkFenceCreateInfo.calloc(stack).sType$Default(), null, out), "create DAG upload fence");
-            fence = out.get(0);
+            createdFence = out.get(0);
+        } catch (RuntimeException | Error failure) {
+            if (createdFence != 0) VK12.vkDestroyFence(vk, createdFence, null);
+            if (createdPool != 0) VK12.vkDestroyCommandPool(vk, createdPool, null);
+            throw failure;
         }
+        commandPool = createdPool;
+        commands = createdCommands;
+        fence = createdFence;
     }
 
     private record LongBufferPair(Buffer buffer, long address) {}
@@ -86,6 +99,23 @@ final class GpuDagStorage implements AutoCloseable {
         return new LongBufferPair(new Buffer(handle.get(0), memory.get(0), bytes), result.pMappedData());
     }
 
+    private void ensureStaging(int bytes) {
+        long current = staging == null ? 0 : staging.bytes;
+        long capacity = STAGING_BUDGET.capacity(current, bytes, 0);
+        if (capacity == current) return;
+        capacityMisses++;
+        long start = System.nanoTime();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBufferPair replacement = createBuffer(capacity, VK12.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, stack);
+            peakStagingBytes = Math.max(peakStagingBytes, current + capacity);
+            destroy(staging);
+            staging = replacement.buffer;
+            mapped = MemoryUtil.memByteBuffer(replacement.address, (int) capacity).order(java.nio.ByteOrder.nativeOrder());
+            stagingGrowths++;
+        }
+        growNanos += System.nanoTime() - start;
+    }
+
     GpuDagAllocator.Page allocate(int payloadNodes) {
         requireIdle();
         return allocator.allocate(payloadNodes);
@@ -103,8 +133,11 @@ final class GpuDagStorage implements AutoCloseable {
                 || (long) firstWord + words > (long) (page.nodes + 1) * 8) {
             throw new IllegalArgumentException("Invalid DAG page upload slice");
         }
+        ensureStaging(words * 4);
+        long start = System.nanoTime();
         mapped.clear();
         VoxelDag.copy(workspace, firstWord, words, page.referenceOffset(), mapped);
+        encodeNanos += System.nanoTime() - start;
         submit((long) page.firstNode * 32 + (long) (firstWord - 8) * 4, words * 4);
     }
 
@@ -115,6 +148,7 @@ final class GpuDagStorage implements AutoCloseable {
         if (words != page.nodes * 8 || words > STAGING_BYTES / 4) {
             throw new IllegalArgumentException("Root directory exceeds one bounded upload");
         }
+        ensureStaging(words * 4);
         mapped.clear();
         mapped.asIntBuffer().put(topology);
         submit((long) page.firstNode * 32, words * 4);
@@ -122,12 +156,18 @@ final class GpuDagStorage implements AutoCloseable {
 
     private void submit(long destination, int bytes) {
         Vma.vmaFlushAllocation(vma, staging.allocation, 0, bytes);
+        Buffer oldArena = arena;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long required = (long) allocator.requiredNodes() * 32;
             if (arena == null || arena.bytes < required) {
-                long capacity = Math.min(maximumBytes, Math.max(required, arena == null ? INITIAL_BYTES : arena.bytes * 2));
+                capacityMisses++;
+                long start = System.nanoTime();
+                long capacity = new UploadBufferBudget(Math.min(INITIAL_BYTES, maximumBytes), maximumBytes,
+                        LIVE_GPU_BUDGET).capacity(arena == null ? 0 : arena.bytes, required, staging.bytes);
                 Buffer replacement = createBuffer(capacity, VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
                         | VK12.VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK12.VK_BUFFER_USAGE_TRANSFER_DST_BIT, false, stack).buffer;
+                growNanos += System.nanoTime() - start;
+                arenaGrowths++;
                 previousArena = arena;
                 arena = replacement;
                 peakDeviceBytes = Math.max(peakDeviceBytes, deviceBytes());
@@ -136,9 +176,15 @@ final class GpuDagStorage implements AutoCloseable {
             check(VK12.vkResetCommandBuffer(commands, 0), "reset DAG upload commands");
             check(VK12.vkBeginCommandBuffer(commands, VkCommandBufferBeginInfo.calloc(stack).sType$Default()
                     .flags(VK12.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)), "begin DAG upload");
+            // Include earlier submissions' upload writes in the growth copy's read dependency.
+            barrier(stack, VK12.VK_ACCESS_TRANSFER_WRITE_BIT | VK12.VK_ACCESS_SHADER_READ_BIT,
+                    VK12.VK_ACCESS_TRANSFER_READ_BIT | VK12.VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK12.VK_PIPELINE_STAGE_TRANSFER_BIT | VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK12.VK_PIPELINE_STAGE_TRANSFER_BIT);
             if (previousArena != null) {
                 VkBufferCopy.Buffer growth = VkBufferCopy.calloc(1, stack).srcOffset(0).dstOffset(0).size(previousArena.bytes);
                 VK12.vkCmdCopyBuffer(commands, previousArena.handle, arena.handle, growth);
+                arenaCopyBytes += previousArena.bytes;
                 barrier(stack, VK12.VK_ACCESS_TRANSFER_WRITE_BIT, VK12.VK_ACCESS_TRANSFER_WRITE_BIT,
                         VK12.VK_PIPELINE_STAGE_TRANSFER_BIT, VK12.VK_PIPELINE_STAGE_TRANSFER_BIT);
             } else if (destination >= 32 && allocator.livePages() == 1) {
@@ -153,6 +199,12 @@ final class GpuDagStorage implements AutoCloseable {
             check(VK12.vkQueueSubmit(device.graphicsQueue().vkQueue(), VkSubmitInfo.calloc(stack).sType$Default()
                     .pCommandBuffers(stack.pointers(commands)), fence), "submit DAG upload");
             copying = true;
+            uploadBytes += bytes; uploadSubmissions++;
+            lastSubmitNanos = System.nanoTime(); lastUseMillis = System.currentTimeMillis();
+        } catch (RuntimeException | Error failure) {
+            failed = true;
+            if (arena != oldArena) { destroy(arena); arena = oldArena; previousArena = null; }
+            throw failure;
         }
     }
 
@@ -164,17 +216,25 @@ final class GpuDagStorage implements AutoCloseable {
 
     /** Nonblocking completion check; staging memory cannot be overwritten before it returns true. */
     boolean poll() {
-        if (!copying) return true;
+        if (!copying) {
+            if (!readerInFlight.getAsBoolean() && lastUseMillis != 0 && System.currentTimeMillis() - lastUseMillis > 30000) {
+                destroy(staging); staging = null; mapped = null;
+                if (allocator.livePages() == 0) { destroy(arena); arena = null; }
+            }
+            return true;
+        }
         int status = VK12.vkGetFenceStatus(vk, fence);
         if (status == VK12.VK_NOT_READY) return false;
         check(status, "poll DAG upload fence");
         copying = false;
+        copyFenceNanos += System.nanoTime() - lastSubmitNanos;
         destroy(previousArena);
         previousArena = null;
         return true;
     }
 
     private void requireIdle() {
+        if (failed) throw new IllegalStateException("DAG upload service failed; rebuild the rendering session before reuse");
         if (copying || readerInFlight.getAsBoolean()) throw new IllegalStateException("DAG arena still in GPU use");
     }
 
@@ -184,6 +244,40 @@ final class GpuDagStorage implements AutoCloseable {
     long liveBytes() { return allocator.liveBytes(); }
     int livePages() { return allocator.livePages(); }
     boolean copying() { return copying; }
+    long stagingBytes() { return staging == null ? 0 : staging.bytes; }
+    String diagnostics() {
+        return "{capacityMisses=" + capacityMisses + " stagingGrowths=" + stagingGrowths + " stagingPeakBytes=" + peakStagingBytes
+                + " arenaGrowths=" + arenaGrowths + " arenaCopyBytes=" + arenaCopyBytes + " uploadBytes=" + uploadBytes
+                + " uploadSubmissions=" + uploadSubmissions + " forcedSubmissions=0 encodeCpuNs=" + encodeNanos
+                + " growCpuNs=" + growNanos + " copyFencePollWallNs=" + copyFenceNanos + "}";
+    }
+
+    /** Clock-free per-frame deltas let capacity events be correlated with the benchmark's existing frame rows. */
+    void recordFrame(com.nvidia.rtxremix.minecraft.profiling.PerformanceTimer timer) {
+        if (counterOwner != timer) {
+            String[] names = {"Far.UploadBytes", "Far.ArenaCopyBytes", "Far.CapacityMisses", "Far.GrowCpuUs",
+                    "Far.EncodeCpuUs", "Far.CopyFenceWallUs", "Far.GpuUsedMB", "Far.GpuAllocatedMB", "Far.StagingKB",
+                    "Far.UploadPending", "Far.ReaderPending"};
+            for (int i = 0; i < names.length; i++) counters[i] = timer.registerCounter(names[i]);
+            counterOwner = timer;
+        }
+        recordDelta(timer, 0, uploadBytes);
+        recordDelta(timer, 1, arenaCopyBytes);
+        recordDelta(timer, 2, capacityMisses);
+        recordDelta(timer, 3, growNanos / 1000);
+        recordDelta(timer, 4, encodeNanos / 1000);
+        recordDelta(timer, 5, copyFenceNanos / 1000);
+        timer.count(counters[6], liveBytes() / (1024 * 1024));
+        timer.count(counters[7], deviceBytes() / (1024 * 1024));
+        timer.count(counters[8], stagingBytes() / 1024);
+        timer.count(counters[9], copying ? 1 : 0);
+        timer.count(counters[10], readerInFlight.getAsBoolean() ? 1 : 0);
+    }
+
+    private void recordDelta(com.nvidia.rtxremix.minecraft.profiling.PerformanceTimer timer, int index, long total) {
+        timer.count(counters[index], total - previousCounts[index]);
+        previousCounts[index] = total;
+    }
 
     private void destroy(Buffer buffer) {
         if (buffer != null) Vma.vmaDestroyBuffer(vma, buffer.handle, buffer.allocation);
@@ -194,7 +288,7 @@ final class GpuDagStorage implements AutoCloseable {
     }
 
     @Override public void close() {
-        if (copying) check(VK12.vkWaitForFences(vk, fence, true, -1L), "wait for final DAG copy");
+        if (copying) check(VK12.vkWaitForFences(vk, fence, true, 5_000_000_000L), "wait for final DAG copy");
         if (readerInFlight.getAsBoolean()) throw new IllegalStateException("DAG storage closed before its last reader completed");
         destroy(arena);
         destroy(previousArena);

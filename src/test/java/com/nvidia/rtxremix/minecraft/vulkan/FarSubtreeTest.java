@@ -15,7 +15,7 @@ class FarSubtreeTest {
     /** Read the published wire representation, independently of the builder's spatial traversal. */
     static int voxel(FarSubtree.Result result, int x, int y, int z) {
         int reference = result.roots()[y >> 8];
-        for (int bit = 7; bit >= 0 && reference != 0 && (reference & FarFieldDag.LEAF) == 0; bit--) {
+        for (int bit = 7; bit >= 0 && reference != 0 && (reference & ReferenceDag.LEAF) == 0; bit--) {
             int child = ((x >> bit) & 1) | (((y >> bit) & 1) << 1) | (((z >> bit) & 1) << 2);
             reference = result.nodes()[reference * 8 + child];
         }

@@ -6,18 +6,7 @@ package com.nvidia.rtxremix.minecraft.vulkan;
 
 import java.util.Arrays;
 
-/**
- * Node pool of a sparse voxel DAG (octree with identical subtrees shared through a hash table).
- *
- * <p>Layout, shared with {@code farfield_march.comp}: node k occupies {@code nodes[8k .. 8k+7]}, every entry is a
- * reference: 0 = empty, bit 31 set = the whole child cell is one colour (low 16 bits = RGB565), otherwise the index
- * of a node. Node 0 is a reserved zero node so that 0 can mean empty. A uniform cell is one reference at any depth, so
- * solid underground and empty sky cost nothing. Dedup is by content of the eight child references (scale free).
- *
- * <p>The world is built from independent sub-DAGs (one per 256-block column, see {@link FarSubtree}), built in parallel
- * and cached; {@link #merge} relocates them into one pool and {@link #combine} adds the few top nodes. Pure Java, no
- * Minecraft types: runs on worker threads.
- */
+/** Small hash-consed address-directory builder. Subtree payloads are built natively and remain on the GPU. */
 final class FarFieldDag {
     static final int LEAF = 0x80000000;
 
@@ -30,29 +19,6 @@ final class FarFieldDag {
 
     /** Copy of the used part ({@code nodeCount * 8} ints, including the zero node). */
     int[] nodes() { return Arrays.copyOf(nodes, nodeCount * 8); }
-
-    /** The pool array itself (valid up to {@code nodeCount * 8}); do not use after further inserts. */
-    int[] rawNodes() { return nodes; }
-
-    /**
-     * Appends a sub-DAG (node 0 = zero node is skipped) and returns the offset to add to its node references:
-     * reference r (a node index) becomes r + offset. Leaves and empty references are unchanged. No dedup across
-     * sub-DAGs (they are disjoint areas, little is shared).
-     */
-    int append(int[] sub, int subNodeCount) {
-        int offset = nodeCount - 1;
-        int add = (subNodeCount - 1) * 8;
-        if (nodeCount * 8 + add > nodes.length) {
-            nodes = Arrays.copyOf(nodes, (int) Math.min(Integer.MAX_VALUE - 8, Math.max((long) nodes.length * 2, (long) nodeCount * 8 + add)));
-        }
-        int dst = nodeCount * 8;
-        for (int i = 8; i < subNodeCount * 8; i++) {
-            int r = sub[i];
-            nodes[dst++] = (r == 0 || (r & LEAF) != 0) ? r : r + offset;
-        }
-        nodeCount += subNodeCount - 1;
-        return offset;
-    }
 
     /** Hash-consed node creation; collapses to the child reference when all eight are the same empty / leaf reference. */
     int make(int[] refs) {

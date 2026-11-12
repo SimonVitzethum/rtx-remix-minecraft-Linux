@@ -34,7 +34,7 @@ final class FarDagUpload {
         int nodeCount() { return words / 8; }
 
         /** The top tree's references must already address the final flat layout, including its own nodes. */
-        FarDagUpload finish(FarFieldDag top) {
+        FarDagUpload finish(ReferenceDag top) {
             int count = (top.nodeCount() - 1) * 8;
             if (count > 0) segments.add(new Segment(words, top.nodes(), count, 0));
             return new FarDagUpload(List.copyOf(segments), Math.addExact(words, count));
@@ -71,7 +71,7 @@ final class FarDagUpload {
             } else {
                 for (int i = source; i < source + to - from; i++) {
                     int reference = segment.nodes[i];
-                    destination.put(reference == 0 || (reference & FarFieldDag.LEAF) != 0
+                    destination.put(reference == 0 || (reference & ReferenceDag.LEAF) != 0
                             ? reference : reference + segment.referenceOffset);
                 }
             }

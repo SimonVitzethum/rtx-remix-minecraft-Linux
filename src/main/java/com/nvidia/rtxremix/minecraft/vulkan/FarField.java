@@ -40,27 +40,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Far-field environment (Vulkan only, default OFF, setting "Far field"): terrain beyond the path-traced radius is kept as a sparse
- * voxel DAG, ray marched by a Vulkan compute shader into an equirect RGBA16F image over the procedural sky, read back and published
- * to Remix as the dome light texture (the dome the atmospheric sky uses, so Remix lights the near field with it and DLSS / frame
- * generation are unaffected). Re-rendered only when the camera moved, the far data changed or the sky changed.
+ * GPU-resident far terrain rendered into the Vulkan environment dome. Java owns spatial/revision metadata and
+ * bounded change messages; native workspaces build one column at a time, upload it, and release their node storage.
+ * Disk DAG pages and received surfaces supply reloads without a retained Java or native scene mirror.
  *
- * <p>Data: the world is cut into 256 x 256 block columns ({@link FarSubtree}), each its own sub-DAG built on a worker thread and
- * cached (only columns whose input signature changed are rebuilt) and merged into one pool ({@link FarFieldDag}) by a merge task. A
- * column's input is, per 16 x 16 chunk: a client chunk inside the path-traced radius (hole, drawn by Remix), a client chunk
- * beyond it (exact 1-block voxels), or no chunk (LOD height + colour grid from the integrated server, {@link FarLodSource}, with
- * 2 / 4 / 8 / 16 block cells by distance). So the far field starts beyond whatever the client really has loaded.
- *
- * <p>Settings (mod settings screen, persisted) and the optional file {@code rtxremix-farfield} / -Drtxremix.farfield=... with lines
- * {@code radius=0} (path-traced chunks, 0 = vanilla render distance), {@code distance=256} (far field chunks, up to 512),
- * {@code fog=0|1} (aerial perspective, default off), {@code fogDist=4000}, {@code shadows=1}, {@code width=2048} (equirect width,
- * height = width/2), {@code cut=1} (hide captured terrain beyond the radius), {@code sunBoost=1}, {@code lodThreads=2},
- * {@code buildThreads=3}. Render thread only unless noted.
+ * <p>Loaded gameplay and existing Bobby chunks supply exact voxels outside the retained native radius. Unvisited
+ * integrated terrain uses stateless density/biome samples without chunk tickets. The renderer never raises normal
+ * render or simulation distance. Every live-world read, GPU operation and publication belongs to the client thread;
+ * workers perform procedural sampling, bounded native builds and disk I/O. Configuration remains in the mod settings
+ * and the optional rtxremix-farfield file; radius=0 follows the actual Minecraft render distance.
  */
 public final class FarField {
     private static final Logger LOGGER = LoggerFactory.getLogger(FarField.class);
@@ -185,259 +175,513 @@ public final class FarField {
         if (f != null) f.close();
     }
 
-    // ---------------------------------------------------------------------------------------------------------
-
-    /** Upload data is retained only until commit; submitted and published generations need provenance alone. */
-    private record Build(FarDagUpload nodes, int words, int root, int levels, int originSx, int originSz, int minY,
-                         int subtrees, int nodeCount, double mergeMs, long session, int generation, FarFieldCoverage coverage) {
-        Build metadata() {
-            return new Build(null, words, root, levels, originSx, originSz, minY,
-                    subtrees, nodeCount, mergeMs, session, generation, coverage);
-        }
-    }
-
-    private record Subtree(FarSubtree.Result geometry, FarFieldCoverage.Sources sources) {}
-
-    /** Loaded client chunks of one column, filled on the render thread. */
+    private record Subtree(GpuDagAllocator.Page page, int[] roots, int nodes, FarFieldCoverage.Sources sources) {}
+    private record Build(int root, int levels, int originSx, int originSz, int minY, long session,
+                         int generation, FarFieldCoverage coverage, java.util.Set<GpuDagAllocator.Page> pages,
+                         GpuDagAllocator.Page directory) {}
     private static final class ColumnIn {
-        final LevelChunk[] chunks = new LevelChunk[256];
-        final byte[] cls = new byte[256]; // 1 = hole (inside the path-traced radius), 2 = exact
+        final byte[] cls = new byte[256];
         final long[] revisions = new long[256];
         int loaded;
-
         long signature() {
-            long signature = 0;
-            for (int i = 0; i < chunks.length; i++) {
-                if (chunks[i] != null) signature = signature * 1000003L + i * 4L + cls[i]
-                        + 0x9E3779B9L * (cls[i] == 2 ? revisions[i] : System.identityHashCode(chunks[i]));
+            long hash = 0;
+            for (int i = 0; i < 256; i++) if (cls[i] != 0) {
+                hash = hash * 1000003L + i * 4L + cls[i] + (cls[i] == 2 ? revisions[i] * 0x9E3779B9L : 0);
             }
-            return signature;
-        }
-
-        boolean stillCurrent(ClientLevel level) {
-            for (int i = 0; i < chunks.length; i++) {
-                LevelChunk chunk = chunks[i];
-                if (chunk == null) continue;
-                if (FarChunkSnapshot.signature(chunk) != revisions[i]) return false;
-                if (!BobbyCompat.isFake(chunk) && level.getChunkSource().getChunkNow(chunk.getPos().x(), chunk.getPos().z()) != chunk) return false;
-            }
-            return true;
+            return hash;
         }
     }
-
-    /** One partially captured column, bounded to 256 chunks; capture is sliced across client frames. */
-    private static final class Capture {
-        final int sx, sz, lg, minY, slabs;
-        final long key, signature;
-        final FarSurfaceTiles tile;
-        final ColumnIn input;
-        final FarChunkSnapshot[] snapshots = new FarChunkSnapshot[256];
-        int next;
+    private record Desired(long key, int sx, int sz, int lg, long signature, long sourceRevision, long palette,
+                           int colourGeneration, ColumnIn input) {}
+    private enum Stage { WORKER, CAPTURE, FINISHED }
+    private final class Job {
+        final Desired desired;
+        final long jobSession = session;
+        final ClientLevel level;
+        final FarTerrainSource source;
+        final int bottom = minY, slabs = (worldHeight + 255) / 256;
+        final FarBuildCache.Ticket ticket;
         final FarFieldCoverage.Sources sources;
-
-        Capture(int sx, int sz, int lg, int minY, int slabs, long key, long signature, FarSurfaceTiles tile, ColumnIn input) {
-            this.sx = sx; this.sz = sz; this.lg = lg; this.minY = minY; this.slabs = slabs;
-            this.key = key; this.signature = signature; this.tile = tile; this.input = input;
-            int nativeRegion = 0, liveExact = 0, bobbyExact = 0;
-            if (input != null) {
-                for (int i = 0; i < input.cls.length; i++) {
-                    if (input.cls[i] == 1) nativeRegion++;
-                    else if (input.cls[i] == 2) {
-                        if (BobbyCompat.isFake(input.chunks[i])) bobbyExact++;
-                        else liveExact++;
-                    }
-                }
+        long handle;
+        int nodes, nextChunk, nextSection;
+        int[] roots;
+        Stage stage = Stage.WORKER;
+        Throwable failure;
+        boolean fromDisk;
+        Job(Desired desired, ClientLevel level, FarBuildCache.Ticket ticket) {
+            this.desired = desired; this.level = level; this.ticket = ticket; source = FarField.this.source;
+            int near = 0, exact = 0;
+            if (desired.input != null) for (byte cls : desired.input.cls) { if (cls == 1) near++; if (cls == 2) exact++; }
+            // Live/Bobby provenance is assigned when the input is inspected on the owner thread.
+            int bobby = 0;
+            if (desired.input != null) for (int i = 0; i < 256; i++) {
+                if (desired.input.cls[i] == 2 && BobbyCompat.isFake(chunk(level, desired.sx * 16 + (i & 15), desired.sz * 16 + (i >> 4)))) bobby++;
             }
-            sources = new FarFieldCoverage.Sources(nativeRegion, liveExact, bobbyExact,
-                    tile == null ? 0 : 256 - liveExact - bobbyExact);
+            int surface = 0;
+            for (int i = 0; i < 256; i++) {
+                if ((desired.input == null || desired.input.cls[i] != 2) && (source.hasProcedural()
+                        || source.receivedChunk(desired.sx * 16 + (i & 15), desired.sz * 16 + (i >> 4)))) surface++;
+            }
+            sources = new FarFieldCoverage.Sources(near, exact - bobby, bobby, surface);
         }
     }
+    private record Event(Job job, Stage stage, Throwable failure) {}
+    private static final class Upload {
+        final Job job;
+        final GpuDagAllocator.Page page;
+        int nextWord = 8, sentWords;
+        Upload(Job job, GpuDagAllocator.Page page) { this.job = job; this.page = page; }
+    }
 
-    private record Recorded(LevelChunk chunk, long signature) {}
-
+    private final FarChunkMessages chunkMessages = new FarChunkMessages();
     private final FarFieldGpu gpu;
+    private final GpuDagStorage storage;
     private final ByteBuffer skyCopy = ByteBuffer.allocateDirect(SKY_W * SKY_H * 8).order(ByteOrder.nativeOrder());
     private final ByteBuffer push = ByteBuffer.allocateDirect(FarFieldGpu.PUSH_BYTES).order(ByteOrder.nativeOrder());
-    private final AtomicReference<Build> built = new AtomicReference<>();
-    private final FarBuildCache<Subtree> cache;
-    private int epoch;
-    private volatile long session;
-    private Capture capturing;
-    private long snapshotNanos, snapshotsTaken, staleCaptures;
-    private final AtomicLong taskNanos = new AtomicLong();
-    private final AtomicInteger tasksDone = new AtomicInteger();
+    private final ByteBuffer exactMessage = DirectBufferPool.acquire(8192).order(ByteOrder.nativeOrder());
+    private final FarBuildCache<Subtree> cache = new FarBuildCache<>(2, this::retire);
+    private final java.util.Set<GpuDagAllocator.Page> retired = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final java.util.Set<Job> jobs = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final java.util.concurrent.ArrayBlockingQueue<Event> events = new java.util.concurrent.ArrayBlockingQueue<>(2);
+    private final Object completionLock = new Object();
     private final java.util.concurrent.ThreadPoolExecutor pool;
-    private volatile boolean merging;
-    private int mergedEpoch = -1, mergedKeyHash;
-    private long lastMergeMs, lastPlanMs, lastStatMs;
-
-    private Object levelKey;
-    private int lastFakeCount;
-    private FarTileSource source;
-    /** Real chunk identity and its last admitted surface revision, owned by the render thread. */
-    private final HashMap<Long, Recorded> tracked = new HashMap<>();
+    private final HashMap<Long, Long> recorded = new HashMap<>();
     private final java.util.ArrayDeque<Long> recordQueue = new java.util.ArrayDeque<>();
-    private final java.util.HashSet<Long> recordQueued = new java.util.HashSet<>();
-    private long deferredRecords;
-    private int camChunkX = Integer.MIN_VALUE, camChunkZ = Integer.MIN_VALUE;
-    private volatile int lastRadius = 6;
-    private Build current, uploading;
-    private boolean uploadComplete;
-    private int uploadFrames;
-    private boolean skyDirty, hasSky, dagDirty;
-    private long lastRenderMs;
-    private Vec3 lastRenderCam;
-    private int minY, worldHeight;
+    private final java.util.Set<Long> recordQueued = new java.util.HashSet<>();
+    private Object levelKey;
+    private volatile long session;
+    private volatile boolean closed;
+    private FarTerrainSource source;
+    private int minY, worldHeight, epoch, mergedEpoch = -1;
+    private int camChunkX, camChunkZ, lastRadius = 6, buildCursor;
+    private int paletteGeneration = -1;
+    private long paletteIdentity;
+    private long scheduled, lastPlanMs, lastStatMs, lastRenderMs, staleCaptures, deferredRecords;
     private long[] wantedKeys = new long[0];
-    private volatile boolean wantedChanged;
-
+    private java.util.List<Desired> desired = java.util.List.of();
+    private boolean wantedChanged, skyDirty, hasSky, dagDirty;
+    private int levels, originSx, originSz;
+    private Build current, directoryUpload, renderedBuild, publishedBuild;
+    private Upload uploading;
+    private Vec3 lastRenderCam, publishedRenderCam;
+    private SkyLightState lastSky;
+    private float[] lastAmbient = {0.1f, 0.1f, 0.1f};
+    private long renders, readerDeferredFrames, uploadDeferredFrames;
     private RemixTexture texture;
     private final TexturePatch patch = new TexturePatch();
     private final TextureBatchEntry entry = new TextureBatchEntry();
     private final TexturePatchInfo update = new TexturePatchInfo();
-    private SkyLightState lastSky;
-    private float[] lastAmbient = {0.1f, 0.1f, 0.1f};
-    private double lastRenderGpuMs;
-    private long renders;
-    private Build renderedBuild, publishedBuild;
-    private Vec3 publishedRenderCam;
 
     private FarField() {
         gpu = new FarFieldGpu(width, width / 2);
-        buildThreads = Math.clamp(buildThreads, 1, 4);
-        lodThreads = Math.clamp(lodThreads, 1, 2);
-        cache = new FarBuildCache<>(buildThreads * 2);
-        pool = new java.util.concurrent.ThreadPoolExecutor(buildThreads, buildThreads, 0L, java.util.concurrent.TimeUnit.SECONDS,
-                new java.util.concurrent.ArrayBlockingQueue<>(buildThreads * 2 + 1), r -> {
-                    Thread t = new Thread(r, "RemixFarFieldBuild");
-                    t.setDaemon(true);
-                    t.setPriority(Thread.NORM_PRIORITY - 1);
-                    return t;
-                });
-        patch.width = width;
-        patch.height = width / 2;
-        patch.rowPitch = width * 8;
-        patch.format = TextureFormat.RGBA16_SFLOAT;
-        entry.patches = new TexturePatch[]{patch};
-        update.entries = new TextureBatchEntry[]{entry};
-        LOGGER.info("FarField: Vulkan pipeline ready, {}x{} RGBA16F ({} MiB), {} build threads", width, width / 2,
-                (long) width * width / 2 * 8 >> 20, buildThreads);
+        storage = gpu.storage();
+        pool = new java.util.concurrent.ThreadPoolExecutor(2, 2, 0, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(2), runnable -> {
+            Thread thread = new Thread(runnable, "RemixNativeDagBuild");
+            thread.setDaemon(true); thread.setPriority(Thread.MIN_PRIORITY); return thread;
+        });
+        patch.width = width; patch.height = width / 2; patch.rowPitch = width * 8; patch.format = TextureFormat.RGBA16_SFLOAT;
+        entry.patches = new TexturePatch[]{patch}; update.entries = new TextureBatchEntry[]{entry};
     }
 
-    /** Remix handle of the far-field dome texture, 0 until the first render finished. */
-    public long textureHandle() {
-        return texture != null && texture.isAlive() ? texture.getHandle() : 0L;
-    }
+    public long textureHandle() { return texture != null && texture.isAlive() ? texture.getHandle() : 0; }
 
-    /** Offers the freshly generated procedural sky (256x128 RGBA16F, rows top first); copied. */
     public void offerSky(ByteBuffer pixels) {
-        ByteBuffer src = pixels.duplicate();
-        src.position(0).limit(Math.min(src.capacity(), skyCopy.capacity()));
-        boolean same = hasSky && skyCopy.limit() == src.remaining() && skyCopy.mismatch(src.duplicate()) < 0;
-        if (same) return;
-        skyCopy.clear();
-        skyCopy.put(src).flip();
-        hasSky = true;
-        skyDirty = true;
+        ByteBuffer view = pixels.duplicate();
+        view.position(0).limit(Math.min(view.capacity(), skyCopy.capacity()));
+        if (hasSky && skyCopy.limit() == view.remaining() && skyCopy.mismatch(view) < 0) return;
+        skyCopy.clear(); skyCopy.put(view).flip(); hasSky = true; skyDirty = true;
     }
 
-    /** The path-traced radius in chunks: the setting, or Minecraft's render distance when 0. */
     private static int ptRadius() {
-        int r = radius;
-        return r > 0 ? r : Math.max(2, Minecraft.getInstance().options.renderDistance().get());
+        return radius > 0 ? radius : Math.max(2, Minecraft.getInstance().options.renderDistance().get());
     }
 
-    public void tick(RemixAPI api, ClientLevel level, Vec3 cam, SkyLightState sky, float[] ambientMean) {
-        lastSky = sky;
-        lastAmbient = ambientMean;
-        camChunkX = Math.floorDiv((int) Math.floor(cam.x), 16);
-        camChunkZ = Math.floorDiv((int) Math.floor(cam.z), 16);
+    public void tick(RemixAPI api, ClientLevel level, Vec3 cam, SkyLightState sky, float[] ambient,
+                     com.nvidia.rtxremix.minecraft.profiling.PerformanceTimer timer) {
+        lastSky = sky; lastAmbient = ambient;
+        camChunkX = Math.floorDiv((int) Math.floor(cam.x), 16); camChunkZ = Math.floorDiv((int) Math.floor(cam.z), 16);
         lastRadius = ptRadius();
-        long now = System.currentTimeMillis();
         if (levelKey != level) newLevel(level);
-
-        // 1. finished readback -> Remix
         ByteBuffer pixels = gpu.poll();
-        if (pixels != null && current != null && renderedBuild != null && renderedBuild.session == session) {
-            publish(api, pixels);
-            publishedBuild = renderedBuild;
-            publishedRenderCam = lastRenderCam;
-            renders++;
-            lastRenderGpuMs = gpu.lastGpuMs();
+        if (pixels != null && renderedBuild != null && renderedBuild.session == session) {
+            publish(api, pixels); publishedBuild = renderedBuild; publishedRenderCam = lastRenderCam; renders++;
             if (renders <= 5 || renders % 20 == 0 || Boolean.getBoolean("rtxremix.farfield.diagnostics")) {
                 LOGGER.info("FarField render #{}: session {} generation {}, gpu {} ms (wall to fence {} ms), dag {} KiB", renders,
-                        renderedBuild.session, renderedBuild.generation, String.format("%.2f", lastRenderGpuMs),
-                        String.format("%.2f", gpu.lastFlightMs()), gpu.dagBytes() >> 10);
+                        renderedBuild.session, renderedBuild.generation, String.format("%.2f", gpu.lastGpuMs()),
+                        String.format("%.2f", gpu.lastFlightMs()), storage.liveBytes() >> 10);
             }
         }
-
-        // 2. new merged DAG -> GPU: sliced copy into the spare buffer (<= 1M words = 4 MiB per frame), swap while idle
-        // Finish the selected DAG even when newer merges arrive. Restarting slices for every merge can starve publication.
-        if (uploading == null) {
-            Build b = built.getAndSet(null);
-            if (b != null && b.session == session) {
-                gpu.beginUpload(b.words);
-                uploading = b;
-                uploadComplete = false;
-                uploadFrames = 0;
-            }
+        boolean copyReady = storage.poll();
+        if (!jobs.isEmpty()) {
+            if (gpu.inFlight()) readerDeferredFrames++;
+            if (storage.copying()) uploadDeferredFrames++;
         }
-        if (uploading != null) {
-            if (!uploadComplete) {
-                uploadComplete = gpu.uploadSlice(uploading.nodes, 1 << 20);
-                uploadFrames++;
-            }
-            if (uploadComplete && !gpu.inFlight()) {
-                gpu.commitUpload();
-                current = uploading.metadata();
-                uploading = null;
-                dagDirty = true;
-                if (Boolean.getBoolean("rtxremix.farfield.diagnostics")) {
-                    LOGGER.info("FarField upload: session {} generation {}, {} words in {} copy frames", current.session,
-                            current.generation, current.words, uploadFrames);
-                }
-            }
-        }
-
-        // 3. plan sub-DAG builds / merge
-        if (now - lastPlanMs > 500) {
-            lastPlanMs = now;
-            plan(level, cam);
-        }
-        int published = cache.drain();
-        epoch += published;
-        if (published > 0 && Boolean.getBoolean("rtxremix.farfield.diagnostics")) {
-            LOGGER.info("FarField publication: session {} generation {}, {} accepted subtrees", session, epoch, published);
-        }
-        captureSlice(level);
+        drainEvents();
+        if (copyReady && !gpu.inFlight()) advanceUploads();
+        int accepted = cache.drain();
+        epoch += accepted;
+        long now = System.currentTimeMillis();
+        if (now - lastPlanMs > 500) { lastPlanMs = now; plan(level, cam); }
+        captureSlice();
         recordSlice(level);
-        if (now - lastStatMs > 10_000 && source != null) {
+        // Directory commits take priority over further page uploads; replaced pages cannot accumulate indefinitely.
+        if (!gpu.inFlight() && !storage.copying() && uploading == null && directoryUpload == null
+                && epoch > 0 && (wantedChanged || epoch != mergedEpoch)) buildDirectory();
+        if (directoryUpload == null && uploading == null && !gpu.inFlight() && !storage.copying()) beginUpload();
+        admit(level);
+        if (current != null && !gpu.inFlight() && !storage.copying() && hasSky && now - lastRenderMs > 1000) {
+            double threshold = Math.max(8, lastRadius * 16.0 / 12);
+            if (dagDirty || skyDirty || lastRenderCam == null || lastRenderCam.distanceToSqr(cam) > threshold * threshold) {
+                render(cam); lastRenderMs = now; lastRenderCam = cam; dagDirty = false; skyDirty = false;
+            }
+        }
+        if (now - lastStatMs > 10000) {
             lastStatMs = now;
-            LOGGER.info("FarField progress: lod tiles generated {} (disk {}, pending {}), subtree tasks pending {}, cached subtrees {}",
-                    source.generatedCount(), source.diskCount(), source.pending(), cache.pending(), cache.size());
-            LOGGER.info("FarField snapshots: {} copies, {} ms owner CPU, stale captures {}, active column {}, worker slots {}/{}, record backlog {}, deferred admissions {}",
-                    snapshotsTaken, String.format("%.2f", snapshotNanos / 1e6), staleCaptures,
-                    capturing == null ? 0 : 1, cache.pending(), buildThreads * 2, recordQueue.size(), deferredRecords);
-            LOGGER.info("FarField observed-to-subtree-publication: mean {} ms, max {} ms (includes initial population)",
-                    String.format("%.2f", cache.meanPublicationMs()), String.format("%.2f", cache.maxPublicationMs()));
+            LOGGER.info("FarField progress: native jobs {}, GPU pages {}, stale captures {}, record backlog {}, deferred admissions {}",
+                    jobs.size(), storage.livePages(), staleCaptures, recordQueue.size(), deferredRecords);
             if (Boolean.getBoolean("rtxremix.farfield.diagnostics")) LOGGER.info("FarField coverage: {}", diagnostics());
         }
+        storage.recordFrame(timer);
+    }
 
-        // 4. render when something changed
-        if (current != null && !gpu.inFlight() && hasSky && now - lastRenderMs > 1000) {
-            double thr = Math.max(8.0, lastRadius * 16 / 12.0);
-            boolean moved = lastRenderCam == null || lastRenderCam.distanceToSqr(cam) > thr * thr;
-            if (dagDirty || moved || skyDirty) {
-                render(cam);
-                lastRenderMs = now;
-                lastRenderCam = cam;
-                dagDirty = false;
-                skyDirty = false;
+    private void newLevel(ClientLevel level) {
+        levelKey = level; session++;
+        cache.reset(); desired = java.util.List.of(); wantedKeys = new long[0]; wantedChanged = true;
+        epoch = 0; mergedEpoch = -1; lastPlanMs = 0; lastRenderCam = null;
+        // A submitted reader/copy keeps its allocations alive until the regular fence path sees completion.
+        if (current != null) { retired.addAll(current.pages); if (current.directory != null) retired.add(current.directory); }
+        current = null; renderedBuild = null; publishedBuild = null; publishedRenderCam = null;
+        if (texture != null && !texture.isDeleted()) texture.destroy(); texture = null;
+        if (source != null) { source.close(); previousCacheFlush = source.flushed(); }
+        source = null; recorded.clear(); recordQueue.clear(); recordQueued.clear();
+        minY = level.getMinY(); worldHeight = level.getHeight();
+        Minecraft client = Minecraft.getInstance();
+        MinecraftServer server = client.getSingleplayerServer();
+        try {
+            Path root = FabricLoader.getInstance().getGameDir();
+            if (server == null) {
+                var connection = client.getCurrentServer();
+                String serverName = (connection == null ? "unknown" : connection.ip).replaceAll("[^A-Za-z0-9._-]", "_");
+                Path received = root.resolve("rtxremix-farcache").resolve(serverName)
+                        .resolve(level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
+                source = new FarTerrainSource(received, received.resolve("stream"), null, cacheOn, cacheMb, previousCacheFlush);
+            } else {
+                ServerLevel world = server.getLevel(level.dimension());
+                if (world == null) return;
+                String name = server.getWorldData().getLevelName().replaceAll("[^A-Za-z0-9._-]", "_");
+                Path generated = root.resolve("rtxremix-farlod").resolve(name + "-" + Long.toHexString(world.getSeed()))
+                        .resolve(level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
+                String identity = java.util.UUID.nameUUIDFromBytes(server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT)
+                        .toAbsolutePath().normalize().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+                source = new FarTerrainSource(generated.resolve("received").resolve(identity), generated,
+                        new FarTerrainSampler(world), true, cacheMb, previousCacheFlush);
             }
+        } catch (IOException failure) { throw new IllegalStateException("Cannot open disk-backed far terrain", failure); }
+    }
+
+    private static long subKey(int x, int z) { return FarTerrainSource.key(x, z); }
+
+    private void plan(ClientLevel level, Vec3 camera) {
+        int generation = com.nvidia.rtxremix.minecraft.terrain.BiomeColorGeneration.current();
+        if (generation != paletteGeneration) {
+            paletteIdentity = FarTerrainSampler.paletteIdentity();
+            paletteGeneration = generation;
+        }
+        HashMap<Long, ColumnIn> loaded = new HashMap<>();
+        int reach = Minecraft.getInstance().options.renderDistance().get() + 2;
+        for (int z = -reach; z <= reach; z++) for (int x = -reach; x <= reach; x++) {
+            LevelChunk chunk = level.getChunkSource().getChunkNow(camChunkX + x, camChunkZ + z);
+            if (chunk != null) addLoaded(loaded, chunk);
+        }
+        BobbyCompat.forEachFakeChunk(level, chunk -> addLoaded(loaded, chunk));
+        int extent = Math.max(distance, lastRadius + 8);
+        int sx = Math.floorDiv((int) Math.floor(camera.x), 256), sz = Math.floorDiv((int) Math.floor(camera.z), 256);
+        int span = (extent * 16 + 255) / 256 + 1;
+        int nextLevels = 9;
+        while ((1 << nextLevels) < (2 * span + 2) * 256) nextLevels++;
+        int nextOriginX = sx - (1 << (nextLevels - 9)), nextOriginZ = sz - (1 << (nextLevels - 9));
+        var candidates = new ArrayList<Desired>();
+        for (int z = sz - span; z <= sz + span; z++) for (int x = sx - span; x <= sx + span; x++) {
+            int d = Math.max(Math.abs(x * 16 + 8 - camChunkX), Math.abs(z * 16 + 8 - camChunkZ));
+            if (d - 8 > extent) continue;
+            int lg = d < 32 ? 1 : d < 64 ? 2 : d < 192 ? 3 : 4;
+            long key = subKey(x, z), revision = source == null ? 0 : source.revision(x, z);
+            ColumnIn input = loaded.get(key);
+            long signature = (lg + 2L) * 0x100000001B3L ^ (input == null ? 0 : input.signature())
+                    ^ revision * 0x9E3779B97F4A7C15L ^ paletteIdentity ^ generation;
+            cache.observe(key, signature);
+            candidates.add(new Desired(key, x, z, lg, signature, revision, paletteIdentity, generation, input));
+        }
+        candidates.sort(java.util.Comparator.<Desired>comparingInt(value -> Math.max(Math.abs(value.sx * 16 + 8 - camChunkX),
+                Math.abs(value.sz * 16 + 8 - camChunkZ))).thenComparingLong(Desired::key));
+        long[] wanted = new long[candidates.size()];
+        var keep = new java.util.HashSet<Long>();
+        for (int i = 0; i < wanted.length; i++) { wanted[i] = candidates.get(i).key; keep.add(wanted[i]); }
+        wantedChanged |= levels != nextLevels || originSx != nextOriginX || originSz != nextOriginZ
+                || !java.util.Arrays.equals(wantedKeys, wanted);
+        wantedKeys = wanted; desired = candidates; levels = nextLevels; originSx = nextOriginX; originSz = nextOriginZ;
+        cache.retain(keep);
+        // No LevelChunk is retained in the recorder. Removed chunks are sampled synchronously by the unload hook.
+        recorded.keySet().removeIf(key -> {
+            LevelChunk chunk = level.getChunkSource().getChunkNow((int) (key >> 32), (int) (long) key);
+            return chunk == null || BobbyCompat.isFake(chunk);
+        });
+        if (source != null) { source.setCenter((int) camera.x, (int) camera.z); source.trim((extent + 64) * 16); }
+    }
+
+    private void addLoaded(Map<Long, ColumnIn> loaded, LevelChunk chunk) {
+        int cx = chunk.getPos().x(), cz = chunk.getPos().z();
+        long key = subKey(Math.floorDiv(cx, 16), Math.floorDiv(cz, 16));
+        ColumnIn column = loaded.computeIfAbsent(key, ignored -> new ColumnIn());
+        int slot = Math.floorMod(cz, 16) * 16 + Math.floorMod(cx, 16);
+        if (column.cls[slot] != 0 && BobbyCompat.isFake(chunk)) return;
+        if (column.cls[slot] == 0) column.loaded++;
+        column.cls[slot] = (byte) (Math.max(Math.abs(cx - camChunkX), Math.abs(cz - camChunkZ)) < lastRadius - 1 ? 1 : 2);
+        long revision = FarChunkMessages.signature(chunk);
+        column.revisions[slot] = revision;
+        if (!BobbyCompat.isFake(chunk) && source != null && !java.util.Objects.equals(recorded.get(subKey(cx, cz)), revision)
+                && recordQueued.add(subKey(cx, cz))) {
+            if (recordQueue.size() < 1024) recordQueue.addLast(subKey(cx, cz));
+            else { recordQueued.remove(subKey(cx, cz)); deferredRecords++; }
         }
     }
 
-    /** Read-only owner-thread provenance; surface fallback may blend received and procedural data. */
+    private static LevelChunk chunk(ClientLevel level, int cx, int cz) {
+        LevelChunk chunk = level.getChunkSource().getChunkNow(cx, cz);
+        return chunk != null ? chunk : BobbyCompat.fakeChunk(level, cx, cz);
+    }
+
+    private boolean valid(Desired desired, ClientLevel level, long jobSession, FarTerrainSource jobSource) {
+        if (jobSession != session || jobSource != source || jobSource.revision(desired.sx, desired.sz) != desired.sourceRevision
+                || desired.colourGeneration != com.nvidia.rtxremix.minecraft.terrain.BiomeColorGeneration.current()) return false;
+        if (desired.input != null) for (int i = 0; i < 256; i++) {
+            if (desired.input.cls[i] != 2) continue;
+            LevelChunk chunk = chunk(level, desired.sx * 16 + (i & 15), desired.sz * 16 + (i >> 4));
+            if (chunk == null || FarChunkMessages.signature(chunk) != desired.input.revisions[i]) return false;
+        }
+        return true;
+    }
+
+    private void admit(ClientLevel level) {
+        if (source == null || !cache.hasCapacity() || desired.isEmpty()) return;
+        Desired selected = null;
+        // Alternate responsive edits with a rotating scan so moving/edited near columns cannot starve initial far coverage.
+        if ((scheduled & 1) == 0) for (Desired candidate : desired) {
+            if (cache.get(candidate.key) != null && cache.needsBuild(candidate.key)) { selected = candidate; break; }
+        }
+        if (selected == null) for (int i = 0; i < desired.size(); i++) {
+            int index = Math.floorMod(buildCursor + i, desired.size());
+            Desired candidate = desired.get(index);
+            if (cache.needsBuild(candidate.key) && (candidate.input != null || source.hasData(candidate.sx, candidate.sz))) {
+                selected = candidate; buildCursor = (index + 1) % desired.size(); break;
+            }
+        }
+        if (selected == null) return;
+        Desired selection = selected;
+        FarTerrainSource jobSource = source;
+        long jobSession = session;
+        var ticket = cache.begin(selected.key, selected.signature, () -> valid(selection, level, jobSession, jobSource));
+        if (ticket == null) return;
+        Job job = new Job(selected, level, ticket);
+        jobs.add(job); scheduled++; jobSource.acquire();
+        execute(job, () -> {
+            job.handle = job.source.open(selection.sx, selection.sz, selection.lg, selection.signature);
+            if (job.handle != 0) { job.fromDisk = true; finish(job); return Stage.FINISHED; }
+            job.handle = com.nvidia.rtxremix.VoxelDag.create(selection.lg, job.slabs);
+            job.source.surface(job.handle, selection.sx, selection.sz, selection.lg, job.bottom,
+                    selection.palette, selection.colourGeneration);
+            return Stage.CAPTURE;
+        });
+    }
+
+    @FunctionalInterface private interface Work { Stage run() throws IOException; }
+    private void execute(Job job, Work work) {
+        pool.execute(() -> {
+            Stage stage = Stage.FINISHED;
+            Throwable failure = null;
+            try { if (job.jobSession == session && !closed) stage = work.run(); }
+            catch (Throwable problem) { failure = problem; }
+            synchronized (completionLock) {
+                if (closed) { releaseJob(job); return; }
+                if (!events.offer(new Event(job, stage, failure))) throw new IllegalStateException("Native DAG completion overflow");
+            }
+        });
+    }
+
+    private void drainEvents() {
+        Event event;
+        while ((event = events.poll()) != null) {
+            Job job = event.job;
+            if (job.jobSession != session || event.failure != null || job.handle == 0) {
+                if (event.failure != null && !(event.failure instanceof java.util.concurrent.CancellationException)) {
+                    LOGGER.error("Far-field native job failed at {},{}", job.desired.sx, job.desired.sz, event.failure);
+                }
+                cache.finish(job.ticket, null); releaseJob(job); jobs.remove(job);
+            } else job.stage = event.stage;
+        }
+    }
+
+    private void captureSlice() {
+        long deadline = System.nanoTime() + 2_000_000;
+        int budget = 64;
+        for (Job job : java.util.List.copyOf(jobs)) {
+            if (job.stage != Stage.CAPTURE) continue;
+            if (!valid(job.desired, job.level, job.jobSession, job.source)) {
+                staleCaptures++; cache.finish(job.ticket, null); releaseJob(job); jobs.remove(job); continue;
+            }
+            ColumnIn input = job.desired.input;
+            while (job.nextChunk < 256 && budget > 0 && System.nanoTime() < deadline) {
+                int slot = job.nextChunk;
+                if (input == null || input.cls[slot] != 2) { job.nextChunk++; continue; }
+                LevelChunk chunk = chunk(job.level, job.desired.sx * 16 + (slot & 15), job.desired.sz * 16 + (slot >> 4));
+                chunkMessages.exact(chunk, job.nextSection, exactMessage);
+                com.nvidia.rtxremix.VoxelDag.exact(job.handle, slot & 15, job.nextSection, slot >> 4, exactMessage);
+                budget--;
+                if (++job.nextSection == job.slabs * 16) { job.nextSection = 0; job.nextChunk++; }
+            }
+            if (job.nextChunk == 256) {
+                job.stage = Stage.WORKER;
+                execute(job, () -> { finish(job); return Stage.FINISHED; });
+            }
+            if (budget <= 0 || System.nanoTime() >= deadline) break;
+        }
+    }
+
+    private void finish(Job job) {
+        job.nodes = com.nvidia.rtxremix.VoxelDag.finish(job.handle);
+        job.roots = new int[job.slabs];
+        for (int i = 0; i < job.slabs; i++) job.roots[i] = com.nvidia.rtxremix.VoxelDag.root(job.handle, i);
+        if (!job.fromDisk) job.source.save(job.handle, job.desired.sx, job.desired.sz, job.desired.lg, job.desired.signature);
+    }
+
+    private void beginUpload() {
+        for (Job job : java.util.List.copyOf(jobs)) {
+            if (job.stage != Stage.FINISHED) continue;
+            if (!valid(job.desired, job.level, job.jobSession, job.source)) {
+                cache.finish(job.ticket, null); releaseJob(job); jobs.remove(job); continue;
+            }
+            if (job.nodes <= 1) { complete(job, null); continue; }
+            uploading = new Upload(job, storage.allocate(job.nodes - 1));
+            copyNextSlice(); return;
+        }
+    }
+
+    private void copyNextSlice() {
+        Upload upload = uploading;
+        upload.sentWords = Math.min(GpuDagStorage.STAGING_BYTES / 4, upload.job.nodes * 8 - upload.nextWord);
+        storage.upload(upload.page, upload.job.handle, upload.nextWord, upload.sentWords);
+    }
+
+    private void advanceUploads() {
+        if (directoryUpload != null) {
+            Build next = directoryUpload; directoryUpload = null;
+            if (next.session == session) {
+                if (current != null && current.directory != null) retired.add(current.directory);
+                current = next; dagDirty = true;
+            } else { retired.add(next.directory); retired.addAll(next.pages); }
+            collectRetired();
+        }
+        if (uploading == null) { collectRetired(); return; }
+        Upload upload = uploading;
+        upload.nextWord += upload.sentWords;
+        if (upload.nextWord >= upload.job.nodes * 8) {
+            complete(upload.job, upload.page); uploading = null;
+        } else copyNextSlice();
+    }
+
+    private void complete(Job job, GpuDagAllocator.Page page) {
+        int offset = page == null ? 0 : page.referenceOffset();
+        for (int i = 0; i < job.roots.length; i++) {
+            int reference = job.roots[i];
+            if (reference != 0 && (reference & FarFieldDag.LEAF) == 0) job.roots[i] += offset;
+        }
+        cache.finish(job.ticket, new Subtree(page, job.roots, job.nodes, job.sources));
+        releaseJob(job); jobs.remove(job);
+    }
+
+    private void releaseJob(Job job) {
+        if (job.handle != 0) { com.nvidia.rtxremix.VoxelDag.destroy(job.handle); job.handle = 0; }
+        job.source.release();
+    }
+
+    private void retire(Subtree subtree) { if (subtree.page != null) retired.add(subtree.page); }
+
+    private void collectRetired() {
+        if (gpu.inFlight() || storage.copying()) return;
+        var iterator = retired.iterator();
+        while (iterator.hasNext()) {
+            var page = iterator.next();
+            if (current != null && (page == current.directory || current.pages.contains(page))) continue;
+            if (directoryUpload != null && (page == directoryUpload.directory || directoryUpload.pages.contains(page))) continue;
+            storage.release(page); iterator.remove();
+        }
+    }
+
+    private void buildDirectory() {
+        HashMap<Long, int[]> roots = new HashMap<>();
+        HashMap<Long, FarFieldCoverage.Source> coverage = new HashMap<>();
+        java.util.Set<GpuDagAllocator.Page> pages = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (long key : wantedKeys) {
+            var value = cache.get(key);
+            if (value == null) continue;
+            Subtree subtree = value.data();
+            roots.put(key, subtree.roots);
+            if (subtree.page != null) pages.add(subtree.page);
+            boolean geometry = !allZero(subtree.roots);
+            coverage.put(key, new FarFieldCoverage.Source(value.signature(), geometry, subtree.sources));
+        }
+        // The top tree is a small address directory, not a mirror of subtree nodes.
+        GpuDagTopology.Result topology = GpuDagTopology.build(roots, levels, originSx, originSz, (worldHeight + 255) / 256);
+        int count = topology.nodes().length / 8 - 1;
+        GpuDagAllocator.Page directory = count > 0 ? storage.allocate(count) : null;
+        int root = topology.root();
+        if (directory == null && storage.buffer() == 0) {
+            directory = storage.allocate(1);
+            storage.upload(directory, java.nio.IntBuffer.wrap(new int[8]));
+        } else if (directory != null) {
+            int[] nodes = topology.nodesAt(directory.referenceOffset());
+            root = topology.rootAt(directory.referenceOffset());
+            storage.upload(directory, java.nio.IntBuffer.wrap(nodes, 8, nodes.length - 8));
+        }
+        directoryUpload = new Build(root, levels, originSx, originSz, minY, session, epoch,
+                new FarFieldCoverage(coverage), java.util.Set.copyOf(pages), directory);
+        mergedEpoch = epoch; wantedChanged = false;
+        if (!storage.copying()) advanceUploads();
+    }
+
+    private static boolean allZero(int[] values) { for (int value : values) if (value != 0) return false; return true; }
+
+    public static void onChunkUnload(ClientLevel level, LevelChunk chunk) {
+        FarField field = instance;
+        if (field != null && field.levelKey == level && !BobbyCompat.isFake(chunk)) {
+            if (!field.record(chunk)) LOGGER.warn("FarField: bounded surface record queue full at unload of {}; last disk state retained", chunk.getPos());
+            field.recorded.remove(subKey(chunk.getPos().x(), chunk.getPos().z()));
+        }
+    }
+
+    private boolean record(LevelChunk chunk) {
+        if (source == null || !source.canRecord()) return false;
+        long signature = FarChunkMessages.signature(chunk), key = subKey(chunk.getPos().x(), chunk.getPos().z());
+        if (java.util.Objects.equals(recorded.get(key), signature)) return true;
+        ByteBuffer message = DirectBufferPool.acquire(1024).order(ByteOrder.nativeOrder());
+        try { chunkMessages.surface(chunk, message); }
+        catch (RuntimeException | Error failure) { DirectBufferPool.release(message); throw failure; }
+        if (!source.record(chunk.getPos().x(), chunk.getPos().z(), message)) { DirectBufferPool.release(message); return false; }
+        recorded.put(key, signature); return true;
+    }
+
+    private void recordSlice(ClientLevel level) {
+        if (source == null) return;
+        long deadline = System.nanoTime() + 2_000_000;
+        int budget = 8;
+        while (!recordQueue.isEmpty() && source.canRecord() && budget-- > 0 && System.nanoTime() < deadline) {
+            long key = recordQueue.removeFirst(); recordQueued.remove(key);
+            LevelChunk chunk = level.getChunkSource().getChunkNow((int) (key >> 32), (int) key);
+            if (chunk != null && !BobbyCompat.isFake(chunk)) record(chunk);
+        }
+    }
+
     public static String diagnostics() {
         FarField f = instance;
         String settings = "enabled=" + enabled + " settingRadius=" + radius + " distance=" + distance + " cut=" + cut;
@@ -445,18 +689,25 @@ public final class FarField {
         HashMap<Long, FarFieldCoverage.Source> cached = new HashMap<>();
         for (long key : f.wantedKeys) {
             var value = f.cache.get(key);
-            if (value != null) cached.put(key, new FarFieldCoverage.Source(value.signature(),
-                    !(value.data().geometry.nodeCount() <= 1 && allZero(value.data().geometry.roots())), value.data().sources));
+            if (value != null) cached.put(key, new FarFieldCoverage.Source(value.signature(), !allZero(value.data().roots), value.data().sources));
         }
-        return settings + " session=" + f.session + " radius=" + f.lastRadius
-                + " plannedDistance=" + Math.max(distance, f.lastRadius + 8)
+        long retiredBytes = f.retired.stream().mapToLong(page -> page.nodes * 32L).sum();
+        return settings + " session=" + f.session + " radius=" + f.lastRadius + " plannedDistance=" + Math.max(distance, f.lastRadius + 8)
                 + " planTimeMs=" + f.lastPlanMs + " renderSubmitTimeMs=" + f.lastRenderMs + " publishedRenders=" + f.renders
-                + " cameraChunk=" + f.camChunkX + "," + f.camChunkZ
-                + " wanted=" + f.wantedKeys.length + " wantedRanges=" + FarFieldCoverage.ranges(f.wantedKeys)
-                + " cache=" + new FarFieldCoverage(cached).summarize(f.wantedKeys, f.cache::matches)
-                + " current=" + f.describe(f.current) + " uploading=" + f.describe(f.uploading)
+                + " cameraChunk=" + f.camChunkX + "," + f.camChunkZ + " wanted=" + f.wantedKeys.length
+                + " wantedRanges=" + FarFieldCoverage.ranges(f.wantedKeys) + " cache=" + new FarFieldCoverage(cached).summarize(f.wantedKeys, f.cache::matches)
+                + " current=" + f.describe(f.current) + " uploading=" + f.describeUpload()
                 + " submitted=" + f.describe(f.renderedBuild) + " submittedCamera=" + f.lastRenderCam
-                + " published=" + f.describe(f.publishedBuild) + " publishedCamera=" + f.publishedRenderCam;
+                + " published=" + f.describe(f.publishedBuild) + " publishedCamera=" + f.publishedRenderCam
+                + " nativeDag=" + java.util.Arrays.toString(com.nvidia.rtxremix.VoxelDag.metrics())
+                + " gpuAllocatedBytes=" + f.storage.deviceBytes() + " gpuPeakBytes=" + f.storage.peakDeviceBytes()
+                + " gpuUsedBytes=" + f.storage.liveBytes() + " stagingBytes=" + f.storage.stagingBytes()
+                + " uploadInFlight=" + f.storage.copying() + " retiredBytes=" + retiredBytes
+                + " residentJavaSources=0 nativeMirrorBytes=0 nativeTransientJobs=" + f.jobs.size()
+                + " sourceTransientMessageBytes=" + (f.source == null ? 0 : f.source.transientMessageBytes())
+                + " exactMessageBytes=" + f.exactMessage.capacity()
+                + " readerDeferredFrames=" + f.readerDeferredFrames + " uploadDeferredFrames=" + f.uploadDeferredFrames
+                + " uploadStats=" + f.storage.diagnostics();
     }
 
     private String describe(Build build) {
@@ -465,423 +716,14 @@ public final class FarField {
                 + " cubeBlocks=" + (1 << build.levels) + " coverage=" + build.coverage.summarize(wantedKeys, cache::matches) + "}";
     }
 
-    private void newLevel(ClientLevel level) {
-        levelKey = level;
-        session++;
-        capturing = null;
-        cache.reset();
-        wantedKeys = new long[0];
-        wantedChanged = true;
-        epoch = 0;
-        lastPlanMs = 0;
-        lastRenderCam = null;
-        built.set(null);
-        current = null;
-        uploading = null;
-        renderedBuild = null;
-        publishedBuild = null;
-        publishedRenderCam = null;
-        if (texture != null && !texture.isDeleted()) texture.destroy();
-        texture = null;
-        mergedEpoch = -1;
-        if (source != null) {
-            source.close();
-            previousCacheFlush = source.flushed();
-        }
-        source = null;
-        minY = level.getMinY();
-        worldHeight = level.getHeight();
-        MinecraftServer server = Minecraft.getInstance().getSingleplayerServer();
-        tracked.clear();
-        recordQueue.clear();
-        recordQueued.clear();
-        if (server == null) {
-            if (!cacheOn) {
-                LOGGER.info("FarField: no integrated server and the chunk cache is off, only loaded chunks");
-                return;
-            }
-            try {
-                var current = Minecraft.getInstance().getCurrentServer();
-                String name = current == null ? "unknown" : current.ip;
-                name = name.replaceAll("[^A-Za-z0-9._-]", "_");
-                Path root = FabricLoader.getInstance().getGameDir().resolve("rtxremix-farcache");
-                Path namespace = Path.of(name, level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
-                source = new FarCacheSource(root, namespace, cacheMb, null, previousCacheFlush);
-                LOGGER.info("FarField: multiplayer chunk cache {} (limit {} MB){}", root.resolve(namespace), cacheMb,
-                        BobbyCompat.isPresent() ? ", Bobby fake chunks are read as well" : "");
-            } catch (RuntimeException | Error e) {
-                LOGGER.error("FarField: chunk cache init failed", e);
-            }
-            return;
-        }
-        ServerLevel sl = server.getLevel(level.dimension());
-        if (sl == null) return;
-        try {
-            String world = server.getWorldData().getLevelName().replaceAll("[^A-Za-z0-9._-]", "_");
-            Path dir = FabricLoader.getInstance().getGameDir().resolve("rtxremix-farlod")
-                    .resolve(world + "-" + Long.toHexString(sl.getSeed()))
-                    .resolve(level.dimension().identifier().toString().replace(':', '_').replace('/', '_'));
-            // Received chunks override procedural noise, retaining edits after they leave the client radius.
-            String saveIdentity = java.util.UUID.nameUUIDFromBytes(server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT)
-                    .toAbsolutePath().normalize().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
-            source = new FarCacheSource(dir.resolve("received"), Path.of(saveIdentity), cacheMb, new FarLodSource(sl, dir, lodThreads, previousCacheFlush), previousCacheFlush);
-            LOGGER.info("FarField: LOD source from the integrated server, cache {}", dir);
-        } catch (RuntimeException | Error e) {
-            LOGGER.error("FarField: LOD source init failed", e);
-        }
-    }
-
-    private static long subKey(int sx, int sz) {
-        return ((long) sx << 32) | (sz & 0xFFFFFFFFL);
-    }
-
-    private void plan(ClientLevel level, Vec3 cam) {
-        int R = lastRadius;
-        int rd = Minecraft.getInstance().options.renderDistance().get();
-        int D = Math.max(distance, R + 8);
-        int csx = Math.floorDiv((int) Math.floor(cam.x), 256), csz = Math.floorDiv((int) Math.floor(cam.z), 256);
-        int span = (D * 16 + 255) / 256 + 1;
-        int levels = 9;
-        while ((1 << levels) < (2 * span + 2) * 256) levels++;
-        int cubeSub = 1 << (levels - 8);
-        int originSx = csx - cubeSub / 2, originSz = csz - cubeSub / 2;
-        if (source != null) source.setCenter((int) cam.x, (int) cam.z);
-
-        // loaded client chunks (Bobby's fake chunks included), grouped per column; real ones are also offered to the multiplayer cache
-        HashMap<Long, ColumnIn> loaded = new HashMap<>();
-        int lm = rd + 2;
-        java.util.HashSet<Long> seen = new java.util.HashSet<>();
-        for (int dx = -lm; dx <= lm; dx++) {
-            for (int dz = -lm; dz <= lm; dz++) {
-                LevelChunk c = level.getChunkSource().getChunkNow(camChunkX + dx, camChunkZ + dz);
-                if (c == null) continue;
-                addLoaded(loaded, seen, c, camChunkX + dx, camChunkZ + dz, R);
-            }
-        }
-        if (BobbyCompat.isPresent()) {
-            List<LevelChunk> fakes = BobbyCompat.fakeChunks(level);
-            if (Math.abs(fakes.size() - lastFakeCount) >= 25) {
-                lastFakeCount = fakes.size();
-                LOGGER.info("FarField: {} Bobby fake chunks", fakes.size());
-            }
-            for (LevelChunk c : fakes) {
-                int cx = c.getPos().x(), cz = c.getPos().z();
-                if (!seen.add(((long) cx << 32) | (cz & 0xFFFFFFFFL))) continue;
-                addLoaded(loaded, seen, c, cx, cz, R);
-            }
-        }
-        // The unload event also covers chunks that depart between planning passes.
-        var records = tracked.entrySet().iterator();
-        while (records.hasNext()) {
-            var item = records.next();
-            Recorded old = item.getValue();
-            if (level.getChunkSource().getChunkNow(old.chunk.getPos().x(), old.chunk.getPos().z()) == old.chunk) continue;
-            if (FarChunkSnapshot.signature(old.chunk) == old.signature) records.remove();
-        }
-
-        // wanted columns, nearest first
-        int total = (2 * span + 1) * (2 * span + 1);
-        long[] order = new long[total];
-        int cnt = 0;
-        for (int sz = csz - span; sz <= csz + span; sz++) {
-            for (int sx = csx - span; sx <= csx + span; sx++) {
-                int dChunks = Math.max(Math.abs(sx * 16 + 8 - camChunkX), Math.abs(sz * 16 + 8 - camChunkZ));
-                if (dChunks - 8 > D) continue;
-                order[cnt++] = ((long) dChunks << 40) | ((long) (sx - csx + span) << 20) | (sz - csz + span);
-            }
-        }
-        java.util.Arrays.sort(order, 0, cnt);
-        long[] wanted = new long[cnt];
-        int budget = buildThreads * 2 - cache.pending();
-        int slabs = (worldHeight + 255) / 256;
-        for (int i = 0; i < cnt; i++) {
-            long o = order[i];
-            int dChunks = (int) (o >>> 40);
-            int sx = (int) ((o >> 20) & 0xFFFFF) - span + csx, sz = (int) (o & 0xFFFFF) - span + csz;
-            long key = subKey(sx, sz);
-            wanted[i] = key;
-            ColumnIn in = loaded.get(key);
-            int lgUsed = -1;
-            FarSurfaceTiles tile = null;
-            if (source != null && (in == null || in.loaded < 256)) {
-                int desired = dChunks < 32 ? 1 : dChunks < 64 ? 2 : dChunks < 192 ? 3 : 4;
-                for (int lg = desired; lg <= FarLodSource.MAX_LG && tile == null; lg++) {
-                    tile = FarSurfaceTiles.request(source, lg, sx, sz, lg == desired);
-                    if (tile != null) lgUsed = lg;
-                }
-                if (tile == null) {
-                    source.get(FarLodSource.MAX_LG, Math.floorDiv(sx * 256, FarLodSource.TILE_CELLS << FarLodSource.MAX_LG),
-                            Math.floorDiv(sz * 256, FarLodSource.TILE_CELLS << FarLodSource.MAX_LG));
-                }
-            }
-            long sig = (lgUsed + 2L) * 0x100000001B3L ^ (in == null ? 0L : in.signature()) ^ ((long) (in == null ? 0 : in.loaded) << 50)
-                    ^ (tile == null ? 0L : 0x5555L + tile.signature() * 0x9E3779B97F4A7C15L);
-            cache.observe(key, sig);
-            boolean missingCoverage = tile == null && (in == null || source != null && in.loaded < 256);
-            if (!cache.needsBuild(key) || budget <= 0 || missingCoverage) continue;
-            if (in != null) {
-                if (capturing == null) capturing = new Capture(sx, sz, lgUsed, minY, slabs, key, sig, tile, in);
-            } else {
-                submit(new Capture(sx, sz, lgUsed, minY, slabs, key, sig, tile, null), level);
-                budget--;
-            }
-        }
-        int keyHash = java.util.Arrays.hashCode(wanted) * 31 + levels * 7 + originSx * 13 + originSz;
-        if (keyHash != mergedKeyHash) {
-            wantedChanged = true;
-            mergedKeyHash = keyHash;
-            // drop cached columns no longer wanted
-            java.util.HashSet<Long> keep = new java.util.HashSet<>(cnt * 2);
-            for (long k : wanted) keep.add(k);
-            cache.retain(keep);
-            if (capturing != null && !keep.contains(capturing.key)) capturing = null;
-            if (source != null) source.trim((D + 64) * 16);
-        }
-        wantedKeys = wanted;
-
-        long now = System.currentTimeMillis();
-        if (!merging && (wantedChanged || epoch != mergedEpoch) && now - lastMergeMs > 400 && epoch > 0) {
-            wantedChanged = false;
-            mergedEpoch = epoch;
-            lastMergeMs = now;
-            merging = true;
-            final long[] fw = wanted;
-            final long mergeSession = session;
-            final int mergeGeneration = mergedEpoch;
-            final HashMap<Long, Subtree> entries = new HashMap<>();
-            final HashMap<Long, Long> signatures = new HashMap<>();
-            for (long key : wanted) {
-                var value = cache.get(key);
-                if (value != null) {
-                    entries.put(key, value.data());
-                    signatures.put(key, value.signature());
-                }
-            }
-            final int fl = levels, fox = originSx, foz = originSz, fy = minY, fslabs = slabs;
-            pool.execute(() -> {
-                try {
-                    built.set(merge(entries, signatures, fw, fl, fox, foz, fy, fslabs, mergeSession, mergeGeneration));
-                } catch (Throwable t) {
-                    LOGGER.error("FarField merge failed", t);
-                } finally {
-                    merging = false;
-                }
-            });
-        }
-    }
-
-    /** Groups loaded chunks and coalesces surface-record requests without copying world data during planning. */
-    private void addLoaded(HashMap<Long, ColumnIn> loaded, java.util.Set<Long> seen, LevelChunk c, int cx, int cz, int R) {
-        long pk = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
-        seen.add(pk);
-        long k = subKey(Math.floorDiv(cx, 16), Math.floorDiv(cz, 16));
-        ColumnIn in = loaded.computeIfAbsent(k, x -> new ColumnIn());
-        int slot = (Math.floorMod(cz, 16) << 4) | Math.floorMod(cx, 16);
-        int d = Math.max(Math.abs(cx - camChunkX), Math.abs(cz - camChunkZ));
-        long revision = FarChunkSnapshot.signature(c);
-        in.chunks[slot] = c;
-        in.revisions[slot] = revision;
-        in.cls[slot] = (byte) (d < R - 1 ? 1 : 2);
-        in.loaded++;
-        if (source instanceof FarCacheSource && !BobbyCompat.isFake(c)) queueRecord(c, revision);
-    }
-
-    /** Client-thread unload hook: retain the final received state until the bounded snapshot stage admits it. */
-    public static void onChunkUnload(ClientLevel level, LevelChunk chunk) {
-        FarField field = instance;
-        if (field != null && field.levelKey == level && field.source instanceof FarCacheSource && !BobbyCompat.isFake(chunk)) {
-            if (!field.queueRecord(chunk, FarChunkSnapshot.signature(chunk))) {
-                LOGGER.warn("FarField: surface-record backlog full at unload of {}; last persisted surface retained", chunk.getPos());
-            }
-        }
-    }
-
-    private boolean queueRecord(LevelChunk chunk, long revision) {
-        long key = subKey(chunk.getPos().x(), chunk.getPos().z());
-        Recorded old = tracked.get(key);
-        if (old != null && old.chunk == chunk && old.signature == revision) return true;
-        if (!recordQueued.contains(key)) {
-            if (recordQueue.size() >= 1024) { deferredRecords++; return false; }
-            recordQueued.add(key);
-            recordQueue.addLast(key);
-        }
-        if (old == null || old.chunk != chunk) tracked.put(key, new Recorded(chunk, Long.MIN_VALUE));
-        return true;
-    }
-
-    private void recordSlice(ClientLevel level) {
-        if (!(source instanceof FarCacheSource source)) return;
-        long deadline = System.nanoTime() + 2_000_000L;
-        int budget = 8;
-        while (!recordQueue.isEmpty() && budget > 0 && source.recordBacklog() < 32 && System.nanoTime() < deadline) {
-            long key = recordQueue.removeFirst();
-            recordQueued.remove(key);
-            Recorded old = tracked.get(key);
-            if (old == null) continue;
-            long revision = FarChunkSnapshot.signature(old.chunk);
-            if (revision != old.signature) {
-                if (!source.record(snapshot(old.chunk))) throw new IllegalStateException("Far-field record admission changed on owner thread");
-                tracked.put(key, new Recorded(old.chunk, revision));
-                budget--;
-            }
-            if (level.getChunkSource().getChunkNow(old.chunk.getPos().x(), old.chunk.getPos().z()) != old.chunk) tracked.remove(key);
-        }
-    }
-
-    private FarChunkSnapshot snapshot(LevelChunk chunk) {
-        long start = System.nanoTime();
-        FarChunkSnapshot snapshot = new FarChunkSnapshot(chunk);
-        snapshotNanos += System.nanoTime() - start;
-        snapshotsTaken++;
-        return snapshot;
-    }
-
-    private void captureSlice(ClientLevel level) {
-        Capture capture = capturing;
-        if (capture == null || !cache.hasCapacity()) return;
-        long deadline = System.nanoTime() + 2_000_000L;
-        int budget = 8;
-        while (capture.next < 256 && budget > 0 && System.nanoTime() < deadline) {
-            int slot = capture.next++;
-            if (capture.input.cls[slot] != 2) continue;
-            LevelChunk chunk = capture.input.chunks[slot];
-            if (FarChunkSnapshot.signature(chunk) != capture.input.revisions[slot]) {
-                capturing = null;
-                staleCaptures++;
-                return;
-            }
-            capture.snapshots[slot] = snapshot(chunk);
-            budget--;
-        }
-        if (capture.next == 256) {
-            capturing = null;
-            if (capture.input.stillCurrent(level)) submit(capture, level);
-            else staleCaptures++;
-        }
-    }
-
-    private void submit(Capture capture, ClientLevel level) {
-        long jobSession = session;
-        // The validator is invoked only by the render thread, never by a worker.
-        FarBuildCache.Ticket ticket = cache.begin(capture.key, capture.signature, () -> capture.input == null || capture.input.stillCurrent(level));
-        if (ticket == null) return;
-        byte[] classes = capture.input == null ? null : capture.input.cls;
-        pool.execute(() -> {
-            long start = System.nanoTime();
-            boolean diagnostics = Boolean.getBoolean("rtxremix.farfield.diagnostics");
-            if (diagnostics) LOGGER.info("FarField build start: session {} key {},{} signature {} clock {}", jobSession,
-                    capture.sx, capture.sz, capture.signature, start);
-            FarSubtree.Result result = null;
-            try {
-                if (session != jobSession) return;
-                result = buildSubtree(capture.sx, capture.sz, capture.lg, capture.tile, classes, capture.snapshots, capture.minY, capture.slabs);
-            } catch (java.util.concurrent.CancellationException ignored) {
-                // Shutdown interrupts the current CPU build; no partial result is published.
-            } catch (RuntimeException t) {
-                LOGGER.error("FarField subtree {},{} failed", capture.sx, capture.sz, t);
-            } finally {
-                if (diagnostics) LOGGER.info("FarField build end: session {} key {},{} signature {} clock {} result {}", jobSession,
-                        capture.sx, capture.sz, capture.signature, System.nanoTime(), result != null);
-                cache.finish(ticket, result == null ? null : new Subtree(result, capture.sources));
-                taskNanos.addAndGet(System.nanoTime() - start);
-                tasksDone.incrementAndGet();
-            }
-        });
-    }
-
-    private Build merge(Map<Long, Subtree> entries, Map<Long, Long> signatures, long[] wanted, int levels, int originSx, int originSz, int minY, int slabs, long mergeSession, int generation) {
-        long t0 = System.nanoTime();
-        FarDagUpload.Builder upload = new FarDagUpload.Builder();
-        HashMap<Long, int[]> roots = new HashMap<>();
-        int present = 0;
-        HashMap<Long, FarFieldCoverage.Source> coverage = new HashMap<>();
-        for (long k : wanted) {
-            Subtree entry = entries.get(k);
-            if (entry == null) continue;
-            FarSubtree.Result result = entry.geometry;
-            boolean geometry = !(result.nodeCount() <= 1 && allZero(result.roots()));
-            coverage.put(k, new FarFieldCoverage.Source(signatures.get(k), geometry, entry.sources));
-            if (!geometry) continue;
-            int off = upload.append(result.nodes(), result.nodeCount());
-            int[] r = new int[slabs];
-            for (int i = 0; i < slabs; i++) {
-                int v = result.roots()[i];
-                r[i] = (v == 0 || (v & FarFieldDag.LEAF) != 0) ? v : v + off;
-            }
-            roots.put(k, r);
-            present++;
-        }
-        FarFieldDag dag = new FarFieldDag();
-        int root = top(dag, upload.nodeCount() - 1, roots, levels, 0, 0, 0, originSx, originSz, slabs);
-        FarDagUpload nodes = upload.finish(dag);
-        double ms = (System.nanoTime() - t0) / 1e6;
-        int words = nodes.words();
-        long tasks = Math.max(1, tasksDone.get());
-        LOGGER.info("FarField merge: {} subtrees, {} nodes ({} MiB), cube {} blocks, merge {} ms (avg subtree build {} ms over {} tasks)",
-                present, words / 8, (long) words * 4 >> 20, 1 << levels, String.format("%.1f", ms),
-                String.format("%.1f", taskNanos.get() / 1e6 / tasks), tasks);
-        return new Build(nodes, words, root, levels, originSx, originSz, minY, present, words / 8, ms, mergeSession, generation, new FarFieldCoverage(coverage));
-    }
-
-    private static boolean allZero(int[] a) {
-        for (int v : a) if (v != 0) return false;
-        return true;
-    }
-
-    /** Top of the tree over sub-DAG roots; (ix, iy, iz) in 256-block cells relative to the cube origin. */
-    private static int top(FarFieldDag dag, int nodeOffset, HashMap<Long, int[]> roots, int level, int ix, int iy, int iz, int osx, int osz, int slabs) {
-        if (level == FarSubtree.SIZE_LEVEL) {
-            if (iy >= slabs) return 0;
-            int[] r = roots.get(subKey(osx + ix, osz + iz));
-            return r == null ? 0 : r[iy];
-        }
-        int half = 1 << (level - 1 - FarSubtree.SIZE_LEVEL);
-        int[] refs = new int[8];
-        boolean any = false;
-        for (int i = 0; i < 8; i++) {
-            int cy = iy + ((i >> 1) & 1) * half;
-            if (cy >= slabs) { refs[i] = 0; continue; }
-            refs[i] = top(dag, nodeOffset, roots, level - 1, ix + (i & 1) * half, cy, iz + ((i >> 2) & 1) * half, osx, osz, slabs);
-            any |= refs[i] != 0;
-        }
-        int reference = any ? dag.make(refs) : 0;
-        return reference == 0 || (reference & FarFieldDag.LEAF) != 0 ? reference : reference + nodeOffset;
-    }
-
-    // ---- one 256 x 256 column on a worker thread ----
-
-    private static FarSubtree.Result buildSubtree(int sx, int sz, int lg, FarSurfaceTiles tile, byte[] classes, FarChunkSnapshot[] snapshots, int minY, int slabs) {
-        int useLg = lg < 0 ? 4 : lg;
-        int n = 256 >> useLg;
-        short[] top = null, rgb = null;
-        if (tile != null) {
-            top = new short[n * n];
-            rgb = new short[n * n];
-            tile.copy(top, rgb, minY);
-        }
-        short[][][] exact = null;
-        if (classes != null) {
-            exact = new short[256][][];
-            int cells = Math.max(1, 16 >> useLg);
-            for (int slot = 0; slot < 256; slot++) {
-                if (classes[slot] == 0) continue;
-                int cx = slot & 15, cz = slot >> 4;
-                // holes (client chunks inside the path-traced radius) keep the coarse LOD terrain as a backdrop (seen only where the
-                // path-traced chunk is not meshed yet); exact chunks replace it with their own voxels
-                if (top != null && classes[slot] == 2) {
-                    for (int j = 0; j < cells; j++) {
-                        for (int i = 0; i < cells; i++) {
-                            int ci = (cx * 16 >> useLg) + i, cj = (cz * 16 >> useLg) + j;
-                            top[cj * n + ci] = FarLodSource.EMPTY;
-                        }
-                    }
-                }
-                if (classes[slot] == 2) {
-                    exact[slot] = snapshots[slot].voxelize();
-                }
-            }
-        }
-        return FarSubtree.build(useLg, top, rgb, exact, slabs);
+    private String describeUpload() {
+        if (directoryUpload != null) return describe(directoryUpload);
+        if (uploading == null) return "none";
+        Job job = uploading.job;
+        var selected = new FarFieldCoverage(Map.of(job.desired.key, new FarFieldCoverage.Source(job.desired.signature,
+                !allZero(job.roots), job.sources)));
+        return "{session=" + job.jobSession + " stage=subtree wordsSubmitted=" + (uploading.nextWord - 8 + uploading.sentWords)
+                + " wordsTotal=" + (job.nodes * 8 - 8) + " coverage=" + selected.summarize(wantedKeys, cache::matches) + "}";
     }
 
     static final int KIND_PLAIN = 0, KIND_GRASS = 1, KIND_FOLIAGE = 2, KIND_WATER = 3;
@@ -946,15 +788,17 @@ public final class FarField {
     }
 
     private void close() {
-        session++;
-        capturing = null;
-        cache.reset();
-        pool.shutdownNow();
-        if (source != null) {
-            source.close();
-            previousCacheFlush = source.flushed();
+        synchronized (completionLock) {
+            closed = true; session++;
+            if (source != null) { source.close(); previousCacheFlush = source.flushed(); }
+            // Running workers observe closed and release their transient handles themselves.
+            pool.shutdown();
+            for (Job job : java.util.List.copyOf(jobs)) if (job.stage != Stage.WORKER) { releaseJob(job); jobs.remove(job); }
+            Event event;
+            while ((event = events.poll()) != null) { releaseJob(event.job); jobs.remove(event.job); }
         }
         gpu.close();
+        DirectBufferPool.release(exactMessage);
         if (texture != null && !texture.isDeleted()) texture.destroy();
     }
 }

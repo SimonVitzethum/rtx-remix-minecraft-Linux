@@ -69,6 +69,7 @@ public class PerformanceTimer {
      * Use {@link #count(int, long)} to add to it each frame.
      */
     public int registerCounter(String name) {
+        for (int i = 0; i < counterCount; i++) if (counterNames[i].equals(name)) return i;
         if (counterCount >= MAX_COUNTERS) {
             LOGGER.warn("Too many perf counters, ignoring: {}", name);
             return -1;

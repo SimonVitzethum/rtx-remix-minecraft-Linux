@@ -76,7 +76,7 @@ final class FarFieldGpu implements AutoCloseable {
     private long fence;
     private long queryPool;
     private long image, imageAllocation, imageView;
-    private Buf dag;
+    private final GpuDagStorage storage;
     private Buf aux;
     private Buf readback;
     private boolean inFlight;
@@ -99,13 +99,15 @@ final class FarFieldGpu implements AutoCloseable {
         }
         readback = createBuffer((long) width * height * 8, VK12.VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         aux = createBuffer((PALETTE_WORDS + 256L * 128L * 2L) * 4L, VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+        storage = new GpuDagStorage(device, () -> inFlight);
     }
 
     int width() { return width; }
     int height() { return height; }
     boolean inFlight() { return inFlight; }
     Buf aux() { return aux; }
-    long dagBytes() { return dag == null ? 0L : dag.size; }
+    long dagBytes() { return storage.deviceBytes(); }
+    GpuDagStorage storage() { return storage; }
 
     private static void check(int result, String what) {
         if (result != VK12.VK_SUCCESS) {
@@ -220,39 +222,6 @@ final class FarFieldGpu implements AutoCloseable {
         }
     }
 
-    private Buf dagNext;
-    private int upWords, upDone;
-
-    /** Starts an incremental DAG upload into the spare buffer (the live one may still be read by an in-flight dispatch). */
-    void beginUpload(int words) {
-        long bytes = Math.max(32L, (long) words * 4L);
-        if (dagNext == null || dagNext.size < bytes) {
-            destroyBuffer(dagNext);
-            dagNext = createBuffer(bytes + bytes / 8, VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
-        }
-        upWords = words;
-        upDone = 0;
-    }
-
-    /** Copies up to {@code maxWords} more words of the DAG; returns true when the whole DAG is in the spare buffer. */
-    boolean uploadSlice(FarDagUpload nodes, int maxWords) {
-        int n = Math.min(maxWords, upWords - upDone);
-        dagNext.mapped.clear();
-        dagNext.mapped.position(upDone * 4);
-        nodes.copy(upDone, dagNext.mapped.asIntBuffer().limit(n));
-        dagNext.mapped.clear();
-        upDone += n;
-        return upDone >= upWords;
-    }
-
-    /** Makes the uploaded DAG the live one (only while no dispatch is in flight). */
-    void commitUpload() {
-        vmaFlush(dagNext);
-        Buf t = dag;
-        dag = dagNext;
-        dagNext = t;
-    }
-
     /** Records and submits one render + readback. {@code push} holds PUSH_BYTES. */
     void dispatch(ByteBuffer push) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -273,7 +242,7 @@ final class FarFieldGpu implements AutoCloseable {
             VK12.vkCmdWriteTimestamp(cb, VK12.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, 0);
             VK12.vkCmdBindPipeline(cb, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
             VkDescriptorBufferInfo.Buffer dagInfo = VkDescriptorBufferInfo.calloc(1, stack)
-                    .buffer(dag.buffer).offset(0).range(VK12.VK_WHOLE_SIZE);
+                    .buffer(storage.buffer()).offset(0).range(VK12.VK_WHOLE_SIZE);
             VkDescriptorBufferInfo.Buffer auxInfo = VkDescriptorBufferInfo.calloc(1, stack)
                     .buffer(aux.buffer).offset(0).range(VK12.VK_WHOLE_SIZE);
             VkDescriptorImageInfo.Buffer imgInfo = VkDescriptorImageInfo.calloc(1, stack)
@@ -344,8 +313,8 @@ final class FarFieldGpu implements AutoCloseable {
             VK12.vkWaitForFences(vk, fence, true, 5_000_000_000L);
         }
         VK12.vkDeviceWaitIdle(vk);
-        destroyBuffer(dag);
-        destroyBuffer(dagNext);
+        inFlight = false;
+        storage.close();
         destroyBuffer(aux);
         destroyBuffer(readback);
         VK12.vkDestroyQueryPool(vk, queryPool, null);

@@ -13,6 +13,28 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FarBuildCacheTest {
     @Test
+    void releasesEveryReplacedEvictedStaleAndResetGpuValueExactlyOnce() {
+        var disposed = new java.util.ArrayList<String>();
+        FarBuildCache<String> cache = new FarBuildCache<>(2, disposed::add);
+        cache.observe(1, 1);
+        var first = cache.begin(1, 1, () -> true);
+        cache.finish(first, "first"); cache.drain();
+        cache.observe(1, 2);
+        var next = cache.begin(1, 2, () -> true);
+        cache.finish(next, "replacement"); cache.drain();
+        assertEquals(java.util.List.of("first"), disposed);
+        cache.observe(2, 1);
+        var stale = cache.begin(2, 1, () -> false);
+        cache.finish(stale, "stale"); cache.drain();
+        cache.retain(Set.of());
+        cache.observe(3, 1);
+        var active = cache.begin(3, 1, () -> true);
+        cache.finish(active, "active"); cache.drain(); cache.reset();
+        assertEquals(java.util.List.of("first", "stale", "replacement", "active"), disposed);
+        assertEquals(0, cache.pending());
+    }
+
+    @Test
     void keepsPublishedGeometryUntilTheLatestMutationFinishes() {
         FarBuildCache<String> cache = new FarBuildCache<>(2);
         cache.observe(7, 1);

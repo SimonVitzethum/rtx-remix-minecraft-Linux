@@ -1,178 +1,143 @@
 # Far-field terrain
 
-Far field uses the existing Vulkan environment DAG. The supported 512-chunk distance,
-exact loaded client voxels outside the path-traced radius, Bobby fake chunks, generated
-single-player terrain, persistent received multiplayer surfaces, sky updates and water
-tints share this pipeline.
+Far field renders classified distant terrain into the Vulkan environment dome. It
+supports the configured 512-chunk extent, existing loaded/Bobby exact voxels,
+procedural integrated-server surfaces, persistent received multiplayer surfaces,
+integer heights, sky updates and water tints through one GPU-resident DAG.
 
-## Design choices
+## Ownership and representation
 
-Renderer dirty flags alone miss off-screen content changes and mix geometry changes with
-light-only rebuilds. Hashing every voxel repeatedly would detect mutations but makes the
-cost follow the loaded world volume. Section content revisions instead make the existing
-planning pass proportional to section count; immutable owner-thread palette copies put
-voxel work on workers without racing client-world mutation.
+`FarField` keeps spatial keys, revisions, source presence flags, GPU node ranges and
+small slab roots. It does not retain Java surface tiles, copied chunks, heightmaps,
+exact voxel arrays or a flat scene DAG. `FarTerrainSource` stores received surfaces
+and compact DAG pages on disk. The old Java subtree/tile/snapshot implementation is
+only a test reference; no production fallback invokes it.
 
-The existing 256-block subtree is the invalidation and publication unit. A changed input
-rebuilds that subtree while unrelated cached subtrees remain reusable. Finer per-section
-DAG patching would require additional retained intermediate state and relocation rules;
-this change keeps the single DAG architecture and bounds capture/worker admission instead.
+`VoxelDag` is a Minecraft-independent JNI CPU service, separate from the unchanged
+Remix C API. At most two jobs own native workspaces. A job streams procedural surface
+messages of at most 64 KiB, then exact 8 KiB section messages from existing gameplay
+or Bobby chunks. The native builder compresses each exact section immediately and
+marks its whole chunk column exact; absent sections are air, so procedural surfaces
+cannot fill caves. Every surface cell, including empty cells, is explicitly supplied.
+The job seals its native DAG, writes a compact disk page, uploads bounded slices and
+releases the CPU handle after the final transfer fence. An open disk page owns roots
+and a file descriptor; slice reads never create a complete RAM mirror.
 
-Additional far detail comes from a bounded 2-block horizontal band and integer-height
-surface boundaries. Retaining full remote voxels everywhere would preserve overhangs and
-materials but scale memory with remote volume. Received surfaces and procedural fallback
-therefore share the tile source, while loaded real/Bobby chunks retain their exact voxels.
-There is no second distant renderer or separate publication system.
+Native workspace admission counts node storage, hash storage and bounded decoding
+scratch under one 64 MiB process budget, with at most two builders. Allocation failure
+is explicit, with no coarsening, distance reduction or silent dropped geometry.
+See [the native service contract](../rtxremix-java/native/VOXEL_DAG.md) for its exact
+allocator and disk format. Source message buffers and GPU memory are separate from
+this budget: the surface record queue holds at most 32 messages (4 KiB pool capacity
+each), active surface messages are at most 64 KiB each, and the render thread reuses
+one 8 KiB exact encoder. Source diagnostics expose their live capacities.
 
-## Content ownership and refresh
+`GpuDagStorage` allocates unmapped device-local node storage on Minecraft's Vulkan
+device. Its arena starts lazily at 8 MiB, grows geometrically, and copies existing
+nodes GPU-to-GPU only when growing. Node addresses stay stable. Arena capacity is at
+most the device storage-buffer limit or 128 MiB, whichever is smaller; the growth
+budget is 256 MiB including old/new arenas and the active staging allocation. An
+exhausted arena fails visibly; it never evicts still-wanted pages to disguise pressure.
+The upload buffer starts lazily at 64 KiB and grows geometrically to at most 4 MiB,
+with an 8 MiB old-plus-new replacement allowance. Each frame uploads at most 4 MiB.
+No capacity miss forces a global synchronization. Idle buffers are trimmed after
+30 seconds; retained pages keep their arena. Freed GPU ranges coalesce and are reused.
 
-`FarSectionRevisionMixin` increments a section revision only when `setBlockState` changes
-the state, or when block/biome packet data or generated biomes replace its contents.
-The overload with the lock argument is the common block mutation boundary in 26.3;
-the other overload delegates to it. This catches edits to the same chunk object and
-in-place packet reloads. Light-only renderer dirty flags do not invalidate geometry.
-The client thread samples these counters and section identities during the existing
-500 ms planning pass over loaded client/Bobby chunks. It never scans all world voxels
-per frame. Chunk slots contribute to the signature in spatial order, independently
-of Bobby collection iteration order.
+The root directory contains only subtree addresses, not subtree node payloads. A
+new directory is committed after its transfer completes. Replaced subtree and
+directory ranges retire only after the last image reader completes and no current
+or uploading directory refers to them. Transfer writes have explicit dependencies
+for both subsequent compute reads and arena-growth transfer reads. Submitted and
+published image generations retain provenance metadata, without owning CPU DAG data.
 
-One column at a time captures private copies of block and biome palettes, at most eight
-chunks and a cooperative 2 ms deadline per frame. One indivisible chunk copy may exceed
-the deadline. Surface recording has a separate eight-chunk/2 ms allowance per frame, a coalesced
-1024-key pending queue and a 32-snapshot worker queue. An unload hook also offers the
-final state of chunks that leave between planning passes. Loaded chunks whose admission
-is deferred are offered again on the next planning pass. Worker jobs only read the private copies. There are at
-most twice the configured build-thread count of outstanding subtree jobs, including
-completed results waiting for the client thread. The build-thread setting is bounded
-to 1..4 and noise workers to 1..2. Tile request queues admit at most 4096 distinct jobs
-each; their priority uses the nearest tile edge, with coarser coverage first at equal distance,
-then the spatial key as a deterministic tie breaker.
+## Sources, edits and world changes
 
-`FarBuildCache` owns request identities and publication on the client thread. A changed
-signature, eviction or session reset invalidates old requests, including A -> B -> A.
-Before accepting an exact build it rechecks the captured revisions and the identity of
-live real chunks. Failed/stale results leave the last published subtree intact and are
-eligible for another build. A partially captured column is also rejected if it changed.
-Merges consume an immutable set of published subtrees; merged DAGs carry the world
-session through upload, and old-session readbacks never become the new world's texture.
-GPU upload retains its existing 4 MiB/frame slicing and idle-buffer swap. An upload
-finishes its selected DAG before selecting the newest merged replacement; incoming
-merges cannot keep restarting the slice cursor and starving image publication. Sky-light
-release also shuts down the far field before the next world's dome is selected. Fixed
-Nether/End skies use their own texture and cannot acquire the preceding Overworld's
-composite, even though they do not execute an atmospheric far-field tick.
+Minecraft render/simulation distance is never increased for far field. Existing
+client chunks and Bobby fakes are inspected on their owning thread; the mod neither
+requests nor retains extra remote gameplay chunks. `FarChunkMessages` encodes exact
+sections into one reused buffer and computes cheap content revisions without a
+voxel scan. Block/biome packet changes and live edits invalidate their native pages;
+light-only rebuilds do not. A capture rechecks identity and content before publication.
 
-Merged generations share immutable subtree arrays. `FarDagUpload` keeps a segment table
-and the small top tree, relocating references directly into the mapped spare GPU buffer
-within the upload slice. It never allocates a flat heap copy of the scene. After upload,
-current, submitted and published generations retain only provenance, so they cannot pin
-obsolete subtree payloads. The latest merge and the selected upload are the only pending
-generation views; unchanged subtrees share storage with the cache. The GPU still uses two
-flat buffers and receives the same node layout, detail and extent. Incremental patching
-of those buffers could also reduce transfer bandwidth, but requires stable allocation
-and retirement across two GPU generations; shared CPU views avoid that additional state.
+For unvisited integrated terrain, `FarTerrainSampler` uses the existing generator's
+`getBaseHeight` and biome resolver. This does not load `ChunkAccess`, `LevelChunk` or
+`ProtoChunk`, or acquire chunk tickets. In 26.3 that call does create a temporary
+`NoiseChunk` density evaluator and scoped density buffers, which are closed by vanilla.
+There are at most two sampling jobs. This is bounded transient procedural work,
+not a claim of zero Java or system RAM. A different native/GPU world generator would
+need independent parity evidence before replacing those samples.
 
-This is eventual refresh under explicit work budgets, not a hard wall-clock guarantee:
-planning and merge have 500/400 ms cadence gates, image dispatch has a 1 s gate, and
-capture, worker queues, upload and GPU completion add workload-dependent time. Continuous
-edits may supersede a build repeatedly. The published old subtree remains visible during
-that work. Logs distinguish observed-to-subtree-publication latency from GPU dispatch /
-fence time; neither alone is end-to-end edit-to-image latency. Set
-`-Drtxremix.farfield.diagnostics=true` to log every accepted subtree batch and image
-publication with its session/generation during a controlled comparison.
+Received surfaces override generated surfaces, including explicitly empty columns.
+Their existing FCC version 1 files remain readable and writable; native code streams
+one region with bounded decoding scratch. Java's disk worker reads only presence
+metadata, so an unobserved multiplayer area is never reported as valid empty terrain.
+New compact DAG files retain local references and can reopen without rebuilding.
+Procedural source files stay on disk; palette content fingerprints and generation
+checks prevent a resource reload from reusing old colours or publishing mixed generations.
+Existing exact sources retain map-colour voxels at 1-block precision. Generated bands
+use 2/4/8/16-block horizontal cells at the existing distance thresholds, while vertical
+surface boundaries remain at integer block heights.
 
-## Surface sources and detail
+Planning has a 500 ms cadence. Capturing and surface recording each have a cooperative
+2 ms owner-thread deadline; one indivisible section/column operation may exceed it.
+Exact capture processes at most 64 sections per frame. Initial far coverage gets a
+rotating admission scan, alternating with published-page edits, so repeated near
+changes cannot monopolize both job slots. Uploads finish their selected page and
+directory before starting replacements. Continuous edits may still repeatedly
+invalidate a particular page; this is eventual refresh, not a hard latency guarantee.
 
-The nearest generated/cached band (column-centre distance below 32 chunks) uses 2-block
-horizontal cells, followed by the existing 4/8/16-block bands. A 2-block tile is smaller
-than a subtree; `FarSurfaceTiles` assembles its four tile references, including at negative
-coordinates. Coarser tiles are shared across neighbouring subtrees. Heights end at the
-integer block boundary at every LOD: only boundary nodes subdivide below the horizontal
-cell size. Uniform underground volume and repeated boundary nodes still collapse in the
-same DAG. Surface and exact voxel colours remain RGB565; exact voxels now use copied
-section biomes rather than a single biome/tint for the entire chunk.
+An unload offers the final surface immediately without retaining the departing chunk.
+If the bounded recording queue is full, the last persisted surface stays available and
+the skipped final offer is logged. Loaded sources deferred by admission are retried
+through the normal planning pass. An orderly source shutdown drains accepted records;
+its completion also waits for all active build leases. The next session waits on that
+future on its workers, never on the render thread. Old-session build completions,
+GPU directory commits and image readbacks cannot publish into the new world.
 
-Received chunk surfaces override procedural single-player terrain as well as filling
-multiplayer terrain. Live revisions cause another surface recording; unchanged content
-does not increment the cache epoch. Final changes of retained unloaded chunks are offered
-again within the recording budget. Old immutable tiles remain usable while replacements
-are built. An integrated source cannot select a partially received fine tile until its
-procedural fallback covers the remaining cells; it keeps coarser coverage during that wait. A tile changed during its build is rejected and retried on a later request.
-The received-surface disk format remains version 1, so existing multiplayer caches are
-readable. An empty received column also overrides generated ground. Sampling starts at
-`ChunkAccess.getHeight()` itself: that method already returns the highest occupied Y;
-subtracting again would discard a one-block surface/material layer. Old disk entries
-remain approximate until revisited and recorded again.
+Native terrain stays visible for Chebyshev chunk distance `< radius`; the far cut is
+`>= radius`. The half-open ring convention, source coverage and native page visibility
+are distinct from actual ray hits. The existing automatic distance fade is unchanged
+by this memory migration. Its 70%..80% planar band can hide the outer native ring;
+changing that quality policy requires a separately identified comparison.
 
-Cache recorder shutdown drains admitted snapshots and flushes on its worker. A future
-waits for tile readers that can still evict dirty regions and procedural workers that can still write tile files, then hands disk ownership to the next session without blocking the client thread, including
-world swaps and far-field off/on cycles. Missing regions are remembered, avoiding a file
-existence check for each cell of unvisited generated terrain. The disk quota root is explicit and never inferred from a directory's parents. The
-resident-region cap is enforced before loading another region, under the same worker
-I/O monitor as record publication; dirty regions are persisted before eviction. Read/write failures are
-logged; failed writes retain the dirty state and cannot evict the only resident copy.
+## Diagnostics and evidence limits
 
-## Source limits
+`diag coverage` retains wanted, accepted GPU cache, current directory, active upload,
+submitted image and published image stages. Each includes session, generation, source
+signatures and spatial row ranges. Upload diagnostics distinguish a subtree slice
+from a directory upload. Valid empty source subtrees count as covered without geometry.
+Native-region, exact live/Bobby and surface-source counts are not pixel counts.
+A published stage proves a completed far-field image and accepted runtime texture
+patch; it is not a presentation fence proving later pixels sampled that image.
 
-* Exact data means classified map-colour voxels, not textured meshes, transparency,
-  per-block PBR materials or path-traced lighting. Non-colliding decorations with no
-  classified distant surface remain excluded as before.
-* The current dome integration runs far terrain for Overworld skyboxes. Fixed Nether/End
-  skies retain their constant sky behavior; no Overworld cache/image is reused there.
-* Generated terrain has no knowledge of unreceived player edits, structures, trees or
-  caves. Received surfaces preserve edits after unload, but overhangs/caves require a
-  loaded real or Bobby chunk for exact geometry. Surface cells average height and colour;
-  2-block cells can still lose a one-block horizontal feature.
-* Bobby fake chunks are snapshotted and rendered exactly. Their content revisions are
-  observed while enumerated; removing a fake is noticed by the next planning pass. They
-  do not overwrite the received-surface cache with possibly older disk replay data.
-* Integrated-server changes outside all chunks ever delivered to this client are not
-  read from live server chunks. Such reads would violate thread ownership; supporting
-  them needs an owner-thread server snapshot/delivery protocol. Procedural noise remains
-  the explicit approximation for those areas.
-* A surface-record overload at unload (1024 pending chunk keys) is explicitly logged;
-  the last persisted surface is retained, but the newest unadmitted surface may be lost.
-  There is no claim of lossless caching under an arbitrarily large unload burst.
-* Persistent cache durability requires an orderly recorder flush and successful disk
-  writes. Only snapshots already admitted to the 32-entry recorder queue are drained at
-  shutdown; unsnapshotted offers in the client-side pending queue can be lost on a world
-  switch or when far field is disabled. Copying that entire backlog synchronously would
-  violate the owner-thread frame budget. Process termination cannot guarantee the last
-  queued snapshots reach disk.
+Diagnostics report native reserved/output/scratch metrics, GPU allocated/used/retired
+bytes, staging capacity, source-message capacities, upload/growth bytes, capacity
+misses and deferred frames. Native used output includes unfinished jobs; it is not
+persistent mirror memory. `residentJavaSources=0` and `nativeMirrorBytes=0` describe
+this pipeline's persistent representation, not process RSS or zero temporary memory.
+Live histograms after GC, native metrics and GPU lifetime checks are needed to verify
+those lifetimes in a real game. JFR allocation samples alone do not prove retention.
 
-## Verification
+Per-frame `Far.*` counters add upload bytes, arena-copy bytes, capacity misses, staging
+encoding/growth CPU time, copy-fence poll wall time and live capacities to the existing
+benchmark rows. Fence poll wall time includes time until the next client poll; it is
+not isolated GPU execution time or a synchronous CPU wait. Capacity pressure is a
+hypothesis for movement stalls until correlated against those counters and native
+submission/driver diagnostics. Reducing full DAG copies alone does not establish the
+cause of multi-GiB pressure from ordinary RD32 terrain and native assets.
 
-`FarBuildCacheTest` exercises repeated edits during builds, completion-versus-publication
-races, unchanged inputs, bounded slots, failed jobs, eviction/reload and session changes.
-`FarSubtreeTest` reads the resulting wire-format DAG independently and checks seeded
-height/material cases across all four LODs, slab boundaries, exact place/break and air
-caves, determinism and flat-volume sharing. `FarSurfaceTilesTest` checks fine tile joins
-and negative/coarse tile offsets. `FarCacheSourceTest` exercises real asynchronous tiles,
-unchanged surfaces, colour/height updates, persistent reopen and received overrides.
-These JVM checks do not prove mixin execution, visual quality or game performance.
-`FarDagUploadTest` compares sliced uploads with the original flat DAG wire representation,
-including relocated branches, shared top nodes, leaves, empty geometry and retained
-publication data after cache replacement.
+The native test suite checks bounded allocation, wire data, disk corruption and JNI
+buffer contracts. `VoxelDagNativeTest` compares thousands of seeded native voxels
+against the old independent Java reference, exercises negative coordinates, exact air,
+disk reopening and source lease teardown. Set `RTX_VOXEL_DAG_TEST_LIBRARY` to a built
+JNI library to run those CPU tests without starting a GPU or the Remix runtime.
+`GpuDagAllocatorTest`, `GpuDagTopologyTest`, `UploadBufferBudgetTest` and
+`FarBuildCacheTest` cover movement retirement, address reuse, topology relocation,
+replacement budgets and stale/reset disposal. These tests do not prove visual parity,
+full 512 coverage, GPU synchronization or movement performance.
 
-Native terrain pages follow the current camera radius through retained-instance visibility transitions. A page installed outside the radius is made visible when the camera or radius moves over it; disabling Far field restores the native pages without rebuilding their meshes. Unchanged visibility performs no native update.
-
-The scripted `diag` command logs a monotonic timestamp, raw native rendered/presented
-frame counters with their success flag and actual output/internal dimensions and
-upscaler, plus simulation distance. `diag coverage` also requests the detailed DAG and native page snapshots. The plain command avoids constructing those range maps for per-second frame sampling. Far-field diagnostics distinguish wanted keys,
-accepted cache entries, the GPU-committed DAG, submitted work and the completed DAG
-whose GPU readback completed and whose runtime texture update was accepted. Each stage carries its session/generation,
-subtree row ranges, missing current wanted keys and changed source revisions. Empty
-subtrees count as covered but not as geometry. Ranges use 256-block subtree coordinates,
-with inclusive X spans per Z row. These are DAG source coverage, not pixel visibility
-or an assertion that procedural approximations reproduce exact terrain.
-
-Source counters distinguish native-region chunks, live exact chunks, Bobby exact
-chunks and surface fallback chunks. Native-region chunks can also have a surface
-backdrop, so these counters overlap; surface fallback can blend cached received
-and procedural heights. They do not claim a count of purely procedural pixels.
-The terrain visibility diagnostic reports per-distance page totals, visible pages
-and visible solid pages in Chebyshev chunk rings about the actual camera. With
-`cut=1`, native coverage uses distance `< radius`, and the far cut uses `>= radius`.
-The page counts describe retained submissions, not independently verified ray hits.
-
-A published coverage snapshot is source provenance for a completed far-field GPU image and an accepted runtime patch, not a fence proving that every later presented pixel sampled that image. Correlate generations, camera, native page rings and captured output before asserting visible end-to-end coverage. Diagnostic collection itself has a CPU cost and should be reported with measurements.
+The dome still uses classified RGB565 terrain, not textured/PBR far meshes. Unreceived
+procedural terrain approximates biome surfaces without structures, trees or caves;
+existing client/Bobby exact sources retain caves. Fixed Nether/End skies keep their
+own sky behavior. Source coverage must never be presented as complete 512-pixel or
+32-RTX-ring visual approval.

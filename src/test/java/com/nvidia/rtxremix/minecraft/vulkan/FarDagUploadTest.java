@@ -15,18 +15,18 @@ class FarDagUploadTest {
     @Test
     void slicedUploadMatchesFlatDagWithRelocatedBranchesLeavesAndTopNodes() {
         Random random = new Random(0xDA61234);
-        FarFieldDag flat = new FarFieldDag();
+        ReferenceDag flat = new ReferenceDag();
         FarDagUpload.Builder upload = new FarDagUpload.Builder();
         int[] roots = new int[8];
         for (int column = 0; column < roots.length; column++) {
-            FarFieldDag subtree = new FarFieldDag();
+            ReferenceDag subtree = new ReferenceDag();
             int root = 0;
             for (int depth = 0; depth < 20; depth++) {
                 int[] children = new int[8];
                 for (int i = 0; i < 8; i++) {
                     children[i] = switch (random.nextInt(3)) {
                         case 0 -> 0;
-                        case 1 -> FarFieldDag.LEAF | random.nextInt(1, 65536);
+                        case 1 -> ReferenceDag.LEAF | random.nextInt(1, 65536);
                         default -> root;
                     };
                 }
@@ -37,10 +37,10 @@ class FarDagUploadTest {
             roots[column] = root + offset;
         }
         int topOffset = upload.nodeCount() - 1;
-        FarFieldDag top = new FarFieldDag();
+        ReferenceDag top = new ReferenceDag();
         int branch = top.make(roots) + topOffset;
         assertEquals(flat.make(roots), branch);
-        int[] parent = {branch, branch, 0, FarFieldDag.LEAF | 123, 0, 0, 0, 0};
+        int[] parent = {branch, branch, 0, ReferenceDag.LEAF | 123, 0, 0, 0, 0};
         assertEquals(flat.make(parent), top.make(parent) + topOffset);
         // Shared top nodes must preserve their final flat reference even when deduplicated.
         assertEquals(branch, top.make(roots) + topOffset);
@@ -62,16 +62,16 @@ class FarDagUploadTest {
     @Test
     void publishedSnapshotSurvivesCacheReplacementWithoutChangingItsWireData() {
         FarDagUpload.Builder builder = new FarDagUpload.Builder();
-        FarFieldDag cached = new FarFieldDag();
-        cached.make(new int[]{FarFieldDag.LEAF | 42, 0, 0, 0, 0, 0, 0, 0});
+        ReferenceDag cached = new ReferenceDag();
+        cached.make(new int[]{ReferenceDag.LEAF | 42, 0, 0, 0, 0, 0, 0, 0});
         int[] original = cached.nodes();
         builder.append(original, cached.nodeCount());
-        FarDagUpload published = builder.finish(new FarFieldDag());
-        cached = new FarFieldDag();
-        cached.make(new int[]{FarFieldDag.LEAF | 17, 0, 0, 0, 0, 0, 0, 0});
+        FarDagUpload published = builder.finish(new ReferenceDag());
+        cached = new ReferenceDag();
+        cached.make(new int[]{ReferenceDag.LEAF | 17, 0, 0, 0, 0, 0, 0, 0});
         builder = new FarDagUpload.Builder();
         builder.append(cached.nodes(), cached.nodeCount());
-        FarDagUpload replacement = builder.finish(new FarFieldDag());
+        FarDagUpload replacement = builder.finish(new ReferenceDag());
         IntBuffer before = IntBuffer.allocate(published.words());
         published.copy(0, before);
         assertArrayEquals(original, before.array());
@@ -84,7 +84,7 @@ class FarDagUploadTest {
     void emptyGeometryKeepsReservedZeroNodeAndSupportsEmptySlices() {
         FarDagUpload.Builder builder = new FarDagUpload.Builder();
         builder.append(new int[8], 1);
-        FarDagUpload empty = builder.finish(new FarFieldDag());
+        FarDagUpload empty = builder.finish(new ReferenceDag());
         IntBuffer destination = IntBuffer.allocate(8);
         empty.copy(0, destination);
         assertArrayEquals(new int[8], destination.array());

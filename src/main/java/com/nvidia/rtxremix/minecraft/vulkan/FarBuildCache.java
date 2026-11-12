@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 /**
  * Owner-thread cache with bounded worker handoff. A request identity survives neither a content change nor a session reset;
@@ -28,9 +29,15 @@ final class FarBuildCache<V> {
     private final Map<Long, Value<V>> values = new HashMap<>();
     private int pending;
     private long published, publicationNanos, maxPublicationNanos;
+    private final Consumer<V> dispose;
 
     FarBuildCache(int capacity) {
+        this(capacity, ignored -> {});
+    }
+
+    FarBuildCache(int capacity, Consumer<V> dispose) {
         this.capacity = capacity;
+        this.dispose = dispose;
         completed = new ArrayBlockingQueue<>(capacity);
     }
 
@@ -66,13 +73,14 @@ final class FarBuildCache<V> {
             Ticket ticket = done.ticket;
             busy.remove(ticket.key, ticket);
             if (done.value != null && wanted.get(ticket.key) == ticket.request && ticket.valid.getAsBoolean()) {
-                values.put(ticket.key, new Value<>(((Request) ticket.request).signature, done.value));
+                Value<V> previous = values.put(ticket.key, new Value<>(((Request) ticket.request).signature, done.value));
+                if (previous != null) dispose.accept(previous.data);
                 published++;
                 this.published++;
                 long latency = System.nanoTime() - ((Request) ticket.request).observedNanos;
                 publicationNanos += latency;
                 maxPublicationNanos = Math.max(maxPublicationNanos, latency);
-            }
+            } else if (done.value != null) dispose.accept(done.value);
         }
         return published;
     }
@@ -90,11 +98,16 @@ final class FarBuildCache<V> {
 
     void retain(Set<Long> keys) {
         wanted.keySet().retainAll(keys);
-        values.keySet().retainAll(keys);
+        values.entrySet().removeIf(entry -> {
+            if (keys.contains(entry.getKey())) return false;
+            dispose.accept(entry.getValue().data);
+            return true;
+        });
     }
 
     void reset() {
         wanted.clear();
+        values.values().forEach(value -> dispose.accept(value.data));
         values.clear();
         busy.clear();
         // Running old-session jobs still own slots until their completions are drained.

@@ -372,7 +372,7 @@ public class SkyRenderer {
         com.nvidia.rtxremix.minecraft.vulkan.FarField farField = com.nvidia.rtxremix.minecraft.vulkan.FarField.get();
         if (farField != null) {
             farField.tick(api, world, cameraPos, lightState,
-                    new float[]{atmosphericMeanR, atmosphericMeanG, atmosphericMeanB});
+                    atmosphericMean, renderer.getPerfTimer());
         }
     }
 

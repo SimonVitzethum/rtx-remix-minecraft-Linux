@@ -494,6 +494,8 @@ tasks.register('compileNativeWin64', Exec) {
                  file('rtxremix-java/native/remixbridge.cpp'),
                  file('rtxremix-java/native/voxel_dag.h'),
                  file('rtxremix-java/native/voxel_dag.cpp'),
+                 file('rtxremix-java/native/voxel_dag_jni.cpp'),
+                 fileTree('rtxremix-java/native/third_party/miniz'),
                  file('rtxremix-java/native/include/remix_c.h')
     outputs.files file('build/native/win64/remixbridge.dll'),
                   file('build/native/win64/remixbridge.pdb')
@@ -508,6 +510,8 @@ tasks.register('compileNativeArm64', Exec) {
                  file('rtxremix-java/native/remixbridge.cpp'),
                  file('rtxremix-java/native/voxel_dag.h'),
                  file('rtxremix-java/native/voxel_dag.cpp'),
+                 file('rtxremix-java/native/voxel_dag_jni.cpp'),
+                 fileTree('rtxremix-java/native/third_party/miniz'),
                  file('rtxremix-java/native/include/remix_c.h')
     outputs.files file('build/native/arm64/remixbridge.dll'),
                   file('build/native/arm64/remixbridge.pdb')
@@ -525,6 +529,8 @@ tasks.register('compileNativeLinux', Exec) {
                  file('rtxremix-java/native/remixbridge.cpp'),
                  file('rtxremix-java/native/voxel_dag.h'),
                  file('rtxremix-java/native/voxel_dag.cpp'),
+                 file('rtxremix-java/native/voxel_dag_jni.cpp'),
+                 fileTree('rtxremix-java/native/third_party/miniz'),
                  file('rtxremix-java/native/include/remix_c.h')
     outputs.files file('build/native/linux64/remixbridge.so')
 }
