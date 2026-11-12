@@ -746,6 +746,12 @@ namespace dxvk::vk {
 
 
   void Presenter::destroySwapchain() {
+    // NV-DXVK start: CPU presenter drain does not retire queued WSI presentation operations.
+    VkResult status = m_vkd->vkQueueWaitIdle(m_device.queue);
+    if (status != VK_SUCCESS) {
+      Logger::warn(str::format("Presenter: Failed to retire swap chain work: ", status));
+    }
+    // NV-DXVK end
     releaseFullscreenExclusive();
 
     for (const auto& img : m_images)
