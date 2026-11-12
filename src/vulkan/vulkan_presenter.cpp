@@ -25,6 +25,9 @@
 #include "../dxvk/dxvk_scoped_annotation.h"
 
 #include "../dxvk/dxvk_format.h"
+// NV-DXVK start: Complete frame-generation input ownership on the ordinary presenter path.
+#include "../dxvk/dxvk_queue.h"
+// NV-DXVK end
 #include "../util/util_monitor.h"
 #include "../util/util_sentry.h"
 #include "../util/util_string.h"
