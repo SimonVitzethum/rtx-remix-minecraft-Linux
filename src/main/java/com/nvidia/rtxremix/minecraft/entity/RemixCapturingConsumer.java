@@ -124,14 +124,14 @@ public class RemixCapturingConsumer implements VertexConsumer {
      * art whose rectangles would crowd out the slivers and everything else in the hand.
      */
     static final int MAX_CARD_FACE_RECTS = 192;
-    private static final int[] BUSY_CARD = new int[0];
+    private static final int[] BUSY_SPRITE = new int[0];
     /**
-     * The opaque-texel rectangles a full card face is rebuilt from, per sprite;
-     * {@link #BUSY_CARD} marks a sprite past the cap. Captures run on the render
+     * Opaque-texel rectangles shared by item cards and cutout cuboid faces, per sprite;
+     * {@link #BUSY_SPRITE} marks a sprite past the cap. Captures run on the render
      * thread only, so the map is unsynchronised, and a re-stitch that discards a
      * sprite's contents drops its entry with it.
      */
-    private static final Map<SpriteContents, int[]> CARD_FACE_RECTS = new WeakHashMap<>();
+    private static final Map<SpriteContents, int[]> SPRITE_OPAQUE_RECTS = new WeakHashMap<>();
     private static final long FNV_OFFSET = 0xcbf29ce484222325L;
     private static final long FNV_PRIME = 0x100000001b3L;
     // Schema constants keep the static digest, the per-slot fold, and the part
@@ -780,7 +780,7 @@ public class RemixCapturingConsumer implements VertexConsumer {
         boolean cardFace = ox == 0f && oy == 0f && oz == 0f && isFullCardFace(quad);
         int[] rects = cardFace
                 && EntityRenderContext.get().getBlockItemLayer() != BlockTextureManager.L_GLASS
-                ? cardFaceRects(sprite)
+                ? opaqueSpriteRects(sprite)
                 : null;
         if (rects != null) {
             emitCardFaceRects(quad, rects, sprite.contents(), quadColors,
@@ -825,16 +825,16 @@ public class RemixCapturingConsumer implements VertexConsumer {
      * The opaque-texel rectangles of {@code sprite}, or null when it has none to give: no
      * sprite, or one past {@link #MAX_CARD_FACE_RECTS}.
      */
-    private static int[] cardFaceRects(TextureAtlasSprite sprite) {
+    private static int[] opaqueSpriteRects(TextureAtlasSprite sprite) {
         if (sprite == null) return null;
         SpriteContents contents = sprite.contents();
-        int[] rects = CARD_FACE_RECTS.get(contents);
+        int[] rects = SPRITE_OPAQUE_RECTS.get(contents);
         if (rects == null) {
             rects = opaqueRects(opaqueTexels(contents), contents.width(), contents.height(),
                     MAX_CARD_FACE_RECTS);
-            CARD_FACE_RECTS.put(contents, rects == null ? BUSY_CARD : rects);
+            SPRITE_OPAQUE_RECTS.put(contents, rects == null ? BUSY_SPRITE : rects);
         }
-        return rects == BUSY_CARD ? null : rects;
+        return rects == BUSY_SPRITE ? null : rects;
     }
 
     /**
@@ -1261,17 +1261,22 @@ public class RemixCapturingConsumer implements VertexConsumer {
      * derived from them describe the sprite, not the whole atlas.
      */
     public void emitCuboidGeometry(ModelPart.Polygon[] sides, int color, int boneIndex, TextureAtlasSprite sprite) {
-        emitCuboidGeometry(sides, color, boneIndex, sprite, 0f);
+        emitCuboidGeometry(sides, color, boneIndex, sprite, 0f, false);
     }
 
     /**
      * {@link #emitCuboidGeometry(ModelPart.Polygon[], int, int, TextureAtlasSprite)} with every vertex
      * moved {@code shellExpand} block units along its face normal, so several paintings
      * of one cuboid can be stacked into a single mesh at increasing depths.
+     * Cutout faces omit texels transparent in every animation frame, using the same
+     * mask as item cards. A transparent hit must not relaunch a ray past a covering
+     * coplanar face, such as the base behind a closed shulker box's lid.
      */
     public void emitCuboidGeometry(ModelPart.Polygon[] sides, int color, int boneIndex, TextureAtlasSprite sprite,
-                                   float shellExpand) {
+                                   float shellExpand, boolean cutout) {
+        int[] rects = cutout ? opaqueSpriteRects(sprite) : null;
         for (ModelPart.Polygon quad : sides) {
+            if (rects != null && emitCutoutCuboidFace(quad, color, boneIndex, sprite, shellExpand, rects)) continue;
             float qnx = quad.normal().x();
             float qny = quad.normal().y();
             float qnz = quad.normal().z();
@@ -1288,6 +1293,64 @@ public class RemixCapturingConsumer implements VertexConsumer {
                         boneIndex);
             }
         }
+    }
+
+    /** Clips cached opaque sprite rectangles to a model face, preserving its winding and POM domain. */
+    private boolean emitCutoutCuboidFace(ModelPart.Polygon quad, int color, int boneIndex,
+                                         TextureAtlasSprite sprite, float shellExpand, int[] rects) {
+        ModelPart.Vertex[] vertices = quad.vertices();
+        if (vertices.length != 4 || vertexCount + rects.length > MAX_VERTICES) return false;
+        float minU = Float.POSITIVE_INFINITY, minV = Float.POSITIVE_INFINITY;
+        float maxU = Float.NEGATIVE_INFINITY, maxV = Float.NEGATIVE_INFINITY;
+        for (ModelPart.Vertex vertex : vertices) {
+            minU = Math.min(minU, vertex.u()); maxU = Math.max(maxU, vertex.u());
+            minV = Math.min(minV, vertex.v()); maxV = Math.max(maxV, vertex.v());
+        }
+        if (!Float.isFinite(minU) || !Float.isFinite(minV) || !Float.isFinite(maxU) || !Float.isFinite(maxV)
+                || minU < 0f || minV < 0f || maxU > 1f || maxV > 1f || minU >= maxU || minV >= maxV) return false;
+        int corners = 0;
+        for (ModelPart.Vertex vertex : vertices) {
+            if ((vertex.u() != minU && vertex.u() != maxU) || (vertex.v() != minV && vertex.v() != maxV)) return false;
+            corners |= 1 << ((vertex.u() == maxU ? 1 : 0) | (vertex.v() == maxV ? 2 : 0));
+        }
+        if (corners != 15) return false;
+        ModelPart.Vertex origin = vertices[0], along = vertices[1], across = vertices[3];
+        float du1 = along.u() - origin.u(), dv1 = along.v() - origin.v();
+        float du3 = across.u() - origin.u(), dv3 = across.v() - origin.v();
+        float determinant = du1 * dv3 - dv1 * du3;
+        if (determinant == 0f) return false;
+        int width = sprite.contents().width(), height = sprite.contents().height();
+        float coveredArea = 0f;
+        for (int r = 0; r < rects.length; r += 4) {
+            float w = Math.min(maxU, (float) rects[r + 2] / width) - Math.max(minU, (float) rects[r] / width);
+            float h = Math.min(maxV, (float) rects[r + 3] / height) - Math.max(minV, (float) rects[r + 1] / height);
+            if (w > 0f && h > 0f) coveredArea += w * h;
+        }
+        // Keep a fully covered face's original quad, including its exact positions.
+        if (coveredArea >= (maxU - minU) * (maxV - minV)) return false;
+        int boundsMin = HardcodedVertex.packUnorm2x16(sprite.getU(minU), sprite.getV(minV));
+        int boundsMax = HardcodedVertex.packUnorm2x16(sprite.getU(maxU), sprite.getV(maxV));
+        float qnx = quad.normal().x(), qny = quad.normal().y(), qnz = quad.normal().z();
+        for (int r = 0; r < rects.length; r += 4) {
+            float u0 = Math.max(minU, (float) rects[r] / width);
+            float v0 = Math.max(minV, (float) rects[r + 1] / height);
+            float u1 = Math.min(maxU, (float) rects[r + 2] / width);
+            float v1 = Math.min(maxV, (float) rects[r + 3] / height);
+            if (u0 >= u1 || v0 >= v1) continue;
+            for (ModelPart.Vertex vertex : vertices) {
+                float u = vertex.u() == minU ? u0 : u1;
+                float v = vertex.v() == minV ? v0 : v1;
+                float du = u - origin.u(), dv = v - origin.v();
+                float s = (du * dv3 - dv * du3) / determinant;
+                float t = (dv * du1 - du * dv1) / determinant;
+                acceptModelSpaceVertex(
+                        (origin.x() + s * (along.x() - origin.x()) + t * (across.x() - origin.x())) / 16f + qnx * shellExpand,
+                        (origin.y() + s * (along.y() - origin.y()) + t * (across.y() - origin.y())) / 16f + qny * shellExpand,
+                        (origin.z() + s * (along.z() - origin.z()) + t * (across.z() - origin.z())) / 16f + qnz * shellExpand,
+                        color, sprite.getU(u), sprite.getV(v), qnx, qny, qnz, boundsMin, boundsMax, boneIndex);
+            }
+        }
+        return true;
     }
     /** True while this consumer is bound to the active Remix entity capture. */
     public boolean isRemixCaptureActive() {

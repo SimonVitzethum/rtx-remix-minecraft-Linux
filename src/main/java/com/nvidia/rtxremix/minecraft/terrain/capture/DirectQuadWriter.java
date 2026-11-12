@@ -652,9 +652,9 @@ public final class DirectQuadWriter {
         };
     }
 
-    /** Layers whose material blends rather than tests alpha: vanilla's translucent layer and clear glass. */
+    /** Layers whose material blends rather than tests alpha: refractive volumes and alpha-blended sheets. */
     static boolean isBlendedLayer(String layer) {
-        return "translucent".equals(layer) || "glass".equals(layer);
+        return "translucent".equals(layer) || "glass".equals(layer) || "blended".equals(layer);
     }
 
 }

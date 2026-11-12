@@ -205,6 +205,21 @@ class DirectQuadWriterTest {
         assertTrue(BlockTextureManager.layerType("glass") < BlockTextureManager.LAYER_COUNT);
     }
 
+    @Test
+    void portalSheetsKeepBothFacesInTheirOwnAlphaBlendedBucket() {
+        Identifier portal = Identifier.withDefaultNamespace("block/nether_portal");
+        String layer = "blended";
+        DirectQuadWriter writer = new DirectQuadWriter();
+        writer.beginSection();
+        stageQuad(writer, FRONT_POSITIONS, FRONT_UVS, 1.0f, portal, 0xFFFFFFFF, layer);
+        stageQuad(writer, BACK_POSITIONS, DISTINCT_BACK_UVS, -1.0f, portal, 0xFFFFFFFF, layer);
+        writer.flushBlock(null);
+        var sheet = surface(writer.buildMeshData(), layer);
+        assertEquals(ChunkManager.CAT_TRANSLUCENT, sheet.category());
+        assertEquals(8, sheet.vertexCount());
+        assertNotEquals(BlockTextureManager.layerType("translucent"), BlockTextureManager.layerType(layer));
+    }
+
     private static SectionMeshData.Surface surface(SectionMeshData meshData, String bucketKey) {
         return meshData.surfaces().stream()
                 .filter(s -> bucketKey.equals(s.bucketKey()))

@@ -5,9 +5,11 @@
 package com.nvidia.rtxremix.minecraft.entity;
 
 import org.junit.jupiter.api.Test;
+import javax.imageio.ImageIO;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -16,6 +18,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * how far rounding it may pull each layer from vanilla's scale and rotation.
  */
 class EndPortalSurfaceTest {
+
+    @Test
+    void sourceTexturesExistInTheCurrentMinecraftResources() throws Exception {
+        for (var id : new net.minecraft.resources.Identifier[] {
+                EndPortalSurface.SKY_TEXTURE, EndPortalSurface.PORTAL_TEXTURE_SOURCE}) {
+            String path = "/assets/" + id.getNamespace() + "/" + id.getPath();
+            try (var stream = EndPortalSurfaceTest.class.getResourceAsStream(path)) {
+                assertNotNull(stream, "Missing portal source " + id);
+                var image = ImageIO.read(stream);
+                assertNotNull(image, "Invalid portal source " + id);
+                assertTrue(image.getWidth() > 0 && image.getHeight() > 0);
+            }
+        }
+    }
 
     @Test
     void layerLatticesMatchHandComputedSteps() {

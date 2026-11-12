@@ -95,6 +95,24 @@ artifact to capture. Sprites exceeding
 `RemixCapturingConsumer.MAX_CARD_FACE_RECTS` retain full faces and their alpha
 relaunch behavior.
 
+Sprite-wrapped cutout cuboids use the same bounded opaque-texel masks. This keeps a
+closed shulker lid's transparent texels from relaunching a ray past the coplanar
+base that fills them. The mask unites all animation frames, and each emitted piece
+keeps its original face's UV bounds so POM does not wrap within the smaller pieces.
+Opaque and pattern-canvas cuboids retain their original polygons.
+
+## Alpha-Blended Terrain Sheets
+
+Nether portal blocks use the `blended` terrain material slot. Their animated RGBA
+is surface coverage, so the material controls alpha blending directly and accepts
+all alpha values. Refraction requires a closed dielectric medium; treating these
+opposed sheets as glass can leave rectangular sky-coloured regions from shallow
+viewpoints. The block state selects this slot even when a pack changes its sprite
+identifier. Normals, height and authored emission retain the ordinary atlas paths.
+Compare both sides and a shallow view against raster before judging coverage from
+an elevated overview. End portal and gateway surfaces use their separate baked
+starfield material.
+
 ## Material Updates And Surface Capacity
 
 `RemixMaterialStore.update` uses the runtime's `UpdateMaterial` to mutate a

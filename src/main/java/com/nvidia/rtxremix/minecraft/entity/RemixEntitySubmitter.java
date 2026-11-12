@@ -1384,7 +1384,7 @@ public class RemixEntitySubmitter {
         for (int layer = 0; layer < patternCount; layer++) {
             int part = firstPart + layer;
             scratch.emitCuboidGeometry(sides, source.getPartTint(part), 0, source.getPartSprite(part),
-                    (shellLayer + layer + 1) * SHELL_OFFSET);
+                    (shellLayer + layer + 1) * SHELL_OFFSET, false);
         }
     }
 
@@ -1468,10 +1468,12 @@ public class RemixEntitySubmitter {
         // The mesh is tint-free: tint is applied per instance, so every recolour
         // of this cuboid shares the one white-baked mesh. The sprite's UV remap is
         // baked here instead, which is why the sprite is part of the key.
-        rebuildScratch.emitCuboidGeometry(sides, 0xFFFFFFFF, 0, sprite);
+        rebuildScratch.emitCuboidGeometry(sides, 0xFFFFFFFF, 0, sprite, 0f,
+                surfaceMode == RenderLayerUtils.SurfaceMode.CUTOUT);
         rebuildScratch.finishOpenVertex();
         // A cuboid is quads by construction, whatever topology its layer draws.
-        return createRigidMesh(meshKey, rebuildScratch, 0, vertexCount,
+        if (rebuildScratch.getVertexCount() == 0) return null;
+        return createRigidMesh(meshKey, rebuildScratch, 0, rebuildScratch.getVertexCount(),
                 texId, surfaceMode, RenderLayerUtils.Topology.QUADS, shellLayer);
     }
 
