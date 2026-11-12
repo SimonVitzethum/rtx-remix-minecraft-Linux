@@ -74,6 +74,14 @@ Capture uses vanilla's `EntityRenderDispatcher` only on the render thread.
 The dispatcher owns one renderer and mutable model per entity type, so a
 parallel gather would race on model part angles.
 
+Fabric can submit block and item geometry as meshes even when the corresponding
+vanilla quad lists are empty. `RemixSubmitCollector` consumes both payloads once,
+synchronously, through the same capture provider. Its mesh path keeps local vertex
+positions and normals under the submitted pose, multiplies vertex colours by the
+selected tint, and records the atlas sprite bounds. Vanilla lightmap coordinates
+remain excluded from albedo because Remix supplies the lighting. The ordinary
+material, overlay and instance-sidedness policies still apply.
+
 Minecraft's model parts are rigid: their pivot belongs in the instance
 transform, not a skinning stream. Skinning would add CPU mesh work in the
 runtime without deforming any vertices. GPU-instanced `RemixAPI.drawInstanced`

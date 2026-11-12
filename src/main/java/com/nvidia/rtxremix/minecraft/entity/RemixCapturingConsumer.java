@@ -27,6 +27,8 @@ import net.minecraft.client.renderer.texture.SpriteContents;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadView;
+import net.minecraft.util.ARGB;
 
 /**
  * A {@link VertexConsumer} that captures vertex data for RTX Remix.
@@ -742,6 +744,23 @@ public class RemixCapturingConsumer implements VertexConsumer {
         // rather than per vertex below.
         int quadBoneIndex = detectBoneChange(pose.pose());
         captureBakedQuad(quad, instance, quadBoneIndex, 0f, 0f, 0f);
+    }
+
+    /** Captures Fabric's per-vertex attributes without baking its pose or allocating baked quads. */
+    void putQuad(PoseStack.Pose pose, QuadView quad, TextureAtlasSprite sprite, int tint, int overlay) {
+        int bone = detectBoneChange(pose.pose());
+        int boundsMin = HardcodedVertex.packUnorm2x16(sprite.getU0(), sprite.getV0());
+        int boundsMax = HardcodedVertex.packUnorm2x16(sprite.getU1(), sprite.getV1());
+        Vector3fc face = quad.faceNormal();
+        for (int vertex = 0; vertex < 4; vertex++) {
+            boolean normal = quad.hasNormal(vertex);
+            acceptModelSpaceVertex(quad.x(vertex), quad.y(vertex), quad.z(vertex),
+                    applyEntityOverlay(ARGB.multiply(quad.color(vertex), tint), overlay),
+                    quad.u(vertex), quad.v(vertex),
+                    normal ? quad.normalX(vertex) : face.x(),
+                    normal ? quad.normalY(vertex) : face.y(),
+                    normal ? quad.normalZ(vertex) : face.z(), boundsMin, boundsMax, bone);
+        }
     }
 
     /**
