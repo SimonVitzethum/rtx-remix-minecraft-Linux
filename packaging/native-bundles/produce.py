@@ -110,11 +110,39 @@ def symbols(path, platform, readobj):
     return {"exports": exports, "imports": imports, "versions": {}}
 
 
+def jni_signatures(headers):
+    signatures = {}
+    for generated in headers.glob("*.h"):
+        for signature, export in re.findall(r"Signature:\s*(\S+)\s*\*/\s*JNIEXPORT\s+\w+\s+JNICALL\s+(\w+)", generated.read_text()):
+            signatures[export] = signature
+    require("Java_com_nvidia_rtxremix_VoxelDag_overlaySurface" in signatures
+            and "Java_com_nvidia_rtxremix_RemixBridge_bridgeContract" in signatures,
+            "Current generated JNI headers must include overlaySurface and the load-time bridge contract")
+    return dict(sorted(signatures.items()))
+
+
+def audit(args):
+    expected = jni_signatures(args.jni_headers)
+    bridge = symbols(args.bridge, args.platform, args.llvm_readobj)
+    runtime = symbols(args.runtime, args.platform, args.llvm_readobj)
+    require(set(bridge["exports"]) >= set(expected), f"Missing JNI exports: {set(expected) - set(bridge['exports'])}")
+    require("remixapi_InitializeLibrary" in runtime["exports"], "Own runtime lacks C API initialization")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps({
+        "platform": args.platform, "runtimeSha256": sha(args.runtime), "bridgeSha256": sha(args.bridge),
+        "runtime": runtime, "bridge": bridge, "jniSignatures": expected,
+        "apiCompatibilityTest": "not-run", "gpuTest": "not-run",
+    }, indent=2, sort_keys=True) + "\n")
+    print(f"Producer machine/export audit passed: {args.platform}; {len(expected)} JNI descriptors")
+
+
 def properties(values):
     return "".join(f"{k}={str(v).replace(chr(92), chr(92)*2)}\n" for k, v in sorted(values.items())).encode("ascii")
 
 
 def produce(args):
+    require(args.minimum_glibc if args.platform.startswith("linux") else args.minimum_windows,
+            "Declare the measured Linux ABI or reviewed Windows OS policy explicitly")
     root = args.mod_source.resolve()
     runtime = args.runtime_source.resolve()
     payload = args.payload.resolve()
@@ -176,15 +204,8 @@ def produce(args):
                 all_exports.update(data["exports"])
             if name == runtime_name:
                 require("remixapi_InitializeLibrary" in data["exports"], "Runtime lacks the Remix C API export")
-    expected = set()
-    signatures = {}
-    for generated in args.jni_headers.glob("*.h"):
-        text = generated.read_text()
-        for signature, export in re.findall(r"Signature:\s*(\S+)\s*\*/\s*JNIEXPORT\s+\w+\s+JNICALL\s+(\w+)", text):
-            expected.add(export)
-            signatures[export] = signature
-    require(expected and "Java_com_nvidia_rtxremix_VoxelDag_overlaySurface" in expected, "Missing current generated JNI headers")
-    require(all_exports >= expected, f"Missing JNI exports: {sorted(expected - all_exports)}")
+    signatures = jni_signatures(args.jni_headers)
+    require(all_exports >= set(signatures), f"Missing JNI exports: {sorted(set(signatures) - all_exports)}")
     audit["jniSignatures"] = dict(sorted(signatures.items()))
     for name, data in audit["binaries"].items():
         for dependency in data["imports"]:
@@ -260,13 +281,19 @@ def freeze(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    inspect = sub.add_parser("audit", help="Inspect actual binary machines/imports/exports without asserting API/GPU execution")
+    inspect.add_argument("--platform", choices=PLATFORMS, required=True)
+    for name in ("runtime", "bridge", "jni-headers", "output"):
+        inspect.add_argument("--" + name, type=Path, required=True)
+    inspect.add_argument("--llvm-readobj", default="llvm-readobj")
+    inspect.set_defaults(run=audit)
     seal = sub.add_parser("produce")
     seal.add_argument("--platform", choices=PLATFORMS, required=True)
     for name in ("mod-source", "runtime-source", "payload", "built-runtime", "built-bridge", "provenance", "jni-headers", "license-inventory", "output"):
         seal.add_argument("--" + name, type=Path, required=True)
     seal.add_argument("--llvm-readobj", default="llvm-readobj")
-    seal.add_argument("--minimum-glibc", default="2.44")
-    seal.add_argument("--minimum-windows", default="Windows-11")
+    seal.add_argument("--minimum-glibc")
+    seal.add_argument("--minimum-windows")
     seal.add_argument("--minimum-vulkan", required=True)
     seal.add_argument("--minimum-driver", required=True)
     seal.add_argument("--url", default="", help="Actual immutable HTTPS asset, or omitted for bundled-only delivery")

@@ -76,7 +76,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH += ";$env:ProgramFiles\LLVM\bin"
-          python mod/packaging/native-bundles/check-producer.py --platform ${{ matrix.platform }} --runtime runtime/_ProducerRelease_${{ matrix.platform }}/src/d3d9/d3d9.dll --bridge mod/build/native/${{ matrix.platform }}/remixbridge.dll --jni-headers mod/build/generated/jni --output mod/build/producer-check-${{ matrix.platform }}.json
+          python mod/packaging/native-bundles/produce.py audit --platform ${{ matrix.platform }} --runtime runtime/_ProducerRelease_${{ matrix.platform }}/src/d3d9/d3d9.dll --bridge mod/build/native/${{ matrix.platform }}/remixbridge.dll --jni-headers mod/build/generated/jni --output mod/build/producer-check-${{ matrix.platform }}.json
           if ($LASTEXITCODE -ne 0) { throw 'Native machine/export audit failed' }
           javac -cp mod/build/classes/java/main -d mod/build/producer-probe mod/packaging/native-bundles/NativeBridgeProbe.java
           java --enable-native-access=ALL-UNNAMED -cp "mod/build/producer-probe;mod/build/classes/java/main" NativeBridgeProbe mod/build/native/${{ matrix.platform }}/remixbridge.dll | Tee-Object mod/build/jni-probe-${{ matrix.platform }}.txt
