@@ -183,5 +183,7 @@ The JNI bridge compiles the streaming zlib codec from miniz 2.2.0, by RAD Game
 Tools, Valve Software, Rich Geldreich and Tenacious Software LLC. The vendored
 source and MIT license are under
 [rtxremix-java/native/third_party/miniz/](rtxremix-java/native/third_party/miniz/).
+The redistributed license is also included at
+[packaging/licenses/remixbridge/LICENSE.miniz.txt](packaging/licenses/remixbridge/LICENSE.miniz.txt).
 It decodes and rewrites the existing received-surface disk format with bounded
 scratch memory. ZIP/archive APIs are excluded from the build.
