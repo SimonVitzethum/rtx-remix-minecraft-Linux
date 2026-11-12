@@ -10,6 +10,19 @@ in real Linux sessions on an NVIDIA GeForce RTX 5070 Laptop GPU. This is an
 actively developed port; hardware compatibility and every block/entity state
 have not been fully validated.
 
+## Full Native Vulkan Render Path
+
+**The Minecraft 26.3 Vulkan backend is ported end to end on Linux:** Minecraft
+render targets and HUD, RTX Remix path tracing and presentation, sky generation,
+rain/snow composition and FarField rendering use Vulkan. The Vulkan backend
+does not create a hidden OpenGL rendering context for sky or weather. An
+alternative OpenGL backend remains available as a separate choice.
+
+DLSS upscaling, Ray Reconstruction and Frame Generation work in this Vulkan
+path on the tested hardware. See [Vulkan Interop](docs/VULKAN_INTEROP.md) for
+the image and semaphore exchange. GPU DAG construction and GPU-built meshes
+are tracked separately as ongoing development; their status is described below.
+
 ## Linux Source Branches
 
 | Branch | Contents |
@@ -32,6 +45,11 @@ Preliminary measurements from **November 12, 2026**: **RTX 5070 Laptop GPU,
 **1920×1080 output / 960×540 internal**, DLSS Ray Reconstruction, up to two
 generated frames per rendered frame, Simplista 64x R36, simulation distance 8.
 The workload requested **32 RTX chunks plus DAG terrain out to 512 chunks**.
+
+**Upscaling was enabled in these benchmarks.** The FPS figures below apply to
+960×540 internal rendering upscaled to 1920×1080 with DLSS Ray Reconstruction;
+Frame Generation was enabled as well. Native-resolution performance without
+upscaling has not been measured by this dataset.
 
 | Phase, CPU-built DAG reference `ad84df0` | Rendered FPS | Native presents/s including FG | Render-span p99 | Longest render span |
 |---|---:|---:|---:|---:|

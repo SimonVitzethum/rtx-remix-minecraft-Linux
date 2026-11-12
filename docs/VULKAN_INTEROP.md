@@ -1,11 +1,29 @@
-# Vulkan interop on Minecraft 26.3 (verified against the decompiled sources)
+# Native Vulkan Rendering and Interop on Minecraft 26.3
 
-Sources: `com.mojang.renderpearl.backend.vulkan.*`, `com.mojang.renderpearl.frontend.*`, `net.minecraft.client.Minecraft`.
+The Linux port has an end-to-end Vulkan render path when Minecraft's Vulkan
+backend is active: Minecraft targets and HUD, Remix path tracing and final
+presentation, sky generation, weather composition and FarField rendering.
+No hidden OpenGL rendering context is created for sky or weather. OpenGL
+remains an alternative backend, selected independently.
+
+DLSS upscaling with Ray Reconstruction and Frame Generation were active in
+the documented Linux benchmarks: 960×540 internal rendering and 1920×1080
+output. See [Linux Performance](LINUX_PERFORMANCE.md) for measured settings,
+hardware and coverage limits. GPU DAG construction and GPU-generated meshes
+are separate work in progress, not implied by Vulkan rendering support.
+
+Source references: `vulkan/VulkanInterop.java`, `VulkanSkySource.java`,
+`VulkanWeatherPass.java`, `sky/SkyGenerator.java`, `RemixRenderer.java`,
+`InteropTracker.java`, and Minecraft's `com.mojang.renderpearl.backend.vulkan.*`,
+`com.mojang.renderpearl.frontend.*` and `net.minecraft.client.Minecraft`.
 
 ## Backend choice
 - `Options.preferredGraphicsBackend` (`options.txt`: `preferredGraphicsBackend:vulkan`) or launch argument `--graphicsBackend vulkan`
   (`PreferredGraphicsApi.DEFAULT|OPENGL|VULKAN`). `VULKAN` tries `VulkanBackend` first, then `GlBackend`.
 - Detect at runtime: `RenderSystem.getDevice().getDeviceInfo().backendName()` equals `"Vulkan"`.
+- Verify the actual backend in the log. Minecraft may choose OpenGL when
+  Vulkan initialization is unsupported; requesting Vulkan alone does not prove
+  that a session used it.
 
 ## Reaching the Vulkan objects
 - `RenderSystem.getDevice()` is a `FrontendGpuDevice`; its private field `backend` (`GpuDeviceBackend`) is the `VulkanDevice`
@@ -40,18 +58,27 @@ The FD of an image/semaphore is reported once and the number repeated afterwards
 
 ## Flow implemented (`vulkan/VulkanInterop`)
 1. Init: import both semaphores (`vkImportSemaphoreFdKHR`, timeline).
-2. After world: `compositeWorld`: in the frame submission wait dxvkDone, copy/blit Remix image over the main RT (before HUD).
+2. After world: `compositeWorld` waits for dxvkDone, acquires exported color
+   and optional depth from `VK_QUEUE_FAMILY_EXTERNAL`, then copies/blits the
+   Remix color over the Minecraft target before the HUD. `VulkanWeatherPass`
+   composes rain/snow using the imported primary depth in that ownership interval.
 3. At `VulkanGpuSurface.present` HEAD (`VulkanGpuSurfaceMixin` -> `RemixRenderer.presentFrameVk`): own submission waits dxvkDone, copies the main RT into the
    Remix image, signals clientDone; then `remix.Present` with `interopFlipY = 1`.
-Imported images get a one-time UNDEFINED to GENERAL transition (relies on driver keeping contents; no queue-family-external ownership transfer).
+The presentation copy releases both exported images to
+`VK_QUEUE_FAMILY_EXTERNAL` before signaling clientDone. Remix waits and
+reacquires them. `InteropTracker` ensures one acquire per exported submission
+value; menu frames also acquire and release when they skip world composition.
+Color and depth stay in `GENERAL` at the device boundary. CPU submission
+completion does not replace the GPU semaphore and ownership operations.
 
-## Corrections found by running it (S14)
+## Orientation and Vulkan Resources
 - Minecraft's Vulkan main render target is stored bottom-up like GL's (its swapchain blit flips it). Both copies therefore flip like the GL path:
   composite = flipping blit (Remix image -> main RT), present copy = plain copy, `interopFlipY = 1`.
 - LWJGL's typed `pNext(struct)` PREPENDS and overwrites the struct's own pNext. Chaining dedicated -> import by hand and then calling `allocate.pNext(dedicated)`
   silently dropped the FD import: a fresh unshared allocation that works in isolation (symptom: nothing written by either side is ever seen by the other).
-- The procedural sky is OpenGL compute code; under Vulkan `SideGlContext` creates a hidden SDL GL 4.4 window/context, kept current on the render thread.
-  Minecraft's `Window.handleEvent` does not check window ids, so `WindowMixin` drops the side window's events (else it resized the main window to 64x64).
+- `SkyGenerator.create()` selects `VulkanSkySource` when Vulkan is active.
+  Its compute pipeline generates the atmospheric sky on the Vulkan device.
+- `VulkanWeatherPass` implements rain/snow composition with Vulkan resources
+  and imported depth. These features do not use a side OpenGL window/context.
 - Shared images get queue family ownership transfers to/from `VK_QUEUE_FAMILY_EXTERNAL`.
 - Debug aids: file `rtxremix-vk-debug` in the game dir (or `-Drtxremix.vk.debug`): `readback` (PNG of main RT / Remix image to /tmp), `clear`, `sync`.
-- Not ported (GL only): rain/snow overlay (`RemixWeatherRenderer`, GL shaders on MC GL textures) is skipped under Vulkan; the exported depth image is imported but unused.
