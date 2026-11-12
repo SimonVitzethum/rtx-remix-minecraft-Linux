@@ -312,7 +312,7 @@ public final class VulkanInterop implements AutoCloseable {
             // Remix's image has Vulkan row order (row 0 on top), Minecraft's Vulkan render target keeps GL's bottom-up rows.
             recordCopy(cb, stack, color.image, color.width, color.height, targetImage, target.width, target.height, true);
             if (weatherPass != null && depth != null) {
-                weatherPass.record(cb, stack, target, this, color.image, depth.image);
+                weatherPass.record(cb, stack, target, this);
             }
         }
         check(VK12.vkEndCommandBuffer(cb), "vkEndCommandBuffer(composite)");

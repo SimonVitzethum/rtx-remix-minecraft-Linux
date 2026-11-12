@@ -172,8 +172,7 @@ public final class VulkanWeatherPass implements AutoCloseable {
     // ---- recording -----------------------------------------------------------------------------------
 
     /** Records this frame's weather into {@code cb} (outside a render pass), after the Remix image was copied into the target. */
-    void record(VkCommandBuffer cb, MemoryStack stack, RenderTarget target, VulkanInterop interop, long colorImage,
-            long depthImage) {
+    void record(VkCommandBuffer cb, MemoryStack stack, RenderTarget target, VulkanInterop interop) {
         lastDrawCount = 0;
         lastQuadCount = 0;
         if (!pending || !cameraValid || vertexBytes == 0) {
