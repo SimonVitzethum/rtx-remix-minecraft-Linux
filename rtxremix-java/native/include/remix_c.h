@@ -503,7 +503,9 @@ extern "C" {
   // Lane 3.w must be zero. Lanes 4/5 contain the four raw float2 UV corners.
   // Positions are p0=origin, p1=origin+edge01, p2=(origin+edge01)+edge03,
   // p3=origin+edge03, with IEEE754 binary32 operations without reassociation.
-  // Four 64-byte HardcodedVertices and indices 0,1,2,0,2,3 are GPU-generated.
+  // Position inputs and reconstructed positions must be finite normal binary32 or positive zero.
+  // Normals and UV words retain arbitrary raw bits.
+  // Four 64-byte HardcodedVertices and indices 0,2,1,0,3,2 are GPU-generated.
   // Descriptors are copied before CreateMesh returns; no client GPU handles are accepted.
   typedef struct remixapi_CompactQuad {
     uint32_t words[24];
