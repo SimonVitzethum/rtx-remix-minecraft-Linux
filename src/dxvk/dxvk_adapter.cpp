@@ -436,7 +436,6 @@ namespace dxvk {
       devExtensions.nvClusterAccelerationStructure.setMode(DxvkExtMode::Optional);
       enabledFeatures.nvClusterAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
       enabledFeatures.nvClusterAccelerationStructureFeatures.clusterAccelerationStructure = VK_TRUE;
-      enabledFeatures.nvClusterAccelerationStructureFeatures.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.nvClusterAccelerationStructureFeatures);
     }
     if (clusterAccelerationStructureRequested()) {
       Logger::info(str::format("Cluster AS requested: device feature ",
@@ -570,6 +569,12 @@ namespace dxvk {
 
     enabledFeatures.vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     enabledFeatures.vulkan12Features.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.vulkan12Features);
+
+    // Extension selection above precedes the RTXIO feature-chain reset. Link
+    // CLAS here with the other enabled features so vkCreateDevice receives it.
+    if (devExtensions.nvClusterAccelerationStructure) {
+      enabledFeatures.nvClusterAccelerationStructureFeatures.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.nvClusterAccelerationStructureFeatures);
+    }
 
 #if defined(_WIN64) || defined(REMIX_LINUX_NATIVE)
     if (devExtensions.khrAccelerationStructure) {
