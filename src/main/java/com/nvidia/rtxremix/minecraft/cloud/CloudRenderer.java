@@ -692,7 +692,7 @@ public final class CloudRenderer {
                             entry.meshes[0].getHandle(),
                             matrix,
                             INSTANCE_CATEGORIES,
-                            0,
+                            1,
                             0L);
                     lastDrawCount++;
                     lastInstanceCount++;
@@ -719,7 +719,7 @@ public final class CloudRenderer {
                     entry.meshes[level].getHandle(),
                     cloud.transform.matrix,
                     INSTANCE_CATEGORIES,
-                    0,
+                    1,
                     0L);
             lastDrawCount++;
             lastInstanceCount++;

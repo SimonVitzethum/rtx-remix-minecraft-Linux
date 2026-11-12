@@ -10,9 +10,12 @@ import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import net.minecraft.resources.Identifier;
 import net.minecraft.client.renderer.blockentity.AbstractEndPortalRenderer;
 import net.minecraft.server.packs.resources.Resource;
@@ -27,7 +30,7 @@ import net.minecraft.server.packs.resources.ResourceManager;
  * {@code textures/environment/end_sky.png}, projected in screen space: the pattern
  * stays put on screen while the camera moves. A path-traced hit has no screen
  * position to project from, and reflections and refractions see the surface from
- * elsewhere, so Remix gets the same sum baked once into a texture laid over the
+ * elsewhere, so Remix gets the sum baked into a texture laid over the
  * world instead: {@link #TILE_BLOCKS} blocks per repeat, the tile spanning
  * {@link #SCREENS_PER_TILE} of vanilla's screen widths. Fixed to the world, the
  * pattern matches vanilla's scale at one distance only and does not stay put on
@@ -39,7 +42,7 @@ import net.minecraft.server.packs.resources.ResourceManager;
  * over the tile. That moves a layer by up to a third of its scale (layer 15) and up
  * to 14 degrees (layer 14), which on a random speckle texture is indistinguishable
  * from the original. Vanilla also scrolls the layers slowly with the time of day;
- * the bake keeps the pattern at time zero.
+ * the bake samples the current game time at a bounded rate.
  *
  * <p>The pixels come from the textures the resource packs supply, so a pack that
  * replaces either texture changes the surface, and baking reads them off the render
@@ -138,12 +141,22 @@ final class EndPortalSurface {
     /** A texture's pixels as packed {@code 0xRRGGBB}, row-major from the image's top row. */
     record Image(int[] rgb, int width, int height) {}
 
-    /**
-     * Bakes in flight or done but not yet handed over, by surface id. Render thread
-     * only; the futures complete on worker threads. A reload drops them all, so a bake
-     * that finishes for the previous packs is never read.
-     */
-    private final Map<Identifier, CompletableFuture<byte[]>> bakes = new HashMap<>();
+    // One worker and at most two pending surfaces keep reloads and slow bakes bounded.
+    private static final ThreadPoolExecutor BAKER = new ThreadPoolExecutor(1, 1, 0,
+            TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(2),
+            Thread.ofPlatform().daemon(true).name("remix-portal-bake").factory());
+    static final int UPDATE_TICKS = 10;
+
+    private static final class Bake {
+        Future<Frame> pending;
+        Image sky;
+        Image portal;
+        long tick = Long.MIN_VALUE;
+    }
+
+    private record Frame(byte[] rgba, Image sky, Image portal, long tick) {}
+
+    private final Map<Identifier, Bake> bakes = new HashMap<>();
 
     static boolean isSurfaceTexture(Identifier textureId) {
         return PORTAL_TEXTURE_ID.equals(textureId) || GATEWAY_TEXTURE_ID.equals(textureId);
@@ -151,23 +164,35 @@ final class EndPortalSurface {
 
     /**
      * The baked RGBA tile for a surface id, {@link #TILE_SIZE} square, or null while it
-     * is still baking. The first call starts the bake. The tile is handed over once and
-     * forgotten, since the caller uploads it; asking again bakes it again.
+     * is still baking or the quantized game time has not changed. Pixels are handed
+     * over once. Source images stay cached until a resource reload.
      *
      * @throws IllegalStateException when the bake failed; the caller should not ask again
      */
-    byte[] poll(Identifier surfaceId, ResourceManager resources) {
-        CompletableFuture<byte[]> bake = bakes.computeIfAbsent(surfaceId, id -> {
-            int layers = GATEWAY_TEXTURE_ID.equals(id) ? GATEWAY_LAYERS : PORTAL_LAYERS;
-            return CompletableFuture.supplyAsync(() -> desaturate(bake(
-                    read(resources, SKY_TEXTURE), read(resources, PORTAL_TEXTURE_SOURCE),
-                    layers, TILE_SIZE), DESATURATION));
-        });
-        if (!bake.isDone()) return null;
-        bakes.remove(surfaceId);
+    byte[] poll(Identifier surfaceId, ResourceManager resources, long gameTicks) {
+        Bake state = bakes.computeIfAbsent(surfaceId, id -> new Bake());
+        if (state.pending == null) {
+            long tick = Math.floorDiv(gameTicks, UPDATE_TICKS) * UPDATE_TICKS;
+            if (tick == state.tick) return null;
+            Image sky = state.sky;
+            Image portal = state.portal;
+            int layers = GATEWAY_TEXTURE_ID.equals(surfaceId) ? GATEWAY_LAYERS : PORTAL_LAYERS;
+            state.pending = BAKER.submit(() -> {
+                Image skyImage = sky != null ? sky : read(resources, SKY_TEXTURE);
+                Image portalImage = portal != null ? portal : read(resources, PORTAL_TEXTURE_SOURCE);
+                return new Frame(desaturate(bake(skyImage, portalImage, layers, TILE_SIZE,
+                        Math.floorMod(tick, 24000L) / 24000.0), DESATURATION), skyImage, portalImage, tick);
+            });
+        }
+        if (!state.pending.isDone()) return null;
         try {
-            return bake.get();
-        } catch (ExecutionException | CompletionException e) {
+            Frame frame = state.pending.get();
+            state.pending = null;
+            state.sky = frame.sky();
+            state.portal = frame.portal();
+            state.tick = frame.tick();
+            return frame.rgba();
+        } catch (ExecutionException e) {
             throw new IllegalStateException("Could not bake " + surfaceId, e.getCause());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -177,7 +202,11 @@ final class EndPortalSurface {
 
     /** Forgets every bake, for a resource reload. */
     void clear() {
+        for (Bake bake : bakes.values()) {
+            if (bake.pending != null) bake.pending.cancel(true);
+        }
         bakes.clear();
+        BAKER.purge();
     }
 
     private static Image read(ResourceManager resources, Identifier id) {
@@ -225,11 +254,16 @@ final class EndPortalSurface {
      * nearest, repeating texture lookups, and returns opaque RGBA bytes.
      */
     static byte[] bake(Image sky, Image portal, int layers, int size) {
+        return bake(sky, portal, layers, size, 0.0);
+    }
+
+    static byte[] bake(Image sky, Image portal, int layers, int size, double gameTime) {
         byte[] rgba = new byte[size * size * 4];
         for (int py = 0; py < size; py++) {
+            if (Thread.currentThread().isInterrupted()) throw new CancellationException();
             double y = (py + 0.5) / size;
             for (int px = 0; px < size; px++) {
-                int rgb = shade(sky, portal, layers, (px + 0.5) / size, y);
+                int rgb = shade(sky, portal, layers, (px + 0.5) / size, y, gameTime);
                 int o = (py * size + px) * 4;
                 rgba[o] = (byte) (rgb >> 16);
                 rgba[o + 1] = (byte) (rgb >> 8);
@@ -245,6 +279,10 @@ final class EndPortalSurface {
      * tile spans [0, 1) and repeats outside it.
      */
     static int shade(Image sky, Image portal, int layers, double x, double y) {
+        return shade(sky, portal, layers, x, y, 0.0);
+    }
+
+    static int shade(Image sky, Image portal, int layers, double x, double y, double gameTime) {
         int skyTexel = sample(sky, x * SCREENS_PER_TILE, y * SCREENS_PER_TILE);
         float r = channel(skyTexel, 16) * COLORS[0];
         float g = channel(skyTexel, 8) * COLORS[1];
@@ -252,10 +290,9 @@ final class EndPortalSurface {
         for (int i = 0; i < layers; i++) {
             int a = LATTICE[i][0];
             int c = LATTICE[i][1];
-            // The layer's translation at time zero, through SCALE_TRANSLATE. The
-            // vertical term scrolls with GameTime and is zero here.
             double offsetX = 0.5 * (17.0 / (i + 1)) + 0.25;
-            int texel = sample(portal, a * x - c * y + offsetX, c * x + a * y + 0.25);
+            double offsetY = 0.25 + (1.5 + (i + 1) * 0.5) * gameTime;
+            int texel = sample(portal, a * x - c * y + offsetX, c * x + a * y + offsetY);
             r += channel(texel, 16) * COLORS[i * 3];
             g += channel(texel, 8) * COLORS[i * 3 + 1];
             b += channel(texel, 0) * COLORS[i * 3 + 2];

@@ -589,6 +589,8 @@ public class RemixEntitySubmitter {
     private final Set<Identifier> resourceMissing = new HashSet<>();
     private LabPBRConverter.VariantCache labPBRVariants;
     private final EndPortalSurface endPortalSurfaces = new EndPortalSurface();
+    private boolean portalSeen;
+    private boolean gatewaySeen;
 
     // A captured layer with no material is dropped silently, which is
     // indistinguishable from an entity that simply is not there. Most gaps are
@@ -707,6 +709,8 @@ public class RemixEntitySubmitter {
         retainedEntityParts.beginFrame();
         lastDrawCount = 0;
         lastMeshCreateCount = 0;
+        portalSeen = false;
+        gatewaySeen = false;
     }
 
     /**
@@ -720,6 +724,8 @@ public class RemixEntitySubmitter {
         // The frame closes even when a native destroy fails: leaving it open would make
         // every later beginFrame a no-op and every later endFrame throw.
         try {
+            if (portalSeen) updateEndPortalTexture(EndPortalSurface.PORTAL_TEXTURE_ID);
+            if (gatewaySeen) updateEndPortalTexture(EndPortalSurface.GATEWAY_TEXTURE_ID);
             retainedEntityParts.endFrame(RemixEntitySubmitter::destroyRetainedPart);
             retireUnseenBeaconLensAssets();
             retireTransientMeshes();
@@ -1416,7 +1422,9 @@ public class RemixEntitySubmitter {
                 .setMesh(mesh)
                 .setCategoryFlags(categoryFlags)
                 .setBlendExt(blendExt)
-                .setDoubleSided(true);
+                .setDoubleSided(!EndPortalSurface.isSurfaceTexture(rigidMeshLookupKey.texId()));
+        portalSeen |= EndPortalSurface.PORTAL_TEXTURE_ID.equals(rigidMeshLookupKey.texId());
+        gatewaySeen |= EndPortalSurface.GATEWAY_TEXTURE_ID.equals(rigidMeshLookupKey.texId());
         part.instance.drawFast(api);
         if (!rigidMeshLookupKey.equals(part.meshKey)) {
             part.meshKey = pendingPartKey != null ? pendingPartKey : rigidMeshLookupKey.immutableCopy();
@@ -2189,7 +2197,8 @@ public class RemixEntitySubmitter {
         if (client == null) return null;
         byte[] pixels;
         try {
-            pixels = endPortalSurfaces.poll(textureId, client.getResourceManager());
+            pixels = endPortalSurfaces.poll(textureId, client.getResourceManager(),
+                    client.level != null ? client.level.getGameTime() : 0L);
         } catch (IllegalStateException e) {
             failedTextures.add(textureId);
             throw e;
@@ -2217,6 +2226,16 @@ public class RemixEntitySubmitter {
         textures.roughnessConstant = 1.0f;
         textures.metallicConstant = 1.0f;
         return textures;
+    }
+
+    private void updateEndPortalTexture(Identifier textureId) {
+        EntityTextureSet textures = textureSets.get(textureId);
+        var client = Minecraft.getInstance();
+        if (textures == null || client == null || client.level == null) return;
+        byte[] pixels = endPortalSurfaces.poll(textureId, client.getResourceManager(), client.level.getGameTime());
+        if (pixels != null) {
+            updateTextureFromMemory(textures.emissive, pixels, EndPortalSurface.TILE_SIZE, EndPortalSurface.TILE_SIZE);
+        }
     }
 
     private EntityTextureSet tryCreateTextureSet(Identifier textureId) throws Exception {

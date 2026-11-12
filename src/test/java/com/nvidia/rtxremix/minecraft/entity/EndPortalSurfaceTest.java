@@ -20,6 +20,45 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class EndPortalSurfaceTest {
 
     @Test
+    void animationUsesVanillasLayerTimeTranslation() {
+        int[] rgb = new int[16];
+        rgb[7] = 0xFF0000;
+        rgb[11] = 0x00FF00;
+        EndPortalSurface.Image sky = new EndPortalSurface.Image(new int[] {0}, 1, 1);
+        EndPortalSurface.Image portal = new EndPortalSurface.Image(rgb, 4, 4);
+        // Layer 1 at (0, 0): U=8.75, V=0.25+2*GameTime.
+        assertEquals(0x060000, EndPortalSurface.shade(sky, portal, 1, 0, 0, 0));
+        assertEquals(0x001900, EndPortalSurface.shade(sky, portal, 1, 0, 0, 0.125));
+    }
+
+    @Test
+    void animatedTileKeepsSpatialRepeatAndChangesWithTime() {
+        int[] rgb = new int[256];
+        for (int i = 0; i < rgb.length; i++) rgb[i] = (int) ((i * 2654435761L) & 0xFFFFFF);
+        EndPortalSurface.Image source = new EndPortalSurface.Image(rgb, 16, 16);
+        for (double time : new double[] {0, 0.125, 0.999}) {
+            int here = EndPortalSurface.shade(source, source, 16, 0.0123, 0.2718, time);
+            assertEquals(here, EndPortalSurface.shade(source, source, 16, 1.0123, 0.2718, time));
+            assertEquals(here, EndPortalSurface.shade(source, source, 16, 0.0123, 1.2718, time));
+        }
+        assertFalse(java.util.Arrays.equals(
+                EndPortalSurface.bake(source, source, 16, 32, 0),
+                EndPortalSurface.bake(source, source, 16, 32, 0.125)));
+    }
+
+    @Test
+    void cancelledBakeStopsBeforePublishingPixels() {
+        EndPortalSurface.Image source = new EndPortalSurface.Image(new int[] {0}, 1, 1);
+        Thread.currentThread().interrupt();
+        try {
+            assertThrows(java.util.concurrent.CancellationException.class,
+                    () -> EndPortalSurface.bake(source, source, 16, 4, 0));
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
     void sourceTexturesExistInTheCurrentMinecraftResources() throws Exception {
         for (var id : new net.minecraft.resources.Identifier[] {
                 EndPortalSurface.SKY_TEXTURE, EndPortalSurface.PORTAL_TEXTURE_SOURCE}) {
