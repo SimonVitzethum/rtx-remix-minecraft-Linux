@@ -821,6 +821,21 @@ void geometryResolverOutputSurfaceDebugView<
   }
 }
 
+// Keep hit and primary-GBuffer debug snapshots consistent for layered glass.
+vec3 geometryResolverMaterialDebugAlbedo(PolymorphicSurfaceMaterialInteraction material) {
+  const uint8_t materialType = polymorphicSurfaceMaterialInteractionGetTypeHelper(material);
+  if (materialType == surfaceMaterialTypeOpaque) {
+    return opaqueSurfaceMaterialInteractionCreate(material).albedo;
+  }
+  if (materialType == surfaceMaterialTypeTranslucent) {
+    const TranslucentSurfaceMaterialInteraction translucent = translucentSurfaceMaterialInteractionCreate(material);
+    if ((translucent.flags & TRANSLUCENT_SURFACE_MATERIAL_FLAG_USE_DIFFUSE_LAYER) != 0) {
+      return translucent.diffuseColor;
+    }
+  }
+  return vec3(0.0f);
+}
+
 void geometryResolverVertexOutputDebugView(
   uvec2 pixelCoordinate,
   Ray ray, RayInteraction rayInteraction,
@@ -1071,15 +1086,7 @@ void geometryResolverVertexOutputDebugView(
     break;
   }
   case DEBUG_VIEW_ALBEDO:
-    vec3 albedo = vec3(0.0f);
-
-    if (materialType == surfaceMaterialTypeOpaque)
-    {
-      albedo = opaqueSurfaceMaterialInteractionCreate(polymorphicSurfaceMaterialInteraction).albedo;
-    }
-
-    storeInDebugView(pixelCoordinate, albedo);
-
+    storeInDebugView(pixelCoordinate, geometryResolverMaterialDebugAlbedo(polymorphicSurfaceMaterialInteraction));
     break;
   case DEBUG_VIEW_ROUGHNESS:
     float isotropicRoughness = 0.0f;
@@ -1674,26 +1681,8 @@ void geometryResolverOutputPrimaryMaterialDebugView(
     break;
   }
   case DEBUG_VIEW_ALBEDO:
-  {
-    vec3 albedo = vec3(0.0f);
-
-    if (materialType == surfaceMaterialTypeOpaque)
-    {
-      albedo = opaqueSurfaceMaterialInteractionCreate(polymorphicSurfaceMaterialInteraction).albedo;
-    }
-    else if (materialType == surfaceMaterialTypeTranslucent)
-    {
-      const TranslucentSurfaceMaterialInteraction translucentSurfaceMaterialInteraction =
-        translucentSurfaceMaterialInteractionCreate(polymorphicSurfaceMaterialInteraction);
-      if ((translucentSurfaceMaterialInteraction.flags & TRANSLUCENT_SURFACE_MATERIAL_FLAG_USE_DIFFUSE_LAYER) != 0)
-      {
-        albedo = translucentSurfaceMaterialInteraction.diffuseColor;
-      }
-    }
-
-    storeInDebugView(pixelCoordinate, albedo);
+    storeInDebugView(pixelCoordinate, geometryResolverMaterialDebugAlbedo(polymorphicSurfaceMaterialInteraction));
     break;
-  }
   case DEBUG_VIEW_ROUGHNESS:
   {
     float isotropicRoughness = 0.0f;
