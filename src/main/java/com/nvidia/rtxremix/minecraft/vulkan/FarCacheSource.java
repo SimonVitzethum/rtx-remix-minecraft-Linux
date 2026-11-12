@@ -116,30 +116,32 @@ final class FarCacheSource implements FarTileSource {
     @Override public CompletableFuture<Void> flushed() { return flushed; }
 
     private void recordLoop() {
-        while (!closed) {
-            try {
-                FarChunkSnapshot c = recordQueue.poll(1000, TimeUnit.MILLISECONDS);
-                if (c != null) {
-                    store(c.sample());
+        try {
+            while (!closed) {
+                try {
+                    FarChunkSnapshot c = recordQueue.poll(1000, TimeUnit.MILLISECONDS);
+                    if (c != null) store(c.sample());
+                    housekeeping(false);
+                } catch (InterruptedException e) {
+                    break;
+                } catch (RuntimeException t) {
+                    LOGGER.error("FarCache recorder", t);
                 }
-                housekeeping(false);
-            } catch (InterruptedException e) {
-                break;
-            } catch (RuntimeException t) {
-                LOGGER.error("FarCache recorder", t);
             }
+            FarChunkSnapshot remaining;
+            while ((remaining = recordQueue.poll()) != null) store(remaining.sample());
+        } finally {
+            // Tile builds can evict dirty regions while reading. Release every writer even if the final drain failed.
+            close();
+            boolean interrupted = false;
+            while (tileThread.isAlive()) {
+                try { tileThread.join(); }
+                catch (InterruptedException e) { interrupted = true; }
+            }
+            if (fallback != null) fallback.flushed().join();
+            housekeeping(true);
+            if (interrupted) Thread.currentThread().interrupt();
         }
-        FarChunkSnapshot remaining;
-        while ((remaining = recordQueue.poll()) != null) store(remaining.sample());
-        // Tile builds can evict dirty regions while reading. They must release disk ownership before the final flush.
-        boolean interrupted = false;
-        while (tileThread.isAlive()) {
-            try { tileThread.join(); }
-            catch (InterruptedException e) { interrupted = true; }
-        }
-        if (fallback != null) fallback.flushed().join();
-        housekeeping(true);
-        if (interrupted) Thread.currentThread().interrupt();
     }
 
     synchronized void store(FarChunkSnapshot.Surface surface) {
