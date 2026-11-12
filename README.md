@@ -191,8 +191,9 @@ tools/linux/rtx.sh launch
 ```
 
 The launcher builds and installs into a development Prism instance. Distribution
-JARs are written under `build/distributions/`; the lightweight `build/libs/`
-JAR is not the packaged Linux release. Sign in to Prism with an account that
+The portable distribution JAR is `build/libs/rtx-remix-renderer-universal.jar`;
+Java development JARs are under `build/intermediates/`. Native release readiness
+is checked separately as described above. Sign in to Prism with an account that
 owns Minecraft before launching. Do not replace a live game's native libraries.
 
 Windowing follows the `LinuxWindowPlatform` JVM flag: `-Drtxremix.wayland=true`

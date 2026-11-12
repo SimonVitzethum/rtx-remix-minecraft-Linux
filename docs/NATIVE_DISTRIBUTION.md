@@ -17,7 +17,7 @@ readiness. A portable Java build does not certify RTX operation on four platform
 
 | Platform | Combined runtime + bridge bundle | Actual validation |
 |---|---|---|
-| Linux x86-64 | Not available; runtime freeze pending | Historical API 0.16.2 GPU sessions only; current wrapper CPU build can be checked separately |
+| Linux x86-64 | Not available; native package pending | Historical API 0.16.2 GPU sessions; API 0.16.4 JNI/CPU checks pass; combined runtime link and game tests pending |
 | Linux ARM64 | Not available | ELF AArch64 DLSS libraries exist; own runtime/dependencies/JNI producer and hardware tests pending |
 | Windows x86-64 | Not available | Official API 0.16.2 runtime is incompatible; own runtime build and hardware tests pending |
 | Windows ARM64 | Not available | Pure ARM64 DLSS DLLs exist; own runtime/dependencies/JNI producer and hardware tests pending |
@@ -29,11 +29,17 @@ working download URLs are claimed. Compatible binaries must first be built,
 audited and published. Startup checks only the selected platform and reports its
 unavailable reason before initializing the renderer.
 
-The coordinated wrapper header is API **0.16.3**, extension struct type **32**
-(`MESH_INFO_COMPACT_QUADS_EXT`), error **14** (`RESOURCE_BUSY`). The mesh change
-retains 36 interface pointers. The announced runtime-owned DAG/compute appends
-use API **0.16.4** and types 33+, with its final implementation/freeze still
-pending. The build derives `api`, `interfacePointers`, header digest and native
+The coordinated header/JNI ABI is frozen at API **0.16.4**: 41 interface
+pointers, with the original 36-pointer prefix preserved for API 0.16.2/0.16.3
+clients. Compact quads retain struct type **32** and `RESOURCE_BUSY` remains
+error **14**; generic GPU work uses struct types **33–37**. New JNI bridges must
+export `bridgeContract()J` and all five GPU work entry points. Startup rejects a
+stale bridge before initialization. The frozen header SHA-256 is
+`54edd326b43281a8a5c766a5ec05cd8b144397fdfc0cbc518304236963008210`.
+The full runtime link, production GPU-DAG migration, combined game validation
+and four-platform binary distribution remain separate pending work. Manifest
+`freeze=pending` describes that distribution state. The build derives `api`,
+`interfacePointers`, header digest and native
 source digest into `native-source.properties` from the actual copied source;
 these values are not hard-coded in the installer or producer. A release manifest
 must exactly match that compiled contract. `createMesh` appends direct compact-quad buffer/count arrays
