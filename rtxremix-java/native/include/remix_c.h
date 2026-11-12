@@ -31,7 +31,7 @@
 
 
 #ifndef REMIX_ALLOW_X86
-#if _WIN64 != 1
+#if !defined(_WIN64) && !defined(__x86_64__)
   #error Remix API requires 64-bit for the ray tracing features.
 #endif
 #endif
@@ -70,7 +70,7 @@
 
 #define REMIXAPI_VERSION_MAJOR 0
 #define REMIXAPI_VERSION_MINOR 16
-#define REMIXAPI_VERSION_PATCH 2
+#define REMIXAPI_VERSION_PATCH 3
 
 
 // External
@@ -147,6 +147,7 @@ extern "C" {
     REMIXAPI_STRUCT_TYPE_TEXTURE_PATCH_INFO                   = 29,
     REMIXAPI_STRUCT_TYPE_SUBMIT_INFO                          = 30,
     REMIXAPI_STRUCT_TYPE_CONFIG_VARIABLE_RESOLVED_INFO        = 31,
+    REMIXAPI_STRUCT_TYPE_MESH_INFO_COMPACT_QUADS_EXT          = 32,
     // NOTE: always leave ',' after the number, so the git diff is cleaner!
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
     //       and only extend this enum by appending, never adjust the order of these 
@@ -176,6 +177,9 @@ extern "C" {
     REMIXAPI_ERROR_CODE_INDEX_OUT_OF_RANGE                = 12,
     // An output buffer is too small. The call reports the size it needs.
     REMIXAPI_ERROR_CODE_BUFFER_TOO_SMALL                  = 13,
+    // Temporary admission denial. Retry only after resource retirement or a newer budget/admission frame.
+    // No asset is created and an existing published asset remains unchanged.
+    REMIXAPI_ERROR_CODE_RESOURCE_BUSY                     = 14,
     // Error codes that are encoded as HRESULT, i.e. returned from D3D9 functions.
     // Look MAKE_D3DHRESULT, but with _FACD3D=0x896, instead of D3D9's 0x876
     REMIXAPI_ERROR_CODE_HRESULT_NO_REQUIRED_GPU_FEATURES      = 0x88960001,
@@ -492,6 +496,35 @@ extern "C" {
     const remixapi_MeshInfoSurfaceTriangles* surfaces_values;
     uint32_t                                 surfaces_count;
   } remixapi_MeshInfo;
+
+  // Version 1 is six 16-byte lanes (96 bytes per quad). The first three words of
+  // lanes 0..3 are origin, edge01, edge03 and normal (IEEE754 binary32).
+  // Lane 0.w/1.w/2.w are packed UNORM16 UV minimum/maximum and BGRA8 tint.
+  // Lane 3.w must be zero. Lanes 4/5 contain the four raw float2 UV corners.
+  // Positions are p0=origin, p1=origin+edge01, p2=(origin+edge01)+edge03,
+  // p3=origin+edge03, with IEEE754 binary32 operations without reassociation.
+  // Four 64-byte HardcodedVertices and indices 0,1,2,0,2,3 are GPU-generated.
+  // Descriptors are copied before CreateMesh returns; no client GPU handles are accepted.
+  typedef struct remixapi_CompactQuad {
+    uint32_t words[24];
+  } remixapi_CompactQuad;
+
+  typedef struct remixapi_CompactQuadSurface {
+    const remixapi_CompactQuad* quads_values;
+    uint32_t quads_count;
+    uint32_t reserved; // Must be zero.
+    remixapi_MaterialHandle material;
+  } remixapi_CompactQuadSurface;
+
+  // Append to MeshInfo.pNext. Ordinary triangle surfaces and compact surfaces may coexist.
+  // Zero surfaces appends nothing. Unknown versions and nonzero reserved fields are rejected.
+  typedef struct remixapi_MeshInfoCompactQuadsEXT {
+    remixapi_StructType sType;
+    void* pNext;
+    uint32_t version; // Must be 1.
+    uint32_t surfaces_count;
+    const remixapi_CompactQuadSurface* surfaces_values;
+  } remixapi_MeshInfoCompactQuadsEXT;
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateMesh)(
     const remixapi_MeshInfo*  info,

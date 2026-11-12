@@ -1438,9 +1438,14 @@ Java_com_nvidia_rtxremix_RemixBridge_createMesh(JNIEnv* env, jclass,
     jintArray flags,
     jintArray bonesPerVertex,
     jobjectArray blendWeightBuffers, jintArray blendWeightCounts,
-    jobjectArray blendIndexBuffers, jintArray blendIndexCounts)
+    jobjectArray blendIndexBuffers, jintArray blendIndexCounts,
+    jobjectArray compactQuadBuffers, jintArray compactQuadCounts)
 {
-    if (!g_inited || !g_remix.CreateMesh) return 0;
+    if (!g_inited || !g_remix.CreateMesh) return -static_cast<jlong>(REMIXAPI_ERROR_CODE_NOT_INITIALIZED);
+    if (surfaceCount <= 0 || !compactQuadBuffers || !compactQuadCounts ||
+        env->GetArrayLength(compactQuadBuffers) != surfaceCount || env->GetArrayLength(compactQuadCounts) != surfaceCount) {
+        return -static_cast<jlong>(REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS);
+    }
 
     remixapi_MeshInfoSurfaceTriangles stackBuf[MAX_STACK_SURFACES];
     remixapi_MeshInfoSurfaceTriangles* surfs = buildSurfaces(
@@ -1450,17 +1455,55 @@ Java_com_nvidia_rtxremix_RemixBridge_createMesh(JNIEnv* env, jclass,
         blendWeightBuffers, blendWeightCounts, blendIndexBuffers, blendIndexCounts,
         stackBuf);
 
+    std::vector<remixapi_CompactQuadSurface> compact;
+    compact.reserve(surfaceCount);
+    jint ordinaryCount = 0;
+    bool valid = true;
+    for (jint i = 0; i < surfaceCount; ++i) {
+        jint count = 0;
+        env->GetIntArrayRegion(compactQuadCounts, i, 1, &count);
+        jobject buffer = env->GetObjectArrayElement(compactQuadBuffers, i);
+        if (buffer || count) {
+            auto address = buffer ? env->GetDirectBufferAddress(buffer) : nullptr;
+            const auto capacity = buffer ? env->GetDirectBufferCapacity(buffer) : -1;
+            if (!address || count <= 0 || capacity < jlong(count) * sizeof(remixapi_CompactQuad) ||
+                surfs[i].vertices_values || surfs[i].vertices_count || surfs[i].indices_values ||
+                surfs[i].indices_count || surfs[i].skinning_hasvalue || surfs[i].flags) {
+                valid = false;
+            } else {
+                remixapi_CompactQuadSurface source {};
+                source.quads_values = static_cast<const remixapi_CompactQuad*>(address);
+                source.quads_count = uint32_t(count);
+                source.material = surfs[i].material;
+                compact.push_back(source);
+            }
+        } else {
+            surfs[ordinaryCount++] = surfs[i];
+        }
+        if (buffer) env->DeleteLocalRef(buffer);
+    }
+    if (!valid || env->ExceptionCheck()) {
+        freeSurfaces(surfs, stackBuf);
+        return -static_cast<jlong>(REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS);
+    }
+    remixapi_MeshInfoCompactQuadsEXT extension {};
+    extension.sType = REMIXAPI_STRUCT_TYPE_MESH_INFO_COMPACT_QUADS_EXT;
+    extension.version = 1;
+    extension.surfaces_values = compact.data();
+    extension.surfaces_count = uint32_t(compact.size());
+
     remixapi_MeshInfo info = {};
     info.sType          = REMIXAPI_STRUCT_TYPE_MESH_INFO;
     info.hash           = (uint64_t)hash;
     info.surfaces_values = surfs;
-    info.surfaces_count = (uint32_t)surfaceCount;
+    info.surfaces_count = (uint32_t)ordinaryCount;
+    if (!compact.empty()) info.pNext = &extension;
 
     remixapi_MeshHandle handle = nullptr;
     remixapi_ErrorCode rc = remixCall([&] { return g_remix.CreateMesh(&info, &handle); });
 
     freeSurfaces(surfs, stackBuf);
-    return (rc == REMIXAPI_ERROR_CODE_SUCCESS) ? (jlong)(uintptr_t)handle : 0;
+    return (rc == REMIXAPI_ERROR_CODE_SUCCESS) ? (jlong)(uintptr_t)handle : -static_cast<jlong>(rc);
 }
 
 JNIEXPORT jint JNICALL

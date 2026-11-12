@@ -23,6 +23,9 @@ public final class ErrorCode {
     public static final int INDEX_OUT_OF_RANGE = 12;
     public static final int BUFFER_TOO_SMALL = 13;
 
+    /** Temporary admission denial. Retry after retirement or a newer admission frame. */
+    public static final int RESOURCE_BUSY = 14;
+
     // HRESULT error codes
     public static final int HRESULT_NO_REQUIRED_GPU_FEATURES = 0x88960001;
     public static final int HRESULT_DRIVER_VERSION_BELOW_MINIMUM = 0x88960002;
@@ -52,6 +55,7 @@ public final class ErrorCode {
             case NOT_INITIALIZED: return "NOT_INITIALIZED";
             case INDEX_OUT_OF_RANGE: return "INDEX_OUT_OF_RANGE";
             case BUFFER_TOO_SMALL: return "BUFFER_TOO_SMALL";
+            case RESOURCE_BUSY: return "RESOURCE_BUSY";
             case HRESULT_NO_REQUIRED_GPU_FEATURES: return "NO_REQUIRED_GPU_FEATURES";
             case HRESULT_DRIVER_VERSION_BELOW_MINIMUM: return "DRIVER_VERSION_BELOW_MINIMUM";
             case HRESULT_DXVK_INSTANCE_EXTENSION_FAIL: return "DXVK_INSTANCE_EXTENSION_FAIL";

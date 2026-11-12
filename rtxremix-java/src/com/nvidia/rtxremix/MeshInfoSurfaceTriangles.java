@@ -16,6 +16,10 @@ public class MeshInfoSurfaceTriangles {
     /** Atlas bounds encoded with {@link HardcodedVertex#packUnorm2x16(float, float)}. */
     public static final int TEXCOORD_BOUNDS_UNORM16 = 1 << 1;
 
+    /** Version-1 compact affine quads, direct, little-endian, position zero; mutually exclusive with vertices/skinning. */
+    public ByteBuffer compactQuadBuffer;
+    public int compactQuadCount;
+
     public ByteBuffer vertexBuffer;
     public int vertexCount;
     public ByteBuffer indexBuffer;
