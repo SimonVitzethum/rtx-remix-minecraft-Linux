@@ -614,20 +614,12 @@ namespace dxvk {
     updateDlssNeuralRenderingResources(ctx);
 
     if (ctx->isDLFGEnabled()) {
-      const uint32_t currentFrameId = ctx->getDevice()->getCurrentFrameId();
-      const Rc<RtxSemaphore>& frameEndSemaphore = ctx->getCommonObjects()->metaDLFG().getFrameEndSemaphore();
-
-      // if we've launched N frames, wait on the current - Nth frame
-      if (currentFrameId >= kDLFGMaxGPUFramesInFlight) {
-        // xxxnsubtil: lots of problems when toggling the enable here and during init, leaving disabled for now
-        // at worst this may cause transient corruption
-        //ctx->getCommandList()->addWaitSemaphore(frameEndSemaphore->handle(), currentFrameId - kDLFGMaxGPUFramesInFlight);
-      } else {
-        // CPU sync when semaphore wraps around
-        if (currentFrameId == 0) {
-          ctx->getDevice()->waitForIdle();
-          // xxxnsubtil: spec does not allow signaling back to zero, but not clear how this should be handled --- recreate the semaphore?
-        }
+      auto& dlfg = ctx->getCommonObjects()->metaDLFG();
+      const uint64_t submittedFrames = dlfg.frameEndSemaphoreValue();
+      // Count handed-off input sets rather than rendered frames, which include menus and disabled FG.
+      if (submittedFrames >= kDLFGMaxGPUFramesInFlight) {
+        ctx->getCommandList()->addWaitSemaphore(dlfg.getFrameEndSemaphore()->handle(),
+          submittedFrames - kDLFGMaxGPUFramesInFlight + 1);
       }
     }
 

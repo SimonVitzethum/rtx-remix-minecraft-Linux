@@ -80,6 +80,9 @@ namespace dxvk {
     bool              resetHistory;
     // number of requested interpolated frames; must be at least 1, actual count may be lower depending on hardware support for MFG
     uint32_t          interpolatedFrameCount = 0;
+    // Signals after the presenter releases the depth and motion-vector inputs.
+    VkSemaphore       completionSemaphore = VK_NULL_HANDLE;
+    uint64_t          completionValue = 0;
     
     bool valid() const {
       return motionVectors.ptr() &&
@@ -92,6 +95,8 @@ namespace dxvk {
       depth = nullptr;
       resetHistory = false;
       interpolatedFrameCount = 0;
+      completionSemaphore = VK_NULL_HANDLE;
+      completionValue = 0;
     }
   };
   // NV-DXVK end

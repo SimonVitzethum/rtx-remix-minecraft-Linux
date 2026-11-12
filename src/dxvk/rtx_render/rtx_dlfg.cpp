@@ -297,12 +297,6 @@ namespace dxvk {
     // isDlfgPresenting flag must be false here: this method can only be called from the CS thread, which does not know about DLFG
     assert(isDlfgPresenting == false);
 
-    VkResult lastStatus = m_lastPresentStatus;
-    if (lastStatus != VK_SUCCESS) {
-      *status = lastStatus;
-      return lastStatus;
-    }
-
     *status = VK_EVENT_SET;
 
     {
@@ -700,6 +694,17 @@ namespace dxvk {
 
         m_presentQueue.pop();
         m_presentThread.condWorkConsumed.notify_all();
+      });
+
+      // Every queued input set is released, including jobs dropped during swapchain recreation.
+      DxvkDLFGScopeGuard releaseInputs([&]() {
+        if (present.frameInterpolation.completionValue) {
+          auto* completion = m_dlfgCommandLists.nextCmdList();
+          completion->addSignalSemaphore(present.frameInterpolation.completionSemaphore,
+            present.frameInterpolation.completionValue);
+          completion->endRecording();
+          completion->submit();
+        }
       });
 
       // if we have an error condition that hasn't been cleared yet, drop frames until recreateSwapchain is called

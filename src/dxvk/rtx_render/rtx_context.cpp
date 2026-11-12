@@ -2481,6 +2481,8 @@ namespace dxvk {
       false,
       m_common->metaDLFG().getInterpolatedFrameCount(),
     };
+    dlfgInfo.completionSemaphore = m_common->metaDLFG().getFrameEndSemaphore()->handle();
+    dlfgInfo.completionValue = ++m_common->metaDLFG().frameEndSemaphoreValue();
     m_device->setupFrameInterpolation(dlfgInfo);
   }
 

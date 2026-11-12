@@ -96,6 +96,8 @@ namespace dxvk::vk {
                                                      &index);
       assert(m_acquireStatus != VK_NOT_READY);
       if (m_acquireStatus == VK_SUCCESS || m_acquireStatus == VK_SUBOPTIMAL_KHR) {
+        // Presentation releases a binary semaphore only when its image is acquired again.
+        sync.present = m_semaphores.at(index).present;
         if (m_dlfgImageSync.size() != m_semaphores.size())
           m_dlfgImageSync.resize(m_semaphores.size());
         m_dlfgImageSync.at(index) = sync;
@@ -117,6 +119,9 @@ namespace dxvk::vk {
 
     if (!isDlfgPresenting) {
       index = m_imageIndex;
+      // NV-DXVK start: Reuse present semaphores by acquired image rather than frame slot.
+      sync.present = m_semaphores.at(index).present;
+      // NV-DXVK end
     }
 
     return m_acquireStatus;
@@ -126,7 +131,7 @@ namespace dxvk::vk {
     // NV-DXVK start: DLFG integration
     std::atomic<VkResult>*,
     const DxvkPresentInfo&,
-    const DxvkFrameInterpolationInfo&,
+    const DxvkFrameInterpolationInfo& frameInterpolation,
     std::uint32_t imageIndex,
     bool isDlfgPresenting,
     VkSetPresentConfigNV* presentMetering
@@ -137,6 +142,9 @@ namespace dxvk::vk {
     PresenterSync sync;
     
     sync = isDlfgPresenting ? m_dlfgImageSync.at(imageIndex) : m_semaphores.at(m_frameIndex);
+    if (!isDlfgPresenting) {
+      sync.present = m_semaphores.at(m_imageIndex).present;
+    }
     // NV-DXVK end
 
     VkPresentInfoKHR info;
@@ -154,6 +162,21 @@ namespace dxvk::vk {
     }
     // NV-DXVK end
     info.pResults           = nullptr;
+
+    // NV-DXVK start: Release inputs when FG was disabled between capture and present.
+    if (frameInterpolation.completionValue) {
+      VkTimelineSemaphoreSubmitInfo timeline = { VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO };
+      timeline.signalSemaphoreValueCount = 1;
+      timeline.pSignalSemaphoreValues = &frameInterpolation.completionValue;
+      VkSubmitInfo submit = { VK_STRUCTURE_TYPE_SUBMIT_INFO, &timeline };
+      submit.signalSemaphoreCount = 1;
+      submit.pSignalSemaphores = &frameInterpolation.completionSemaphore;
+      VkResult status = m_vkd->vkQueueSubmit(m_device.queue, 1, &submit, VK_NULL_HANDLE);
+      if (status != VK_SUCCESS) {
+        return status;
+      }
+    }
+    // NV-DXVK end
 
     VkResult status = m_vkd->vkQueuePresentKHR(m_device.queue, &info);
 
