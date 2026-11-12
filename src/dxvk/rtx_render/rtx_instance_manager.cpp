@@ -81,7 +81,8 @@ namespace dxvk {
     if (drawClockwise == worldToProjectionMirrored)
       flags |= VK_GEOMETRY_INSTANCE_TRIANGLE_FLIP_FACING_BIT_KHR;
     
-    if (!RtxOptions::enableCulling())
+    // API instances declare their sidedness explicitly, independently of raster capture defaults.
+    if (!RtxOptions::enableCulling() && !drawCall.isExternalDraw)
       flags |= VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
 
     if (drawCall.testCategoryFlags(InstanceCategories::HairCards)) {
