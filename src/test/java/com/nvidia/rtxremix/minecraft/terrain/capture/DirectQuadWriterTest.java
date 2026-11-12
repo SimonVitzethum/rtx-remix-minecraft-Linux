@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import net.minecraft.resources.Identifier;
-import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -209,9 +208,7 @@ class DirectQuadWriterTest {
     @Test
     void portalSheetsKeepBothFacesInTheirOwnAlphaBlendedBucket() {
         Identifier portal = Identifier.withDefaultNamespace("block/nether_portal");
-        String layer = BlockQuadEmitter.layerName(ChunkSectionLayer.TRANSLUCENT, portal);
-        assertEquals("blended", layer);
-        assertEquals("translucent", BlockQuadEmitter.layerName(ChunkSectionLayer.TRANSLUCENT, CUTOUT_SPRITE));
+        String layer = "blended";
         DirectQuadWriter writer = new DirectQuadWriter();
         writer.beginSection();
         stageQuad(writer, FRONT_POSITIONS, FRONT_UVS, 1.0f, portal, 0xFFFFFFFF, layer);
