@@ -32,6 +32,45 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ChunkManagerMeshInstallTest {
 
     @Test
+    void retainedPageVisibilityFollowsRadiusTransitionsWithoutRepeatedSubmits() throws Exception {
+        TrackingInstance instance = new TrackingInstance(false);
+        try {
+            Object page = newInstalledPage(instance, ChunkManager.CAT_SOLID, 0x20);
+            Class<?>[] signature = {RemixAPI.class, boolean.class, boolean.class};
+            assertFalse((boolean) invoke(page, "submitVisibility", signature, null, false, false));
+            assertTrue((boolean) invoke(page, "submitVisibility", signature, null, true, false));
+            assertEquals(0x20, instance.categoryFlags);
+            assertEquals(1, instance.drawCalls);
+            assertFalse((boolean) invoke(page, "submitVisibility", signature, null, true, false));
+            assertTrue((boolean) invoke(page, "submitVisibility", signature, null, false, false));
+            assertEquals(0x20 | InstanceCategoryBit.HIDDEN, instance.categoryFlags);
+            assertEquals(2, instance.drawCalls);
+            assertFalse((boolean) invoke(page, "submitVisibility", signature, null, false, false));
+            assertTrue((boolean) invoke(page, "submitVisibility", signature, null, false, true));
+            assertEquals(3, instance.drawCalls);
+            assertTrue((boolean) invoke(page, "submitVisibility", signature, null, true, true));
+            assertEquals(0x20, instance.categoryFlags);
+            assertEquals(4, instance.drawCalls);
+        } finally {
+            instance.destroy();
+        }
+    }
+
+    @Test
+    void failedVisibilityTransitionKeepsItsPreviousPublishedState() throws Exception {
+        TrackingInstance instance = new TrackingInstance(true);
+        try {
+            Object page = newInstalledPage(instance, ChunkManager.CAT_SOLID, 0);
+            org.junit.jupiter.api.Assertions.assertThrows(java.lang.reflect.InvocationTargetException.class,
+                    () -> invoke(page, "submitVisibility",
+                            new Class<?>[]{RemixAPI.class, boolean.class, boolean.class}, null, true, false));
+            assertTrue(booleanField(page, "hidden"));
+        } finally {
+            instance.destroy();
+        }
+    }
+
+    @Test
     void oneInstallPassPublishesMultipleCompletedColumnsWithoutNativeWork() throws Exception {
         ChunkManager manager = new ChunkManager(null);
         try {

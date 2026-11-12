@@ -109,6 +109,7 @@ public class ChunkManager {
     private int diagnosticsRefreshCountdown;
     /** Set when every retained instance has been removed and the next draw must resubmit them. */
     private boolean retainedInstancesHidden;
+    private boolean farFieldWasEnabled;
     /** True after the texture-manager gate logged its first stall warning. */
     private boolean textureGateWarned;
     /** Last time a zero-publish stall warning was logged. */
@@ -458,6 +459,7 @@ public class ChunkManager {
         final int category;
         final int categoryFlags;
         final long nativeBytes;
+        boolean hidden = true;
 
         InstalledMeshPage(RemixInstance instance, int category, int categoryFlags) {
             this(instance, category, categoryFlags, 0L);
@@ -468,6 +470,15 @@ public class ChunkManager {
             this.category = category;
             this.categoryFlags = categoryFlags;
             this.nativeBytes = nativeBytes;
+        }
+
+        /** Publishes a visibility transition, or restores a removed retained handle. */
+        boolean submitVisibility(RemixAPI api, boolean visible, boolean resubmit) {
+            if (hidden == !visible && !resubmit) return false;
+            instance.setCategoryFlags(categoryFlags | (visible ? 0 : InstanceCategoryBit.HIDDEN));
+            instance.drawFast(api);
+            hidden = !visible;
+            return true;
         }
     }
 
@@ -1549,14 +1560,11 @@ public class ChunkManager {
     private boolean activateNextPage(MeshInstallCursor cursor, RemixAPI api) {
         if (cursor.nextActivation >= cursor.installedPages.size()) return false;
         InstalledMeshPage page = cursor.installedPages.get(cursor.nextActivation++);
-        // Far-field debug cut (default off): the page stays hidden because the far-field sky draws this column.
-        if (com.nvidia.rtxremix.minecraft.vulkan.FarField.cutsColumn(cursor.result.owner().cx, cursor.result.owner().cz)) {
-            return true;
-        }
         try (ProfileScope activationScope = ProfileScope.begin("activateTerrainPage")) {
             activationScope.meshCategory(page.category);
-            page.instance.setCategoryFlags(page.categoryFlags);
-            page.instance.drawFast(api);
+            page.submitVisibility(api,
+                    !com.nvidia.rtxremix.minecraft.vulkan.FarField.cutsColumn(
+                            cursor.result.owner().cx, cursor.result.owner().cz), false);
         } catch (RuntimeException | Error failure) {
             LOGGER.error("Native terrain activation failed for category {}",
                     page.category, failure);
@@ -1571,9 +1579,7 @@ public class ChunkManager {
         InstalledMeshPage page = cursor.installedPages.get(cursor.nextActivation - 1);
         try (ProfileScope rollbackScope = ProfileScope.begin("hideTerrainPage")) {
             rollbackScope.meshCategory(page.category);
-            page.instance.setCategoryFlags(
-                    page.categoryFlags | InstanceCategoryBit.HIDDEN);
-            page.instance.drawFast(api);
+            page.submitVisibility(api, false, true);
             cursor.nextActivation--;
         } catch (RuntimeException | Error failure) {
             LOGGER.error("Failed to hide staged terrain page for category {}",
@@ -1822,6 +1828,37 @@ public class ChunkManager {
                 BlockDataQueue.pendingCount(), pendingMeshBytes.get());
     }
 
+    /** Owner-thread page counts by Chebyshev chunk distance. Each ring lists total/visible/visible-solid pages. */
+    public String visibilityDiagnostics(Vec3 camera) {
+        int cameraX = Math.floorDiv((int) Math.floor(camera.x), 16);
+        int cameraZ = Math.floorDiv((int) Math.floor(camera.z), 16);
+        java.util.TreeMap<Integer, long[]> rings = new java.util.TreeMap<>();
+        long hidden = 0, visible = 0, outsideCutVisible = 0;
+        for (ColumnRenderState column : renderColumns.values()) {
+            int distance = Math.max(Math.abs(column.cx - cameraX), Math.abs(column.cz - cameraZ));
+            long[] ring = rings.computeIfAbsent(distance, ignored -> new long[3]);
+            for (InstalledMeshPage page : column.activePages) {
+                ring[0]++;
+                boolean shown = !retainedInstancesHidden && !page.hidden;
+                if (shown) {
+                    visible++;
+                    ring[1]++;
+                    if (page.category == CAT_SOLID) ring[2]++;
+                    if (com.nvidia.rtxremix.minecraft.vulkan.FarField.cutsColumn(column.cx, column.cz)) outsideCutVisible++;
+                } else hidden++;
+            }
+        }
+        StringBuilder summary = new StringBuilder("cameraChunk=").append(cameraX).append(',').append(cameraZ)
+                .append(" visible=").append(visible).append(" hidden=").append(hidden)
+                .append(" outsideCutVisible=").append(outsideCutVisible).append(" rings=[");
+        for (var ring : rings.entrySet()) {
+            if (summary.charAt(summary.length() - 1) != '[') summary.append(',');
+            summary.append(ring.getKey()).append(':').append(ring.getValue()[0]).append('/')
+                    .append(ring.getValue()[1]).append('/').append(ring.getValue()[2]);
+        }
+        return summary.append(']').toString();
+    }
+
     /** @return the number of native instance submits this pass made */
     private int draw(RemixAPI api, PerformanceTimer t, Vec3 cam) {
         t.begin(perfBfs);
@@ -1836,24 +1873,23 @@ public class ChunkManager {
         int lightsBeyondReach = 0;
 
         try (ProfileScope traversalScope = ProfileScope.begin("draw traversal")) {
-            // Remix keeps a scene instance until it is explicitly removed, and every terrain
-            // instance is submitted at the point it is created or mutated, so re-submitting the
-            // whole set each frame only re-asserts state the runtime already holds. The one case
-            // that does need it is resurrection: hideRetainedInstances() removes every instance,
-            // leaving handles inactive until something submits them again.
-            if (retainedInstancesHidden) {
+            boolean farFieldEnabled = com.nvidia.rtxremix.minecraft.vulkan.FarField.isEnabled();
+            if (retainedInstancesHidden || farFieldEnabled || farFieldWasEnabled) {
+                // Far-field coverage follows the camera. Retained pages publish only transitions,
+                // including pages installed outside the radius that later become native terrain.
                 for (ColumnRenderState state : renderColumns.values()) {
+                    boolean visible = !com.nvidia.rtxremix.minecraft.vulkan.FarField.cutsColumn(state.cx, state.cz);
                     for (int pageIndex = 0; pageIndex < state.activePages.size(); pageIndex++) {
-                        RemixInstance instance = state.activePages.get(pageIndex).instance;
-                        if (instance != null && !instance.isDeletedFast()) {
-                            instance.drawFast(api);
+                        InstalledMeshPage page = state.activePages.get(pageIndex);
+                        if (page.instance != null && !page.instance.isDeletedFast()
+                                && page.submitVisibility(api, visible, retainedInstancesHidden)) {
                             drawCalls++;
                         }
                     }
                 }
-                // Cleared only after a complete pass. A native failure mid-pass propagates out,
-                // and clearing on the way out would strand the unvisited half of the world.
+                // A failed native transition leaves resurrection pending for the unvisited pages.
                 retainedInstancesHidden = false;
+                farFieldWasEnabled = farFieldEnabled;
             }
 
             for (TerrainState.ChunkColumn column : terrain.columns()) {
@@ -1982,6 +2018,7 @@ public class ChunkManager {
         renderColumns.clear();
         retainedPageCount = 0;
         retainedInstancesHidden = false;
+        farFieldWasEnabled = false;
         dirtyBuildScratch.clear();
 
         enqueueLightRetirement(terrain.clearForRetirement());
