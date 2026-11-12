@@ -21,6 +21,9 @@
 */
 #include <atomic>
 #include <cstdint>
+#ifdef REMIX_LINUX_NATIVE
+#include <time.h>
+#endif
 
 #include "dxvk_device.h"
 #include "rtx_dlfg.h"
@@ -227,6 +230,7 @@ namespace dxvk {
     createBackbuffers();
 
     DLFG_TRACE("presenter constructed, images=", m_info.imageCount);
+    m_dlfgPacerSemaphoreValue = 1;
     m_presentThread.threadHandle = dxvk::thread([this]() { runPresentThread(); });
     m_pacerThread.threadHandle = dxvk::thread([this]() { runPacerThread(); });
 
@@ -624,7 +628,9 @@ namespace dxvk {
     DxvkDLFGCommandList* commandList = m_presentPacingCommandLists.nextCmdList();
     if (!kSkipPacerSemaphoreWait && pacerSemaphoreWaitValue != kPacerDoNotWait) {
       assert(presentMetering == nullptr);
-      commandList->addWaitSemaphore(m_dlfgPacerSemaphore->handle(), pacerSemaphoreWaitValue);
+      // Present requires every dependency of its binary signal to have a resolving signal already submitted.
+      // The pacing deadline is a future host signal, so wait on the dedicated present thread before submitting.
+      m_dlfgPacerSemaphore->wait(pacerSemaphoreWaitValue);
     }
     commandList->addSignalSemaphore(image.sync.present);
     commandList->endRecording();
@@ -970,6 +976,39 @@ namespace dxvk {
     const double qpcIncrementsPerNs = double(qpcIncrementsPerSecond) / 1000000000.0;
     const double nsPerQpcIncrement = 1000000000.0 / double(qpcIncrementsPerSecond);
 
+    VkTimeDomainEXT cpuTimeDomain = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT;
+    bool calibratedHostClock = true;
+#ifdef REMIX_LINUX_NATIVE
+    cpuTimeDomain = VK_TIME_DOMAIN_CLOCK_MONOTONIC_EXT;
+    clockid_t cpuClock = CLOCK_MONOTONIC;
+    auto queryDomains = m_device->adapter()->vki()->vkGetPhysicalDeviceCalibrateableTimeDomainsEXT;
+    uint32_t domainCount = 0;
+    std::vector<VkTimeDomainEXT> domains;
+    if (queryDomains && queryDomains(m_device->adapter()->handle(), &domainCount, nullptr) == VK_SUCCESS) {
+      domains.resize(domainCount);
+      if (queryDomains(m_device->adapter()->handle(), &domainCount, domains.data()) != VK_SUCCESS) {
+        domains.clear();
+      }
+    }
+    if (std::find(domains.begin(), domains.end(), VK_TIME_DOMAIN_CLOCK_MONOTONIC_EXT) == domains.end()) {
+      if (std::find(domains.begin(), domains.end(), VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_EXT) != domains.end()) {
+        cpuTimeDomain = VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_EXT;
+        cpuClock = CLOCK_MONOTONIC_RAW;
+      } else {
+        calibratedHostClock = false;
+      }
+    }
+    auto getPacerCounter = [cpuClock]() -> int64_t {
+      timespec timestamp;
+      clock_gettime(cpuClock, &timestamp);
+      return int64_t(timestamp.tv_sec) * 1000000000ll + timestamp.tv_nsec;
+    };
+    Logger::info(str::format("DLFG pacer host clock domain=", uint32_t(cpuTimeDomain),
+      " calibrated=", calibratedHostClock));
+#else
+    auto getPacerCounter = []() { return high_resolution_clock::getCounter(); };
+#endif
+
     uint64_t referenceTimestampGpu = 0;
     uint64_t referenceTimestampQpc = 0;
     uint64_t referenceMaxDeviation = 0;
@@ -986,7 +1025,13 @@ namespace dxvk {
       }
     };
 
-    auto calibrateTimestamps = [&]() {
+    auto calibrateTimestamps = [&](uint64_t completedGpuTimestamp) {
+      if (!calibratedHostClock) {
+        // Without a shared host time domain, pace relative to the observed fence completion.
+        referenceTimestampGpu = completedGpuTimestamp;
+        referenceTimestampQpc = getPacerCounter();
+        return;
+      }
       VkCalibratedTimestampInfoEXT info[2] = {
         {
           VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT,
@@ -995,7 +1040,7 @@ namespace dxvk {
         }, {
           VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT,
           nullptr,
-          VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT,
+          cpuTimeDomain,
         }
       };
 
@@ -1092,7 +1137,7 @@ namespace dxvk {
       if (pacerActive) {
         {
           ScopedCpuProfileZoneN("DLFG pacer: timestamp calibration");
-          calibrateTimestamps();
+          calibrateTimestamps(dlfgTimestamp);
         }
 
         const double frameToFrame = nsToMs(gpuTicksToNs(dlfgTimestamp - lastFrameDlfgEndGpuTicks));
@@ -1111,7 +1156,7 @@ namespace dxvk {
           uint64_t deltaGpuPresentTicks = frameTimeGpuTicks / (1 + pacer.interpolatedFrameCount);
 
           const double deltaPresentNs = gpuTicksToNs(deltaGpuPresentTicks);
-          const double deltaPresentQpcNs = qpcTicksToNs(gpuTicksToQpc(dlfgTimestamp + deltaGpuPresentTicks * pacer.interpolatedFrameCount) - high_resolution_clock::getCounter());
+          const double deltaPresentQpcNs = qpcTicksToNs(gpuTicksToQpc(dlfgTimestamp + deltaGpuPresentTicks * pacer.interpolatedFrameCount) - getPacerCounter());
           ProfilerPlotValue("DLFG pacer: measured GPU sleep time (ms)", nsToMs(deltaPresentNs));
           ProfilerPlotValue("DLFG pacer: remaining CPU sleep time (ms)", nsToMs(deltaPresentQpcNs));
 
@@ -1123,7 +1168,7 @@ namespace dxvk {
               const int64_t targetQpcPresentTicks = gpuTicksToQpc(dlfgTimestamp + deltaGpuPresentTicks * (frameIndex+1));
 
               ScopedCpuProfileZoneN("DLFG pacer: sleep");
-              while (high_resolution_clock::getCounter() < targetQpcPresentTicks) {
+              while (getPacerCounter() < targetQpcPresentTicks) {
                 _mm_pause();
               }
 
