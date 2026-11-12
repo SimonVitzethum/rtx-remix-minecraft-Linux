@@ -26,7 +26,7 @@ import java.util.Collection;
 public class RemixAPI {
     public static final int VERSION_MAJOR = 0;
     public static final int VERSION_MINOR = 16;
-    public static final int VERSION_PATCH = 3;
+    public static final int VERSION_PATCH = 4;
 
     /**
      * Fits every value except long hash lists, so most reads through
@@ -46,6 +46,7 @@ public class RemixAPI {
     // zone calls only need bound JNI symbols, not a fully initialized d3d9
     // runtime, so they remain safe to call as long as this is true.
     private static volatile boolean nativeLoaded = false;
+    private static volatile boolean bridgeRejected = false;
 
     public static final int COPY_OUTPUT_FINAL_COLOR     = 0;
     public static final int COPY_OUTPUT_DEPTH           = 1;
@@ -116,7 +117,11 @@ public class RemixAPI {
         bindBridge(dllPath);
     }
 
-    private static java.io.File bindBridge(String dllPath) {
+    private static synchronized java.io.File bindBridge(String dllPath) {
+        if (bridgeRejected) {
+            throw new RemixException("A stale JNI bridge was rejected. Restart with the matching bridge",
+                    ErrorCode.INCOMPATIBLE_VERSION);
+        }
         java.io.File dllFile = new java.io.File(dllPath);
         if (!dllFile.exists()) {
             throw new RemixException("Remix DLL not found: " + dllPath,
@@ -138,6 +143,24 @@ public class RemixAPI {
             }
         } else {
             System.loadLibrary("remixbridge");
+        }
+        // Latch rejection: after loading a stale library, JNI may keep resolving old symbols for this class loader.
+        try {
+            long actual = RemixBridge.bridgeContract();
+            long expected = makeVersion(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
+            if (actual != expected) {
+                throw new RemixException("JNI bridge/header version differs from the Java facade",
+                        ErrorCode.INCOMPATIBLE_VERSION);
+            }
+        } catch (LinkageError missingContract) {
+            bridgeRejected = true;
+            nativeLoaded = false;
+            throw new RemixException("JNI bridge has no compatible load-time contract. Replace the stale bridge and restart",
+                    ErrorCode.INCOMPATIBLE_VERSION);
+        } catch (RemixException incompatible) {
+            bridgeRejected = true;
+            nativeLoaded = false;
+            throw incompatible;
         }
         // Bridge JNI symbols are now bound. Mark this so static probes
         // (tracyBegin/tracyEnd/tracyThreadName) can short-circuit safely

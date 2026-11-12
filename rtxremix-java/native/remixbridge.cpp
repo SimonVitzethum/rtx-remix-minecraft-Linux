@@ -740,7 +740,9 @@ static jint initializeRuntime(const wchar_t* dllPath)
     remixapi_ErrorCode rc = remixCall([&] { return pfnInit(&initInfo, &g_remix); });
     if (rc == REMIXAPI_ERROR_CODE_SUCCESS) {
         if (!g_remix.UpdateTextureFromMemory || !g_remix.UpdateMaterial
-                || !g_remix.GetConfigVariableResolved) {
+                || !g_remix.GetConfigVariableResolved || !g_remix.dxvk_GetGpuContext
+                || !g_remix.dxvk_CreateGpuResource || !g_remix.dxvk_DestroyGpuResource
+                || !g_remix.dxvk_SubmitGpuWork || !g_remix.dxvk_GetGpuWorkStatus) {
             fprintf(stderr,
                 "[remixbridge] FATAL: loaded Remix runtime is missing "
                 "required vtable tail entries. "
@@ -808,7 +810,9 @@ static jint initializeRuntimeUtf8(const char* dllPath)
     remixapi_ErrorCode rc = remixCall([&] { return pfnInit(&initInfo, &g_remix); });
     if (rc == REMIXAPI_ERROR_CODE_SUCCESS) {
         if (!g_remix.UpdateTextureFromMemory || !g_remix.UpdateMaterial
-                || !g_remix.GetConfigVariableResolved) {
+                || !g_remix.GetConfigVariableResolved || !g_remix.dxvk_GetGpuContext
+                || !g_remix.dxvk_CreateGpuResource || !g_remix.dxvk_DestroyGpuResource
+                || !g_remix.dxvk_SubmitGpuWork || !g_remix.dxvk_GetGpuWorkStatus) {
             fprintf(stderr,
                 "[remixbridge] FATAL: loaded Remix runtime is missing "
                 "required vtable tail entries. "
@@ -838,6 +842,12 @@ static jint initializeRuntimeUtf8(const char* dllPath)
 // ════════════════════════════════════════════════════════════════════════════
 
 extern "C" {
+
+JNIEXPORT jlong JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_bridgeContract(JNIEnv*, jclass)
+{
+    return (jlong)REMIXAPI_VERSION_MAKE(REMIXAPI_VERSION_MAJOR, REMIXAPI_VERSION_MINOR, REMIXAPI_VERSION_PATCH);
+}
 
 // ─── initialize ──────────────────────────────────────────────────────────
 
@@ -1026,6 +1036,104 @@ Java_com_nvidia_rtxremix_RemixBridge_submit(JNIEnv*, jclass,
     info.sType = REMIXAPI_STRUCT_TYPE_SUBMIT_INFO;
     info.interopFlags = (uint32_t)interopFlags;
     return (jint)remixCall([&] { return g_remix.Submit(&info); });
+}
+
+JNIEXPORT jint JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_getGpuContext(JNIEnv* env, jclass, jlongArray output)
+{
+    if (!g_inited || !g_remix.dxvk_GetGpuContext) return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    if (!output || env->GetArrayLength(output) < 24) return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    remixapi_GpuContextInfo info = {};
+    info.sType = REMIXAPI_STRUCT_TYPE_GPU_CONTEXT_INFO;
+    auto rc = remixCall([&] { return g_remix.dxvk_GetGpuContext(&info); });
+    if (rc == REMIXAPI_ERROR_CODE_SUCCESS) {
+        jlong values[] = {(jlong)info.instance, (jlong)info.physicalDevice, (jlong)info.device,
+            (jlong)info.apiVersion, (jlong)info.queueFamily, (jlong)info.features,
+            (jlong)info.budgetSource, (jlong)info.maxStorageBufferRange,
+            (jlong)info.memory.deviceBudget, (jlong)info.memory.deviceUsage,
+            (jlong)info.memory.hostBudget, (jlong)info.memory.hostUsage,
+            (jlong)info.memory.deviceHeadroom, (jlong)info.memory.hostHeadroom,
+            (jlong)info.memory.deviceReserved, (jlong)info.memory.hostReserved,
+            (jlong)info.memory.deviceCommitted, (jlong)info.memory.hostCommitted,
+            (jlong)info.memory.deviceAvailable, (jlong)info.memory.hostAvailable,
+            (jlong)info.memory.devicePeak, (jlong)info.memory.hostPeak,
+            (jlong)info.memory.rejected, (jlong)info.memory.queryNanos};
+        env->SetLongArrayRegion(output, 0, 24, values);
+    }
+    return rc;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_createGpuResource(JNIEnv* env, jclass,
+    jint kind, jint memory, jlong bytes, jint usage, jint width, jint height, jint format, jlongArray output)
+{
+    if (!g_inited || !g_remix.dxvk_CreateGpuResource) return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    if (!output || env->GetArrayLength(output) < 10 || bytes < 0 || width < 0 || height < 0) return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    remixapi_GpuResourceCreateInfo info = {};
+    info.sType = REMIXAPI_STRUCT_TYPE_GPU_RESOURCE_CREATE_INFO;
+    info.kind = (remixapi_GpuResourceKind)kind;
+    info.memory = (remixapi_GpuMemoryKind)memory;
+    info.bytes = (uint64_t)bytes;
+    info.usage = (uint32_t)usage;
+    info.width = (uint32_t)width;
+    info.height = (uint32_t)height;
+    info.format = (uint32_t)format;
+    remixapi_GpuResourceInfo result = {};
+    result.sType = REMIXAPI_STRUCT_TYPE_GPU_RESOURCE_INFO;
+    auto rc = remixCall([&] { return g_remix.dxvk_CreateGpuResource(&info, &result); });
+    if (rc == REMIXAPI_ERROR_CODE_SUCCESS) {
+        jlong values[] = {(jlong)result.resource, (jlong)result.buffer, (jlong)result.bufferOffset,
+            (jlong)result.bytes, (jlong)result.deviceAddress, (jlong)(uintptr_t)result.mapped,
+            (jlong)result.image, (jlong)result.imageView, (jlong)result.commandBuffer, (jlong)(uintptr_t)result.texture};
+        env->SetLongArrayRegion(output, 0, 10, values);
+    }
+    return rc;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_destroyGpuResource(JNIEnv*, jclass, jlong resource)
+{
+    if (!g_inited || !g_remix.dxvk_DestroyGpuResource) return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    return remixCall([&] { return g_remix.dxvk_DestroyGpuResource((remixapi_GpuResourceHandle)resource); });
+}
+
+JNIEXPORT jint JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_submitGpuWork(JNIEnv* env, jclass, jlong commands, jlongArray reads, jlongArray writes)
+{
+    if (!g_inited || !g_remix.dxvk_SubmitGpuWork) return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    if (!reads || !writes) return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    try {
+        std::vector<jlong> readIds(env->GetArrayLength(reads)), writeIds(env->GetArrayLength(writes));
+        env->GetLongArrayRegion(reads, 0, (jsize)readIds.size(), readIds.data());
+        if (env->ExceptionCheck()) return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+        env->GetLongArrayRegion(writes, 0, (jsize)writeIds.size(), writeIds.data());
+        if (env->ExceptionCheck()) return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+        remixapi_GpuWorkSubmitInfo info = {};
+        info.sType = REMIXAPI_STRUCT_TYPE_GPU_WORK_SUBMIT_INFO;
+        info.commands = (remixapi_GpuResourceHandle)commands;
+        info.readCount = (uint32_t)readIds.size();
+        info.reads = reinterpret_cast<const remixapi_GpuResourceHandle*>(readIds.data());
+        info.writeCount = (uint32_t)writeIds.size();
+        info.writes = reinterpret_cast<const remixapi_GpuResourceHandle*>(writeIds.data());
+        return remixCall([&] { return g_remix.dxvk_SubmitGpuWork(&info); });
+    } catch (const std::bad_alloc&) {
+        return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+    }
+}
+
+JNIEXPORT jint JNICALL
+Java_com_nvidia_rtxremix_RemixBridge_getGpuWorkStatus(JNIEnv* env, jclass, jlong commands, jlongArray output)
+{
+    if (!g_inited || !g_remix.dxvk_GetGpuWorkStatus) return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    if (!output || env->GetArrayLength(output) < 3) return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    remixapi_GpuWorkStatus result = {};
+    result.sType = REMIXAPI_STRUCT_TYPE_GPU_WORK_STATUS;
+    auto rc = remixCall([&] { return g_remix.dxvk_GetGpuWorkStatus((remixapi_GpuResourceHandle)commands, &result); });
+    if (rc == REMIXAPI_ERROR_CODE_SUCCESS) {
+        jlong values[] = {(jlong)result.state, (jlong)result.error, (jlong)result.serial};
+        env->SetLongArrayRegion(output, 0, 3, values);
+    }
+    return rc;
 }
 
 JNIEXPORT jint JNICALL

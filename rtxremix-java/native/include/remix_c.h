@@ -31,7 +31,7 @@
 
 
 #ifndef REMIX_ALLOW_X86
-#if !defined(_WIN64) && !defined(__x86_64__)
+#if UINTPTR_MAX != UINT64_MAX
   #error Remix API requires 64-bit for the ray tracing features.
 #endif
 #endif
@@ -70,7 +70,7 @@
 
 #define REMIXAPI_VERSION_MAJOR 0
 #define REMIXAPI_VERSION_MINOR 16
-#define REMIXAPI_VERSION_PATCH 3
+#define REMIXAPI_VERSION_PATCH 4
 
 
 // External
@@ -148,6 +148,11 @@ extern "C" {
     REMIXAPI_STRUCT_TYPE_SUBMIT_INFO                          = 30,
     REMIXAPI_STRUCT_TYPE_CONFIG_VARIABLE_RESOLVED_INFO        = 31,
     REMIXAPI_STRUCT_TYPE_MESH_INFO_COMPACT_QUADS_EXT          = 32,
+    REMIXAPI_STRUCT_TYPE_GPU_CONTEXT_INFO                    = 33,
+    REMIXAPI_STRUCT_TYPE_GPU_RESOURCE_CREATE_INFO            = 34,
+    REMIXAPI_STRUCT_TYPE_GPU_RESOURCE_INFO                   = 35,
+    REMIXAPI_STRUCT_TYPE_GPU_WORK_SUBMIT_INFO                = 36,
+    REMIXAPI_STRUCT_TYPE_GPU_WORK_STATUS                     = 37,
     // NOTE: always leave ',' after the number, so the git diff is cleaner!
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
     //       and only extend this enum by appending, never adjust the order of these 
@@ -1134,6 +1139,135 @@ extern "C" {
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_dxvk_GetInteropInfo)(remixapi_dxvk_InteropInfo* out_info);
 
 
+  // Byte measurements include live reservations and retired resources still owned by GPU command lists.
+  typedef struct remixapi_GpuMemoryInfo {
+    uint64_t deviceBudget;
+    uint64_t deviceUsage;
+    uint64_t hostBudget;
+    uint64_t hostUsage;
+    uint64_t deviceHeadroom;
+    uint64_t hostHeadroom;
+    uint64_t deviceReserved;
+    uint64_t hostReserved;
+    uint64_t deviceCommitted;
+    uint64_t hostCommitted;
+    uint64_t deviceAvailable;
+    uint64_t hostAvailable;
+    uint64_t devicePeak;
+    uint64_t hostPeak;
+    uint64_t rejected;
+    uint64_t queryNanos;
+  } remixapi_GpuMemoryInfo;
+
+  // Borrowed Vulkan 1.2 core handles. The client must not destroy the device or submit to its queues.
+  // Only the reported optional features may be used. All other feature-dependent commands are excluded.
+  typedef struct remixapi_GpuContextInfo {
+    remixapi_StructType sType;
+    void* pNext;
+    uint64_t instance;
+    uint64_t physicalDevice;
+    uint64_t device;
+    uint32_t apiVersion;
+    uint32_t queueFamily;
+    uint64_t features;
+    // 1: VK_EXT_memory_budget. 2: conservative allocator/physical-heap fallback.
+    uint64_t budgetSource;
+    uint64_t maxStorageBufferRange;
+    remixapi_GpuMemoryInfo memory;
+  } remixapi_GpuContextInfo;
+
+  typedef enum remixapi_GpuFeatureBits {
+    REMIXAPI_GPU_FEATURE_SHADER_INT64 = 1,
+    REMIXAPI_GPU_FEATURE_BUFFER_DEVICE_ADDRESS = 2,
+  } remixapi_GpuFeatureBits;
+
+  typedef uint64_t remixapi_GpuResourceHandle;
+  typedef enum remixapi_GpuResourceKind {
+    REMIXAPI_GPU_RESOURCE_BUFFER = 1,
+    REMIXAPI_GPU_RESOURCE_IMAGE_2D = 2,
+    REMIXAPI_GPU_RESOURCE_COMMAND_LIST = 3,
+  } remixapi_GpuResourceKind;
+  typedef enum remixapi_GpuMemoryKind {
+    REMIXAPI_GPU_MEMORY_DEVICE = 0,
+    REMIXAPI_GPU_MEMORY_UPLOAD = 1,
+    REMIXAPI_GPU_MEMORY_READBACK = 2,
+  } remixapi_GpuMemoryKind;
+
+  // Zero unused fields. Buffer usage and image format are core VkBufferUsageFlags and VkFormat values.
+  // Images have one mip/layer, STORAGE|SAMPLED|TRANSFER_SRC|TRANSFER_DST usage and GENERAL layout.
+  // Command lists are resettable secondary compute/transfer command buffers, outside render passes.
+  typedef struct remixapi_GpuResourceCreateInfo {
+    remixapi_StructType sType;
+    void* pNext;
+    remixapi_GpuResourceKind kind;
+    remixapi_GpuMemoryKind memory;
+    uint64_t bytes;
+    uint32_t usage;
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;
+  } remixapi_GpuResourceCreateInfo;
+
+  // Handles and mappings are borrowed until DestroyGpuResource. DEVICE memory has no client mapping.
+  // Buffer descriptors and copies must include bufferOffset. Coherent mappings require no cache operations.
+  // texture is an ordinary Remix texture handle for a GPU-written image, with no CPU pixel mirror.
+  typedef struct remixapi_GpuResourceInfo {
+    remixapi_StructType sType;
+    void* pNext;
+    remixapi_GpuResourceHandle resource;
+    uint64_t buffer;
+    uint64_t bufferOffset;
+    uint64_t bytes;
+    uint64_t deviceAddress;
+    void* mapped;
+    uint64_t image;
+    uint64_t imageView;
+    uint64_t commandBuffer;
+    remixapi_TextureHandle texture;
+  } remixapi_GpuResourceInfo;
+
+  // Lists include every registered resource accessed by the recorded commands, including device addresses.
+  // Write implies read. The client retains pipelines, descriptors and queries through COMPLETE or FAILED.
+  // No recording, host writes or reuse is allowed between successful submission and completion.
+  // Buffers/images remain valid after destruction until their submitted users actually retire.
+  // Commands may use only compute/transfer operations. Do not transition images, submit queues or wait idle.
+  // Intra-list dependencies belong to the client. Runtime owns dependencies before/after the entire list.
+  typedef struct remixapi_GpuWorkSubmitInfo {
+    remixapi_StructType sType;
+    void* pNext;
+    remixapi_GpuResourceHandle commands;
+    uint32_t readCount;
+    const remixapi_GpuResourceHandle* reads;
+    uint32_t writeCount;
+    const remixapi_GpuResourceHandle* writes;
+  } remixapi_GpuWorkSubmitInfo;
+
+  typedef enum remixapi_GpuWorkState {
+    REMIXAPI_GPU_WORK_IDLE = 0,
+    REMIXAPI_GPU_WORK_QUEUED = 1,
+    REMIXAPI_GPU_WORK_IN_FLIGHT = 2,
+    REMIXAPI_GPU_WORK_COMPLETE = 3,
+    REMIXAPI_GPU_WORK_FAILED = 4,
+  } remixapi_GpuWorkState;
+
+  // Nonblocking. COMPLETE and FAILED both guarantee retirement of all recorded accesses.
+  // An accepted submission may remain QUEUED until the application's next ordinary Submit/Present.
+  typedef struct remixapi_GpuWorkStatus {
+    remixapi_StructType sType;
+    void* pNext;
+    remixapi_GpuWorkState state;
+    remixapi_ErrorCode error;
+    uint64_t serial;
+  } remixapi_GpuWorkStatus;
+
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_dxvk_GetGpuContext)(remixapi_GpuContextInfo* out_info);
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_dxvk_CreateGpuResource)(
+    const remixapi_GpuResourceCreateInfo* info, remixapi_GpuResourceInfo* out_info);
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_dxvk_DestroyGpuResource)(remixapi_GpuResourceHandle resource);
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_dxvk_SubmitGpuWork)(const remixapi_GpuWorkSubmitInfo* info);
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_dxvk_GetGpuWorkStatus)(
+    remixapi_GpuResourceHandle commands, remixapi_GpuWorkStatus* out_status);
+
   typedef struct remixapi_InitializeLibraryInfo {
     remixapi_StructType sType;
     void*               pNext;
@@ -1189,6 +1323,11 @@ extern "C" {
     PFN_remixapi_UpdateMaterial             UpdateMaterial;
 
     PFN_remixapi_GetConfigVariableResolved  GetConfigVariableResolved;
+    PFN_remixapi_dxvk_GetGpuContext         dxvk_GetGpuContext;
+    PFN_remixapi_dxvk_CreateGpuResource     dxvk_CreateGpuResource;
+    PFN_remixapi_dxvk_DestroyGpuResource    dxvk_DestroyGpuResource;
+    PFN_remixapi_dxvk_SubmitGpuWork         dxvk_SubmitGpuWork;
+    PFN_remixapi_dxvk_GetGpuWorkStatus      dxvk_GetGpuWorkStatus;
   } remixapi_Interface;
 
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_InitializeLibrary(
