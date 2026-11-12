@@ -9,8 +9,8 @@ with GCC and links the runtime as `libremixapi.so`.
 From the checkout root, after `git submodule update --init --recursive`:
 
 ```bash
-meson setup _CompLinuxRelease .. -Denable_rtxio=false
-ninja -j6
+meson setup _CompLinuxRelease -Dbuildtype=release -Denable_rtxio=false -Ddownload_apics=false
+ninja -C _CompLinuxRelease -j1 src/d3d9/libremixapi.so
 ```
 
 - The `slangc` Meson option selects the shader compiler. On non-Windows hosts
@@ -23,6 +23,8 @@ ninja -j6
   system.
 - The output library is `_CompLinuxRelease/src/d3d9/libremixapi.so`: the
   d3d9 target names its shared library `remixapi` on Linux (d3d9 on Windows).
+- Start with one native compilation job on memory-constrained systems. Increase
+  parallelism only after measuring compiler and shader-worker memory use.
 
 Native ELF builds embed Slang SPIR-V through assembler `incbin` sections.
 The generated declarations retain the array extent and byte count, but GCC

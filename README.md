@@ -1,6 +1,63 @@
-# dxvk-remix
+# RTX Remix Runtime — Native Linux
 
-[![Build Status](https://github.com/NVIDIAGameWorks/dxvk-remix/actions/workflows/build.yml/badge.svg)](https://github.com/NVIDIAGameWorks/dxvk-remix/actions/workflows/build.yml)
+**This fork builds and runs RTX Remix natively on Linux x86-64**, including the
+Minecraft Java Edition 26.3 integration. It produces `libremixapi.so`; Wine and
+Proton are not required. Wayland, X11 and headless presentation are supported.
+
+The source for this runtime is published on
+[`runtime/native-linux`](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/tree/runtime/native-linux).
+The companion Minecraft mod and JNI bridge are on
+[`main`](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux) and
+[`mc-26.3-linux`](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/tree/mc-26.3-linux).
+These are separate source trees; clone them into sibling directories.
+
+## Native Linux Build and Features
+
+Use the [Linux build guide](documentation/LinuxBuild.md) for GCC, Meson/Ninja,
+native OpenUSD and NRD, Linux DLSS libraries, Slang and SPIR-V dependencies.
+The Minecraft build stages this runtime with `tools/stage_linux_runtime.sh`
+from its own checkout. The Windows bridge below is not required for native
+Minecraft integration through the Remix C API.
+
+- Native Vulkan path tracing and external-memory/timeline-semaphore interop.
+- DLSS Super Resolution, Ray Reconstruction and Frame Generation exercised
+  on the Linux test hardware; availability depends on GPU, driver and SDK.
+- Linux texture-file notifications, streamed texture uploads, native ImGui
+  input, and explicit image/buffer lifetimes.
+- Cluster acceleration structures are experimental and opt-in. They are not
+  evidence that Minecraft terrain meshes or its DAG are already GPU-built.
+- XeSS, NRC, Reflex, Aftermath and NVAPI are compiled out on Linux; RTXIO is
+  disabled.
+
+## Linux Performance Reference
+
+On November 12, 2026, the Minecraft integration was measured on an **RTX 5070
+Laptop GPU, 8 GiB VRAM**, NVIDIA **615.78.08**, Linux and Java **25.0.5**.
+The CPU-built DAG reference used **1920×1080 output / 960×540 internal**, DLSS
+Ray Reconstruction, up to two generated frames, Simplista 64x R36, RD32/SD8
+and requested DAG distance 512.
+
+| Phase | Rendered FPS | Native presents/s including FG | Render-span p99 |
+|---|---:|---:|---:|
+| Stationary | 30.43 | 91.29 | 78.21 ms |
+| Movement | 20.76 | 62.29 | 126.51 ms |
+
+These are **whole Minecraft integration measurements**, not runtime-only GPU
+timings or GPU-DAG results. Presents count native submissions, not physical
+display scanout. Full 512 coverage and the complete visible 32-chunk RTX radius
+remain unproven; the run completed its movement path but did not converge.
+Image review and a usable JFR recording are not available for this run, so the
+figures remain provisional and do not establish a speedup.
+See the [performance report and measurement data](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/blob/main/docs/LINUX_PERFORMANCE.md)
+for package hashes, methodology, historical controls and limitations.
+
+Full GPU DAG construction, GPU-built near-terrain meshes and GPU-driven scene
+scheduling remain under development in the companion integration.
+
+## Upstream Project
+
+[NVIDIA's upstream build workflow](https://github.com/NVIDIAGameWorks/dxvk-remix/actions/workflows/build.yml)
+describes the upstream project, not validation of this Linux fork.
 
 dxvk-remix is a fork of the [DXVK](https://github.com/doitsujin/dxvk) project, which overhauls the fixed-function graphics pipeline implementation in order to remaster games with path tracing.
 
@@ -10,7 +67,7 @@ While dxvk-remix is a fork of DXVK, please report bugs encountered with dxvk-rem
 
 dxvk-remix also contains a subproject in the `bridge` folder, which enables 32 bit games to communicate with the 64 bit dxvk-remix runtime.
 
-## Build instructions
+## Windows Build Instructions
 
 ### Requirements:
 1. Windows 10 or 11

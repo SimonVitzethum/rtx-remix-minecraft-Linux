@@ -1,5 +1,10 @@
 # Cluster GPU regression harness
 
+This harness supports the native Linux Vulkan runtime. See the
+[runtime README](../../README.md) and [Linux build guide](../../documentation/LinuxBuild.md).
+The [Minecraft performance report](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/blob/main/docs/LINUX_PERFORMANCE.md)
+does not establish a CLAS speedup or substitute for these correctness checks.
+
 This preserves the S17 CLAS/cluster BLAS/PTLAS ray verification, bounds grid size
 to 8–128, queries features before device creation and exercises tagged geometry
 indices used by the production hit mapping. It also executes the production
@@ -11,11 +16,13 @@ executable stay in scratch. This isolated harness does not exercise the retained
 renderer cache or demonstrate a game performance improvement. Its unconditional
 KHR rebuild timing is a synthetic build measurement, not a retained-cache baseline.
 
-From the repository root (adjust scratch destination for your assigned run):
+From the repository root, choose a scratch directory and use your environment's
+resource guard for compilation and exclusive GPU execution. For example, set
+`RESOURCE_RUN` to the guard executable, then run:
 
 ```
-/home/simon/Videos/RTX/port-artifacts/resource-run.sh compile python3 tools/cluster_selftest/build.py /home/simon/Videos/RTX/port-artifacts/scratch/cluster-next/harness
-/home/simon/Videos/RTX/port-artifacts/resource-run.sh game env REMIX_CLUSTER_AS_GRID=8 /home/simon/Videos/RTX/port-artifacts/scratch/cluster-next/harness/cluster_selftest
+"$RESOURCE_RUN" compile python3 tools/cluster_selftest/build.py /tmp/remix-cluster-selftest
+"$RESOURCE_RUN" game env REMIX_CLUSTER_AS_GRID=8 /tmp/remix-cluster-selftest/cluster_selftest
 ```
 
 Exit 77 means unsupported device/features. Select the same Vulkan device as the
@@ -36,5 +43,5 @@ The bounded regression creates a real controller/session/launcher chain and
 checks ancestor exclusion and child retirement:
 
 ```
-/home/simon/Videos/RTX/port-artifacts/resource-run.sh build python3 tools/cluster_selftest/test_session_processes.py
+"$RESOURCE_RUN" build python3 tools/cluster_selftest/test_session_processes.py
 ```

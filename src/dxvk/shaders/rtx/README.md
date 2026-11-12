@@ -1,5 +1,11 @@
 # RTX Remix Shader Overview
 
+These shader conventions also apply to the native Linux runtime. Linux builds
+use Slang, glslang and SPIR-V Tools; see
+[Native Linux Build](../../../../documentation/LinuxBuild.md). The Minecraft
+integration's dated [performance report](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/blob/main/docs/LINUX_PERFORMANCE.md)
+separates whole-frame measurements from isolated GPU shader timings.
+
 This document provides an overview for the general structure, standards and conventions in the shader codebase for the RTX Remix project. Note that originally this codebase used GLSL primarily but has since switched to [Slang](https://github.com/shader-slang/slang) which provides back-compatibility in terms of syntax. In the future more of the codebase will be written to leverage Slang syntax, but much of it still is designed around its GLSL origins for now.
 
 ## File Conventions

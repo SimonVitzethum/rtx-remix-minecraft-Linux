@@ -1,6 +1,11 @@
 USD Schema Plugins
 ==================
 
+These plugins are also built into the native Linux runtime using OpenUSD
+without Python or imaging. See [Linux setup](../../documentation/LinuxBuild.md)
+and the [runtime overview](../../README.md). Minecraft FPS measurements linked
+there describe the complete renderer, not USD plugin execution time.
+
 This directory contains codeless USD schema plugins. They use the no-Python
 OpenUSD package and do not run `usdGenSchema` during development or builds.
 

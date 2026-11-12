@@ -1,5 +1,12 @@
 # NVIDIA RTX Remix Bridge
 
+This directory documents the **Windows cross-process Direct3D bridge**.
+The native Linux / Minecraft 26.3 port instead calls `libremixapi.so` through
+the Remix C API and does not need these Windows executables. See the
+[native Linux runtime](../README.md), [Linux build guide](../documentation/LinuxBuild.md)
+and [measured integration performance](https://github.com/SimonVitzethum/rtx-remix-minecraft-Linux/blob/main/docs/LINUX_PERFORMANCE.md).
+Those FPS figures do not benchmark this 32-bit Windows bridge.
+
 This folder contains the NVIDIA RTX Remix Bridge client and server components.  These are required for enabling a 32-bit game to interact with the 64-bit Remix Runtime dll.
 
 > **NOTE:** To experience the full feature set of NVIDIA RTX Remix, binaries compiled from this folder need to be combined with the binaries from the top level folder of `dxvk-remix` [repo on GitHub](https://github.com/NVIDIAGameWorks/dxvk-remix/). For additional details and explanation see below!
@@ -84,7 +91,7 @@ Remix Bridge should work out of the box with many retail games as well, but depe
 
 Also, as mentioned above if you want to take advantage of the pathtracing capabilities of RTX Remix then you need to combine the Remix Bridge binaries with the Remix Runtime, which can be built from the top level folder of this repo.
 
-The easiest way to get a complete binary package is by downloading one of the releases from the `RTX Remix` [repo on GitHub]((https://github.com/NVIDIAGameWorks/rtx-remix/)).
+The easiest way to get an upstream Windows binary package is by downloading one of the releases from the `RTX Remix` [repo on GitHub](https://github.com/NVIDIAGameWorks/rtx-remix/).
 
 # Remix Bridge Architecture & Implementation Details
 
