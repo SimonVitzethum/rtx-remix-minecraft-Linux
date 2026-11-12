@@ -1,0 +1,74 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#version 450
+layout(local_size_x=64) in;
+struct Node { uint child[8]; };
+layout(std430,binding=0) readonly buffer Candidates { Node keys[]; };
+layout(std430,binding=1) buffer Table { uint slots[]; };
+layout(std430,binding=2) buffer Nodes { Node nodes[]; };
+layout(std430,binding=3) buffer Canonical { uint canonical[]; };
+layout(std430,binding=4) buffer Values { uint values[]; };
+layout(std430,binding=5) buffer Status {
+  uint nodeCount; uint errors; uint capacityFailures; uint probeFailures;
+  uint collisions; uint duplicates; uint inserted; uint collapsed;
+};
+layout(push_constant) uniform Parameters {
+  uint mode; uint count; uint tableMask; uint nodeCapacity;
+  uint maxProbes; uint hashMask; uint groupStride; uint committedNodes;
+} p;
+const uint TAG=0x80000000u;
+uint linearId() { return (gl_WorkGroupID.y*p.groupStride+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x; }
+bool sameKey(uint id, uint entry) {
+  for(uint k=0u;k<8u;++k) {
+    uint other=(entry&TAG)!=0u ? keys[(entry&~TAG)-1u].child[k] : nodes[entry].child[k];
+    if(keys[id].child[k]!=other) return false;
+  }
+  return true;
+}
+void main() {
+  uint id=linearId();
+  if(p.mode==2u) {
+    if(id>p.tableMask) return;
+    uint entry=slots[id];
+    if((entry&TAG)!=0u) slots[id]=values[(entry&~TAG)-1u];
+    return;
+  }
+  if(id>=p.count) return;
+  if(p.mode==1u) {
+    uint winner=canonical[id];
+    if((winner&TAG)!=0u) values[id]=values[(winner&~TAG)-1u];
+    return;
+  }
+  canonical[id]=0u;
+  uint first=keys[id].child[0];
+  bool isUniform=first==0u || (first&TAG)!=0u;
+  uint hash=0u;
+  for(uint k=0u;k<8u;++k) {
+    uint c=keys[id].child[k];
+    isUniform=isUniform && c==first;
+    if(c!=0u && (c&TAG)==0u && c>=p.committedNodes) atomicOr(errors,4u);
+    hash=hash*0x9E3779B1u+c+(hash>>15u);
+  }
+  if(isUniform) { values[id]=first; atomicAdd(collapsed,1u); return; }
+  hash=(hash^(hash>>16u))&p.hashMask;
+  for(uint probe=0u;probe<p.maxProbes;++probe) {
+    uint slot=(hash+probe)&p.tableMask;
+    uint entry=atomicCompSwap(slots[slot],0u,TAG|(id+1u));
+    if(entry==0u) {
+      uint index=atomicAdd(nodeCount,1u);
+      if(index>=p.nodeCapacity) {
+        values[id]=0u; atomicOr(errors,1u); atomicAdd(capacityFailures,1u); return;
+      }
+      nodes[index]=keys[id]; values[id]=index; atomicAdd(inserted,1u); return;
+    }
+    if(sameKey(id,entry)) {
+      if((entry&TAG)!=0u) { canonical[id]=entry; values[id]=0u; }
+      else values[id]=entry;
+      atomicAdd(duplicates,1u); return;
+    }
+    atomicAdd(collisions,1u);
+  }
+  values[id]=0u; atomicOr(errors,2u); atomicAdd(probeFailures,1u);
+}
