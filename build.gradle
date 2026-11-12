@@ -492,6 +492,8 @@ tasks.register('compileNativeWin64', Exec) {
     commandLine 'cmd', '/c', file('rtxremix-java/native/build_native.bat').absolutePath, 'x64'
     inputs.files file('rtxremix-java/native/build_native.bat'),
                  file('rtxremix-java/native/remixbridge.cpp'),
+                 file('rtxremix-java/native/voxel_dag.h'),
+                 file('rtxremix-java/native/voxel_dag.cpp'),
                  file('rtxremix-java/native/include/remix_c.h')
     outputs.files file('build/native/win64/remixbridge.dll'),
                   file('build/native/win64/remixbridge.pdb')
@@ -504,6 +506,8 @@ tasks.register('compileNativeArm64', Exec) {
     commandLine 'cmd', '/c', file('rtxremix-java/native/build_native.bat').absolutePath, 'arm64'
     inputs.files file('rtxremix-java/native/build_native.bat'),
                  file('rtxremix-java/native/remixbridge.cpp'),
+                 file('rtxremix-java/native/voxel_dag.h'),
+                 file('rtxremix-java/native/voxel_dag.cpp'),
                  file('rtxremix-java/native/include/remix_c.h')
     outputs.files file('build/native/arm64/remixbridge.dll'),
                   file('build/native/arm64/remixbridge.pdb')
@@ -519,6 +523,8 @@ tasks.register('compileNativeLinux', Exec) {
     commandLine 'bash', file('rtxremix-java/native/build_native.sh').absolutePath, 'x64'
     inputs.files file('rtxremix-java/native/build_native.sh'),
                  file('rtxremix-java/native/remixbridge.cpp'),
+                 file('rtxremix-java/native/voxel_dag.h'),
+                 file('rtxremix-java/native/voxel_dag.cpp'),
                  file('rtxremix-java/native/include/remix_c.h')
     outputs.files file('build/native/linux64/remixbridge.so')
 }
