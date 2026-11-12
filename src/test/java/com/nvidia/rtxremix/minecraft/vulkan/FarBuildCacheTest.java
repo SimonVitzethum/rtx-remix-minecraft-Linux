@@ -21,7 +21,8 @@ class FarBuildCacheTest {
         assertEquals(1, cache.drain());
         cache.observe(7, 2); // place
         var placed = cache.begin(7, 2, () -> true);
-        cache.observe(7, 3); // break while the place build is running
+        cache.observe(7, 4); // material change while the place build is running
+        cache.observe(7, 3); // break before that same worker completes
         cache.finish(placed, "placed");
         assertEquals(0, cache.drain());
         assertEquals("original", cache.get(7).data());
