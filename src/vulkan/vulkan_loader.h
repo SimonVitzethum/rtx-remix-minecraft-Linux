@@ -339,6 +339,13 @@ namespace dxvk::vk {
     VULKAN_FN(vkGetMicromapBuildSizesEXT);
     #endif
 
+    // NV-DXVK start: Cluster acceleration structure commands
+    #ifdef VK_NV_cluster_acceleration_structure
+    VULKAN_FN(vkGetClusterAccelerationStructureBuildSizesNV);
+    VULKAN_FN(vkCmdBuildClusterAccelerationStructureIndirectNV);
+    #endif
+    // NV-DXVK end
+
     #ifdef VK_KHR_acceleration_structure
     VULKAN_FN(vkCreateAccelerationStructureKHR);
     VULKAN_FN(vkDestroyAccelerationStructureKHR);

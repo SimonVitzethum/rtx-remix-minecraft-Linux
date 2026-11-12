@@ -282,4 +282,15 @@ exe = executable('test_particle_system_lookup', files('test_particle_system_look
 test('test_particle_system_lookup', exe, env: test_env)
 tests += exe
 
+exe = executable('test_cluster_plan', files('test_cluster_plan.cpp'),
+  override_options : ['cpp_std='+dxvk_cpp_std])
+test('test_cluster_plan', exe, env : test_env)
+tests += exe
+
+exe = executable('test_cluster_lifetime', files('test_cluster_lifetime.cpp',
+    '../../../src/dxvk/dxvk_lifetime.cpp', '../../../src/dxvk/dxvk_resource.cpp'),
+  include_directories : test_include_path, dependencies : test_unit_deps, override_options : ['cpp_std='+dxvk_cpp_std])
+test('test_cluster_lifetime', exe, env : test_env)
+tests += exe
+
 alias_target('unit_tests', tests)

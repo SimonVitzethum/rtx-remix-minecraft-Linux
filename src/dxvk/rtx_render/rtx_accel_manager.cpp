@@ -70,6 +70,7 @@ namespace dxvk {
   void AccelManager::clear() {
     m_gpuCrashRecorder.clear();
     m_blasPool.clear();
+    m_activeDynamicBlases.clear();
 
     // Invalidate incremental rebuild cache
     m_cachedBuckets.clear();
@@ -906,6 +907,32 @@ namespace dxvk {
       assert(blasEntry->buildGeometries.size() == 1); // dynamic BLAS should always have this
       assert(blasEntry->buildRanges.size() == 1); // dynamic BLAS should always have this
 
+      const auto previousBlas = blasEntry->dynamicBlas;
+      if (previousBlas.ptr() && previousBlas->clusters.ptr()) {
+        // Material changes can leave cached geometry descriptors with the previous opacity flags.
+        VkGeometryFlagsKHR flags = uniqueBlasEntry.instances.front()->getGeometryFlags();
+        for (const auto instance : uniqueBlasEntry.instances) {
+          flags &= instance->getGeometryFlags();
+        }
+        blasEntry->buildGeometries[0].flags = flags;
+      }
+      if (m_clusterBlas.build(ctx, execBarriers, *blasEntry, uniqueBlasEntry.instances)) {
+        if (previousBlas.ptr() && previousBlas.ptr() != blasEntry->dynamicBlas.ptr()) {
+          m_blasPool.push_back(previousBlas);
+        }
+        for (RtInstance* instance : uniqueBlasEntry.instances) {
+          addBlas(instance, blasEntry, nullptr);
+        }
+        m_activeDynamicBlases.push_back(blasEntry->dynamicBlas);
+        continue;
+      }
+      if (blasEntry->dynamicBlas.ptr() && blasEntry->dynamicBlas->clusters.ptr()) {
+        // Retire the complete cluster hierarchy before rebuilding unsupported geometry through KHR.
+        m_blasPool.push_back(std::move(blasEntry->dynamicBlas));
+        blasEntry->dynamicBlas = nullptr;
+        blasEntry->hasDynamicSizeInfo = false;
+      }
+
       bool forceRebuild = false;
       XXH64_hash_t boundOpacityMicromapHash = kEmptyHash;
       if (opacityMicromapManager) {
@@ -1351,6 +1378,9 @@ namespace dxvk {
       // Try to find an existing BLAS that is minimally sufficient to fit this bucket of geometries
       PooledBlas* selectedBlas = nullptr;
       for (const auto& blas : m_blasPool) {
+        if (blas->clusters.ptr()) {
+          continue;
+        }
         size_t bufferSize = blas->accelStructure->info().size;
         uint32_t paddedLastTouched = blas->frameLastTouched + 1 + (RtxOptions::enablePreviousTLAS() ? 1u : 0u); /* note: +2 because frameLastTouched is unsigned and init'd with UINT32_MAX, and keep the BLAS'es for one extra frame for previous TLAS access */
         if (bufferSize >= sizeInfo.accelerationStructureSize &&
@@ -2037,6 +2067,35 @@ namespace dxvk {
     for (auto&& blas : m_blasPool) {
       ctx->getCommandList()->trackResource<DxvkAccess::Read>(blas->accelStructure);
     }
+
+    // Track the whole hierarchy even when the scene-generation fast path skipped all build work.
+    for (const auto& blas : m_activeDynamicBlases) {
+      if (blas->clusters.ptr()) {
+        ctx->getCommandList()->trackResource<DxvkAccess::Read>(blas->clusters);
+      }
+    }
+    for (const auto& blas : m_blasPool) {
+      if (blas->clusters.ptr()) {
+        ctx->getCommandList()->trackResource<DxvkAccess::Read>(blas->clusters);
+      }
+    }
+    if (clusterAccelerationStructureRequested() && m_device->getCurrentFrameId() % 120 == 0) {
+      uint64_t clusterBlasCount = 0, activeClusters = 0, clusterInstances = 0;
+      std::unordered_set<VkDeviceAddress> clusterAddresses;
+      for (const auto& blas : m_activeDynamicBlases) {
+        if (!blas->clusters.ptr()) { continue; }
+        ++clusterBlasCount;
+        activeClusters += blas->clusters->clusterCount;
+        clusterAddresses.insert(blas->accelerationStructureReference);
+      }
+      for (const auto& instance : m_mergedInstances[Tlas::Opaque]) {
+        clusterInstances += clusterAddresses.count(instance.accelerationStructureReference);
+      }
+      Logger::info(str::format("Cluster AS scene frame=", m_device->getCurrentFrameId(),
+        " clusterBLAS=", clusterBlasCount, " activeCLAS=", activeClusters,
+        " opaqueTLASInstances=", clusterInstances));
+    }
+    m_clusterBlas.report(m_device->getCurrentFrameId());
 
     size_t totalScratchSize = 0;
     internalBuildTlas<Tlas::Opaque>(ctx, totalScratchSize);
