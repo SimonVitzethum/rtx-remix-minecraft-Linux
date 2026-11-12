@@ -9,6 +9,13 @@ import com.google.gson.JsonParser;
 import com.nvidia.rtxremix.minecraft.camera.CameraController;
 import com.nvidia.rtxremix.minecraft.profiling.PerformanceTimer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import jdk.jfr.Event;
+import jdk.jfr.Name;
+import jdk.jfr.Recording;
+import jdk.jfr.RecordingState;
+import jdk.jfr.consumer.RecordingFile;
+import java.nio.file.Files;
 
 import java.lang.reflect.Field;
 import java.nio.file.Path;
@@ -21,6 +28,30 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BenchmarkControllerTest {
+
+    @Name("rtxremix.test.ExportProbe")
+    static class ExportProbe extends Event {}
+
+    @Test
+    void exportingARecordingWithADestinationKeepsItsSnapshotReadable(@TempDir Path directory) throws Exception {
+        Path file = directory.resolve("runtime.jfr");
+        try (Recording recording = new Recording()) {
+            recording.enable(ExportProbe.class);
+            recording.setDestination(file);
+            recording.start();
+            new ExportProbe().commit();
+
+            BenchmarkController controller = new BenchmarkController();
+            controller.flushJfrRecording();
+
+            assertEquals(RecordingState.RUNNING, recording.getState());
+            assertTrue(Files.size(file) > 0);
+            assertTrue(RecordingFile.readAllEvents(file).stream()
+                    .anyMatch(event -> event.getEventType().getName().equals("rtxremix.test.ExportProbe")));
+            controller.flushJfrRecording();
+            assertTrue(Files.size(file) > 0);
+        }
+    }
 
     /**
      * Warmup frames must not be counted while a world-load overlay is up; the

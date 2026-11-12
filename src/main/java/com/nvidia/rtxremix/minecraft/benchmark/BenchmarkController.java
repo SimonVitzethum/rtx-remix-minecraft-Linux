@@ -1719,9 +1719,10 @@ public class BenchmarkController {
                     if (parent != null) {
                         Files.createDirectories(parent);
                     }
-                    if (r.getState() == RecordingState.RUNNING) {
-                        r.stop();
+                    if (r.getState() != RecordingState.RUNNING && r.getState() != RecordingState.STOPPED) {
+                        continue;
                     }
+                    // Stopping a recording with a destination closes it. Dump a live snapshot before that transition.
                     r.dump(dest);
                     LOGGER.info("JFR recording flushed to {}", dest);
                     jfrFlushed = true;
