@@ -122,7 +122,11 @@ logged; failed writes retain the dirty state and cannot evict the only resident 
   the last persisted surface is retained, but the newest unadmitted surface may be lost.
   There is no claim of lossless caching under an arbitrarily large unload burst.
 * Persistent cache durability requires an orderly recorder flush and successful disk
-  writes. Process termination cannot guarantee the last queued snapshots reach disk.
+  writes. Only snapshots already admitted to the 32-entry recorder queue are drained at
+  shutdown; unsnapshotted offers in the client-side pending queue can be lost on a world
+  switch or when far field is disabled. Copying that entire backlog synchronously would
+  violate the owner-thread frame budget. Process termination cannot guarantee the last
+  queued snapshots reach disk.
 
 ## Verification
 
