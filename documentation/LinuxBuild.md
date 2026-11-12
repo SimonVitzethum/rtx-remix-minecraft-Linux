@@ -114,3 +114,15 @@ Both log to stderr/stdout and write no files.
   `REMIX_NO_AFTERMATH`).
 - RTXIO is disabled (`-Denable_rtxio=false`).
 - The build targets Linux x64 only.
+
+### Native texture file notifications
+
+The native Linux file watcher uses inotify for asset directories and registered
+file-backed texture parents. It coalesces close-write and rename events, follows
+new subdirectories without following directory symlinks, and re-registers watches
+after an event queue overflow. Watching a parent keeps atomic file replacement
+working. Texture dispatch is synchronized with texture-manager teardown; generic
+asset callbacks run outside the collector mutex. Enable texture reloads explicitly
+with `DXVK_TEXTURES_HOTRELOAD=1`. Java resource reload and native file-backed asset
+reload are separate paths. `test_file_watch_linux` exercises the production event
+collector with real temporary files, including replacement and subtree moves.
